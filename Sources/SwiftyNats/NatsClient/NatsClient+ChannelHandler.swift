@@ -14,7 +14,7 @@ extension NatsClient: ChannelInboundHandler {
         logger.debug("Channel gets active")
         
         self.state = .connected
-        inputBuffer = context.channel.allocator.buffer(capacity: 512)
+        inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
     }
     
     public func channelReadComplete(context: ChannelHandlerContext) {
