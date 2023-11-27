@@ -8,16 +8,14 @@ on:
 
 jobs:
   build:
-
     runs-on: macos-latest
-
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Build
       run: swift build -v
     - name: Brew-Nats
       run: brew install nats-server
     - name: Run-Nats
-      run: nats-server -DVV &      
+      run: nats-server -DVV &
     - name: Run tests
       run: swift test -v
