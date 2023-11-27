@@ -38,6 +38,224 @@ internal enum NatsOperation: String {
     case pong           = "PONG"
 }
 
+
+actor Client {
+    var urls: [URL] = []
+    var pingInteval: TimeInterval = 1.0
+
+    internal let allocator = ByteBufferAllocator()
+    internal var buffer: ByteBuffer
+    internal var connectionHandler: ConnectionHandler
+
+    init(urls: [URL]) {
+        self.urls = urls
+        self.buffer = allocator.buffer(capacity: 1024)
+        self.connectionHandler = ConnectionHandler(inputBuffer: buffer, urls: urls)
+
+    }
+    init(url: URL) {
+        self.urls = [url]
+        self.buffer = allocator.buffer(capacity: 1024)
+        self.connectionHandler = ConnectionHandler(inputBuffer: buffer, urls: urls)
+    }
+}
+
+extension Client {
+    func connect() async throws  {
+        //TODO(jrm): reafactor for reconnection and review error handling.
+        //TODO(jrm): handle response
+        logger.debug("connect")
+       try await  self.connectionHandler.connect()
+    }
+}
+
+class ConnectionHandler: ChannelInboundHandler {
+    let lang = "Swift"
+    let version = "0.0.1"
+    typealias InboundIn = ByteBuffer
+    internal let allocator = ByteBufferAllocator()
+    internal var inputBuffer: ByteBuffer
+    internal var urls: [URL]
+    
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        logger.debug("channel read")
+        var byteBuffer = self.unwrapInboundIn(data)
+        inputBuffer.writeBuffer(&byteBuffer)
+    }
+    
+    func channelReadComplete(context: ChannelHandlerContext) {
+        logger.debug("Channel read complete")
+        
+        let chunkLength = inputBuffer.readableBytes
+        
+        logger.debug("reading string from buffer")
+        guard let inputChunk = inputBuffer.readString(length: chunkLength) else {
+            logger.warning("Input buffer can not read into string")
+            return
+        }
+        
+        logger.debug("parsing message")
+        let messages = inputChunk.parseOutMessages()
+        for message in messages {
+            logger.debug("getting message type")
+            guard let type = message.getMessageType() else { return }
+            
+            if let continuation = self.firstMessageContinuation {
+                logger.debug("first message callback")
+                continuation.resume(returning: message)
+                self.firstMessageContinuation = nil
+                continue
+            }
+            
+            switch type {
+            case .ping:
+                logger.debug("ping")
+                let pong = NatsMessage.pong()
+                _ = self.channel?.write(pong)
+                // self.sendMessage(NatsMessage.pong())
+            case .error:
+                logger.debug("error \(message)")
+            case .message:
+                logger.debug("message \(message)")
+                //   self.handleIncomingMessage(message)
+            case .info:
+                logger.debug("info \(message)")
+                //    self.updateServerInfo(with: message)
+            default:
+                print("default")
+            }
+        }
+        inputBuffer.clear()
+    }
+    init(inputBuffer: ByteBuffer, urls: [URL]) {
+        self.inputBuffer = self.allocator.buffer(capacity: 1024)
+        self.urls = urls
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        self.inputBuffer = allocator.buffer(capacity: 1024)
+    }
+    internal var group: MultiThreadedEventLoopGroup
+    internal var channel: Channel?
+    
+    private var firstMessageContinuation: CheckedContinuation<String, Error>?
+    
+    func prepareForFirstMessage() async {
+        self.firstMessageContinuation = await withCheckedContinuation { continuation in
+            // Simply store the continuation to be resumed later
+        }
+    }
+        
+    func waitForFirstMessage() async throws -> String {
+        guard let firstMessageContinuation = self.firstMessageContinuation else {
+            throw NSError(domain: "MyErrorDomain", code: 0, userInfo: [NSLocalizedDescriptionKey: "Continuation not set"])
+        }
+
+        // Reset the continuation to prevent reuse
+        self.firstMessageContinuation = nil
+
+        // Create a Future to await the message
+        return try await withCheckedThrowingContinuation { continuation in
+            // Assign the continuation to the firstMessageContinuation
+            self.firstMessageContinuation = continuation
+        }
+    }
+        func connect() async throws {
+            await self.prepareForFirstMessage()
+            let bootstrap = ClientBootstrap(group: group)
+                .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+                .channelInitializer { channel in
+                    //Fixme(jrm): do not ignore error from addHandler future.
+                    channel.pipeline.addHandler(self).whenComplete { result in
+                        switch result {
+                        case .success():
+                            print("success")
+                        case .failure(let error):
+                            print("error: \(error)")
+                        }
+                    }
+                    return channel.eventLoop.makeSucceededFuture(())
+                }.connectTimeout(.seconds(5))
+            guard let url = urls.first, let host = url.host, let port = url.port else {
+                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
+            }
+            self.channel = try await bootstrap.connect(host: host, port: port).get()
+            
+            let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: false, lang: lang, version: version, natsProtocol: .original, tlsRequired: false, user: "", pass: "", authToken: "", headers: false, noResponders: false)
+            let data = try JSONEncoder().encode(connect)
+            try await self.channel?.writeAndFlush(data)
+            // Wait for the first message after sending the connect request
+            let firstMessage = try await waitForFirstMessage()
+            print("Received first message: \(firstMessage)")
+        }
+    }
+
+/// Info to construct a CONNECT message.
+ struct ConnectInfo: Encodable {
+    /// Turns on +OK protocol acknowledgments.
+     var verbose: Bool
+    /// Turns on additional strict format checking, e.g. for properly formed
+    /// subjects.
+     var pedantic: Bool
+    /// User's JWT.
+     var userJwt: String?
+    /// Public nkey.
+     var nkey: String
+    /// Signed nonce, encoded to Base64URL.
+     var signature: String?
+    /// Optional client name.
+     var name: String
+    /// If set to `true`, the server (version 1.2.0+) will not send originating
+    /// messages from this connection to its own subscriptions. Clients should
+    /// set this to `true` only for server supporting this feature, which is
+    /// when proto in the INFO protocol is set to at least 1.
+     var echo: Bool
+    /// The implementation language of the client.
+     var lang: String
+    /// The version of the client.
+     var version: String
+    /// Sending 0 (or absent) indicates client supports original protocol.
+    /// Sending 1 indicates that the client supports dynamic reconfiguration
+    /// of cluster topology changes by asynchronously receiving INFO messages
+    /// with known servers it can reconnect to.
+     var natsProtocol: NatsProtocol
+    /// Indicates whether the client requires an SSL connection.
+     var tlsRequired: Bool
+    /// Connection username (if `auth_required` is set)
+     var user: String
+    /// Connection password (if auth_required is set)
+     var pass: String
+    /// Client authorization token (if auth_required is set)
+     var authToken: String
+    /// Whether the client supports the usage of headers.
+     var headers: Bool
+    /// Whether the client supports no_responders.
+     var noResponders: Bool
+        enum CodingKeys: String, CodingKey {
+        case verbose
+        case pedantic
+        case userJwt = "user_jwt"
+        case nkey
+        case signature = "sig" // Custom key name for JSON
+        case name
+        case echo
+        case lang
+        case version
+        case natsProtocol = "protocol"
+        case tlsRequired = "tls_required"
+        case user
+        case pass
+        case authToken = "auth_token"
+        case headers
+        case noResponders = "no_responders"
+    }
+}
+
+enum NatsProtocol: Encodable {
+    case original
+    case dynamic
+}
+
+
+
 /// a Nats client
 open class NatsClient: NSObject {
     var urls = [String]()

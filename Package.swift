@@ -4,6 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "NatsSwift",
+    platforms: [
+        .macOS(.v10_15)
+    ],
     products: [
         .library(name: "NatsSwift", targets: ["NatsSwift"])
     ],
@@ -19,3 +22,4 @@ let package = Package(
         .testTarget(name: "NatsSwiftTests", dependencies: ["NatsSwift"])
     ]
 )
+

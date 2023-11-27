@@ -75,7 +75,6 @@ extension NatsClient: ChannelInboundHandler {
     }
 }
 
-
 extension NatsClient {
 
     // MARK: - Implement Internal Methods
