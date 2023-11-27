@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Brew-Nats
+      run: brew install nats-server
+    - name: Run-Nats
+      run: nats-server -DVV &
     - uses: actions/checkout@v2
     - name: Build the Docker image
       run: docker build . --file Dockerfile --tag swifty-nats:$(date +%s)
