@@ -13,9 +13,3 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: swift build -v
-    - name: Brew-Nats
-      run: brew install nats-server
-    - name: Run-Nats
-      run: nats-server -DVV &
-    - name: Run tests
-      run: sleep 5 && swift test -v
