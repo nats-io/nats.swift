@@ -70,14 +70,14 @@ open class NatsClient: NSObject {
     internal var thread: Thread?
     internal var channel: Channel?
     internal let dispatchGroup = DispatchGroup()
-    
+
     // Buffer where incoming messages will be stroed
     internal var inputBuffer: ByteBuffer?
-    
+
     public init(_ aUrls: [String], _ config: NatsClientConfig) {
         for u in aUrls { self.urls.append(u) }
         self.config = config
-        
+
         writeQueue.maxConcurrentOperationCount = 1
         logger.debug("Init NatsClient with config: \(config)")
     }

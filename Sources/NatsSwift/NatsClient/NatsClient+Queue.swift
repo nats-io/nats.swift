@@ -17,7 +17,7 @@ extension NatsClient: NatsQueue {
     }
 
     open func flushQueue(maxWait: TimeInterval? = nil) throws {
-        
+
         let startTimestamp = Date().timeIntervalSinceReferenceDate
 
         self.disconnect()
@@ -25,7 +25,7 @@ extension NatsClient: NatsQueue {
         DispatchQueue.global(qos: .default).async { [weak self] in
             self?.messageQueue.waitUntilAllOperationsAreFinished()
         }
-        
+
         while true {
             if self.queueCount == 0 { break }
             if let maxSeconds = maxWait {
