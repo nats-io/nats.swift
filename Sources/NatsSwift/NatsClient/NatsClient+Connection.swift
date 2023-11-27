@@ -10,7 +10,7 @@ import Dispatch
 extension NatsClient: NatsConnection {
 
     // MARK: - Implement NatsConnection Protocol
-    
+
     /// Connect to the NATS server
     open func connect() throws {
         logger.debug("Try to connect.")
@@ -18,9 +18,9 @@ extension NatsClient: NatsConnection {
             logger.info("Already connected, skip connection.")
             return
         }
-        
+
         self.dispatchGroup.enter()
-        
+
         #if os(Linux)
         thread = Thread { self.setupConnection() }
         #else
@@ -60,7 +60,7 @@ extension NatsClient: NatsConnection {
 
     open func reconnect() throws {
         self.fire(.reconnecting)
-        
+
         // disconnect - if not already
         if state == .connected {
             self.disconnect()
@@ -70,7 +70,7 @@ extension NatsClient: NatsConnection {
     }
 
     // MARK: - Private Methods
-    
+
     fileprivate func _setupConnection() {
         self.connectionError = nil
         // If we have a list of `connectUrls` in our current server
@@ -96,7 +96,7 @@ extension NatsClient: NatsConnection {
         self.dispatchGroup.leave()
         RunLoop.current.run()
     }
-    
+
     #if os(macOS) || os(tvOS) || os(iOS)
     @objc fileprivate func setupConnection() {
         _setupConnection()
@@ -106,11 +106,11 @@ extension NatsClient: NatsConnection {
         _setupConnection()
     }
     #endif
-    
+
     /// open the client connection to the streaming serer
     fileprivate func openStream(to url: String) throws {
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
+
         guard let server = URL(string: url) else {
             throw NatsConnectionError("Invalid url provided: (\(url))")
         }
@@ -134,14 +134,14 @@ extension NatsClient: NatsConnection {
                 break
             }
         }
-        
+
         let bootstrap = ClientBootstrap(group: self.group!)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelInitializer { channel in
                 channel.pipeline.addHandler(self)
             }.connectTimeout( TimeAmount.seconds(5) )
 
-        
+
         let futureConnection = bootstrap.connect(host: host, port: port)
         futureConnection.whenFailure({ err in
             logger.error("\(err.localizedDescription)")
@@ -155,7 +155,7 @@ extension NatsClient: NatsConnection {
             }
         })
         _ = try futureConnection.wait()
-        
+
         // after the connection is done, we need to wait for the server answer
         let timeout: TimeInterval = 5
         let waiterStartTime = Date()
