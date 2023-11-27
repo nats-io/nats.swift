@@ -1,12 +1,12 @@
 //
 //  NatsClient+ServerInfo.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation
 
 extension NatsClient {
-    
+
     /// Information about the connected server
     ///
     /// The struct holfds getters that provide some information about

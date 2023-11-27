@@ -1,6 +1,6 @@
 //
 //  NatsMessage.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

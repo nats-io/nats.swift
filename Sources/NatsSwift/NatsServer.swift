@@ -1,6 +1,6 @@
 //
 //  NatsServer.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

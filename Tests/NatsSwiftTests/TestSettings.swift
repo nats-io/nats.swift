@@ -1,6 +1,6 @@
 //
 //  TestSettings.swift
-//  SwiftyNatsTest
+//  NatsSwiftTest
 //
 
 

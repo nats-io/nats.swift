@@ -1,6 +1,6 @@
 //
 //  NatsResponse.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 internal enum NatsResponseType {
@@ -9,10 +9,10 @@ internal enum NatsResponseType {
 }
 
 struct NatsResponse {
-    
+
     let type: NatsResponseType
     let message: String?
-    
+
     init(_ response: String) {
         if response.hasPrefix(NatsOperation.ok.rawValue) {
             self.type = .success
@@ -22,9 +22,9 @@ struct NatsResponse {
             self.message = response.removePrefix(NatsOperation.error.rawValue)
         }
     }
-    
+
     internal static func error() -> NatsResponse {
         return NatsResponse("")
     }
-    
+
 }

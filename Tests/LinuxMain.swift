@@ -1,11 +1,11 @@
 //
 //  LinuxMain.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 
 import XCTest
-@testable import SwiftyNatsTests
+@testable import NatsSwiftTests
 
 XCTMain([
     testCase(StringExtensionTests.allTests),

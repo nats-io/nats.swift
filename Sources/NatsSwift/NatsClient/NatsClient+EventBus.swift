@@ -1,6 +1,6 @@
 //
 //  NatsClient+EventBus.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 extension NatsClient: NatsEventBus {

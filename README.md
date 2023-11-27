@@ -33,12 +33,12 @@ let package = Package(
         .executable(name: "YourApp", targets: ["YourApp"]),
     ],
     dependencies: [
-        .package(name: "SwiftyNats", url: "https://github.com/aus-der-technik/SwiftyNats.git", from: "2.2.0")
+        .package(name: "NatsSwift", url: "https://github.com/aus-der-technik/NatsSwift.git", from: "2.2.0")
     ],
     targets: [
         .target(
             name: "YourApp",
-            dependencies: ["SwiftyNats"]
+            dependencies: ["NatsSwift"]
         ),
     ]
 )
@@ -46,13 +46,13 @@ let package = Package(
 ```
 ### In an .xcodeproj
 Open the project inspector in XCode and select your project. It is importent to select the **project** and not a target!
-Klick on the third tab `Package Dependencies` and add the git url `https://github.com/aus-der-technik/SwiftyNats.git` by selecting the litte `+`-sign at the end of the package list.
+Klick on the third tab `Package Dependencies` and add the git url `https://github.com/aus-der-technik/NatsSwift.git` by selecting the litte `+`-sign at the end of the package list.
 
 
 ## Basic Usage
 ```swift
 
-import SwiftyNats
+import NatsSwift
 
 // register a new client
 let client = NatsClient("http://nats.server:4222")
@@ -91,7 +91,7 @@ client.config.loglevel = .info
 Reconnection is not part of this package, because if a server diconnects your application have to be sure that
 subscribtions are made up again correctly.
 
-With SwiftyNats this is a very easy step:
+With NatsSwift this is a very easy step:
 
 ```swift
 
@@ -185,4 +185,4 @@ See: Contribution ;)
 - Propper function description is needed
 
 # Attribution
-This library is based on excellent work in https://github.com/aus-der-Technik/SwiftyNats
+This library is based on excellent work in https://github.com/aus-der-Technik/NatsSwift

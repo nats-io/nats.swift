@@ -1,6 +1,6 @@
 //
 //  NatsClient+ChannelInboundHandler.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation
@@ -12,11 +12,11 @@ extension NatsClient: ChannelInboundHandler {
 
     public func channelActive(context: ChannelHandlerContext) {
         logger.debug("Channel gets active")
-        
+
         self.state = .connected
         inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
     }
-    
+
     public func channelReadComplete(context: ChannelHandlerContext) {
         logger.debug("Channel read complete")
 
@@ -29,7 +29,7 @@ extension NatsClient: ChannelInboundHandler {
             logger.warning("Input buffer can not read into string")
             return
         }
-        
+
         let messages = inputChunk.parseOutMessages()
         for message in messages {
             guard let type = message.getMessageType() else { return }
@@ -51,14 +51,14 @@ extension NatsClient: ChannelInboundHandler {
         }
         inputBuffer?.clear()
     }
-    
+
     public func channelInactive(context: ChannelHandlerContext) {
         logger.debug("Channel gets inactive")
         context.close(promise: nil)
 
         self.state = .disconnected
     }
-    
+
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         logger.debug("Channel read")
         var byteBuffer = self.unwrapInboundIn(data)
@@ -70,7 +70,7 @@ extension NatsClient: ChannelInboundHandler {
 
         context.close(promise: nil)
         self.disconnect()
-        
+
         self.state = .disconnected
     }
 }
