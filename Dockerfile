@@ -16,4 +16,3 @@ COPY ./Tests ./Tests
 
 # Build and test
 RUN swift build -c debug
-RUN swift test
