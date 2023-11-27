@@ -1,6 +1,6 @@
 //
 //  NatsClient+Publish.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

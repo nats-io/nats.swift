@@ -1,6 +1,6 @@
 //
 //  NatsEventHandler.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 internal struct NatsEventHandler {

@@ -1,6 +1,6 @@
 //
 //  NatsClient+Queue.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

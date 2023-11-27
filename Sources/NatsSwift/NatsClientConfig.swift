@@ -1,13 +1,13 @@
 //
 //  NatsClientConfig.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation
 import Logging
 
-var logger = Logger(label: "SwiftyNats")
-public let libVersion = "2.2"
+var logger = Logger(label: "NatsSwift")
+public let libVersion = "0.1"
 
 public struct NatsClientConfig {
 
@@ -31,7 +31,7 @@ public struct NatsClientConfig {
     public init(
         verbose: Bool = false,
         pedantic: Bool = false,
-        name: String = "SwiftyNats \(libVersion)",
+        name: String = "NatsSwift \(libVersion)",
         loglevel: Logger.Level? = .error
     ) {
         self.verbose = verbose

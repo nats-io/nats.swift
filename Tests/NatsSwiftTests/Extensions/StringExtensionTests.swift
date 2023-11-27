@@ -1,10 +1,10 @@
 //
 //  StringExtensionTests.swift
-//  SwiftyNatsTests
+//  NatsSwiftTests
 //
 
 import XCTest
-@testable import SwiftyNats
+@testable import NatsSwift
 
 class StringExtensionTests: XCTestCase {
 

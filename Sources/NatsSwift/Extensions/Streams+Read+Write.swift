@@ -1,6 +1,6 @@
 //
 //  Streams+Read+Write.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

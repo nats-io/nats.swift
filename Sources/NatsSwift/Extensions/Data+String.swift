@@ -1,6 +1,6 @@
 //
 //  Data+String.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 import Foundation

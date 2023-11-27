@@ -1,6 +1,6 @@
 //
 //  NatsErorr.swift
-//  SwiftyNats
+//  NatsSwift
 //
 
 protocol NatsError: Error {
