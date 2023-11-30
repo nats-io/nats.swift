@@ -19,6 +19,7 @@ class NatsServer {
     private var process: Process?
     private var natsServerPort: UInt?
     
+    // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
     func start(port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line) {
         XCTAssertNil(self.process, "nats-server is already running on port \(port)", file: file, line: line)
         let process = Process()
@@ -103,5 +104,9 @@ class NatsServer {
         let message = logLine[messageStartIndex...]
 
         return String(message).trimmingCharacters(in: .whitespaces)
+    }
+    
+    deinit{
+        stop()
     }
 }
