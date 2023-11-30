@@ -14,19 +14,29 @@ class ConnectionTests: XCTestCase {
         ("testClientServerSetWhenConnected", testClientServerSetWhenConnected),
         ("testClientBadConnection", testClientBadConnection)
     ]
+    
+    var natsServer = NatsServer()
+    
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
     func testClientConnection() {
+        natsServer.start()
 
-        let client = NatsClient(TestSettings.natsUrl)
+        let client = NatsClient(natsServer.clientURL)
 
         try? client.connect()
+            
         XCTAssertTrue(client.state == .connected, "Client did not connect")
 
     }
 
     func testClientServerSetWhenConnected() {
+        natsServer.start()
 
-        let client = NatsClient(TestSettings.natsUrl)
+        let client = NatsClient(natsServer.clientURL)
 
         try? client.connect()
         guard let _ = client.server else { XCTFail("Client did not connect to server correctly"); return }
@@ -34,6 +44,7 @@ class ConnectionTests: XCTestCase {
     }
 
     func testClientBadConnection() {
+        natsServer.start()
 
         let client = NatsClient("notnats.net")
 
@@ -43,8 +54,9 @@ class ConnectionTests: XCTestCase {
     }
 
     func testClientConnectionLogging() {
+        natsServer.start()
 
-        let client = NatsClient(TestSettings.natsUrl)
+        let client = NatsClient(natsServer.clientURL)
         client.config.loglevel = .trace
         try? client.connect()
         XCTAssertTrue(client.state == .connected, "Client did not connect")
@@ -52,7 +64,8 @@ class ConnectionTests: XCTestCase {
     }
 
     func testClientConnectDisconnect() {
-        let client = NatsClient(TestSettings.natsUrl)
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
         client.config.loglevel = .trace
 
         try? client.connect()
@@ -77,7 +90,8 @@ class ConnectionTests: XCTestCase {
     }
 
     func testClientReconnectWhenAlreadyConnected() {
-        let client = NatsClient(TestSettings.natsUrl)
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
         client.config.loglevel = .trace
 
         try? client.connect()

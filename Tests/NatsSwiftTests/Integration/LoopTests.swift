@@ -7,12 +7,19 @@ import XCTest
 @testable import NatsSwift
 
 class LoopTests: XCTestCase {
+    var natsServer = NatsServer()
+
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
     func testReadSubscriptionInLoop() {
+        natsServer.start()
 
-        let clientPublish = NatsClient(TestSettings.natsUrl)
-        let clientSubscribe = NatsClient(TestSettings.natsUrl)
-
+        let clientPublish = NatsClient(natsServer.clientURL)
+        let clientSubscribe = NatsClient(natsServer.clientURL)
+        
         try? clientPublish.connect()
         try? clientSubscribe.connect()
 

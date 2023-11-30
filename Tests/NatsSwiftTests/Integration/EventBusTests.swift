@@ -8,10 +8,17 @@ import XCTest
 
 class EventBusTests: XCTestCase {
 
+    var natsServer = NatsServer()
+
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
+
     func testClientConnectedEvent() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         var isConnected = false
         client.on(.connected) { _ in
             isConnected = true
@@ -26,8 +33,9 @@ class EventBusTests: XCTestCase {
     }
 
     func testClientDisconnectedEvent() {
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
 
-        let client = NatsClient(TestSettings.natsUrl)
         try? client.connect()
 
         var isConnected = true
@@ -42,8 +50,9 @@ class EventBusTests: XCTestCase {
     }
 
     func testClientEventOff() {
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
 
-        let client = NatsClient(TestSettings.natsUrl)
         try? client.connect()
 
         var isConnected = true
@@ -60,9 +69,9 @@ class EventBusTests: XCTestCase {
     }
 
     func testClientEventMultiple() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         var counter = 0
         client.on([.connected, .disconnected]) { _ in
             counter += 1
@@ -75,9 +84,9 @@ class EventBusTests: XCTestCase {
     }
 
     func testClientEventAutoOff() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         var counter = 0
         client.on([.connected, .disconnected], autoOff: true) { _ in
             counter += 1

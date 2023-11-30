@@ -8,10 +8,17 @@ import XCTest
 @testable import NatsSwift
 
 class ServerInformationTest: XCTestCase {
+    var natsServer = NatsServer()
+
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
     func testServerInformation() {
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
 
-        let client = NatsClient(TestSettings.natsUrl)
         XCTAssertNil(client.serverInformation)
 
         try? client.connect()
@@ -22,11 +29,13 @@ class ServerInformationTest: XCTestCase {
     }
 
     func testServerInformationPropertiesSet() {
-        let client = NatsClient(TestSettings.natsUrl)
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+
         try? client.connect()
         XCTAssertEqual(client.serverInformation?.host, "0.0.0.0")
-        XCTAssertEqual(client.serverInformation?.port, 4222)
-
+        XCTAssertEqual(client.serverInformation?.port, natsServer.port!)
+        
         XCTAssert(client.serverInformation?.serverName.count ?? 0 > 0)
         XCTAssert(client.serverInformation?.serverId.count ?? 0 > 0)
         XCTAssert(client.serverInformation?.version.count ?? 0 >= 5)
