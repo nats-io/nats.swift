@@ -9,8 +9,9 @@ import XCTest
 class NatsServer {
     var port: UInt? { return natsServerPort }
     var clientURL: String {
+        let scheme = tlsEnabled ? "tls://" : "nats://"
         if let natsServerPort {
-            return "nats://localhost:\(natsServerPort)"
+            return "\(scheme)localhost:\(natsServerPort)"
         } else {
             return ""
         }
@@ -18,6 +19,7 @@ class NatsServer {
     
     private var process: Process?
     private var natsServerPort: UInt?
+    private var tlsEnabled = false
     
     // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
     func start(port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line) {
@@ -47,6 +49,9 @@ class NatsServer {
 
                 serverError = self.extracErrorMessage(from: line)
                 serverPort = self.extractPort(from: line)
+                if !self.tlsEnabled && self.isTLS(from: line) {
+                    self.tlsEnabled = true
+                }
                 if serverPort != nil || serverError != nil || lineCount >= maxLines {
                     serverError = serverError
                     semaphore.signal()
@@ -73,6 +78,7 @@ class NatsServer {
         process?.waitUntilExit()
         process = nil
         natsServerPort = port
+        tlsEnabled = false
     }
     
     private func extractPort(from string: String) -> UInt? {
@@ -104,6 +110,10 @@ class NatsServer {
         let message = logLine[messageStartIndex...]
 
         return String(message).trimmingCharacters(in: .whitespaces)
+    }
+    
+    private func isTLS(from logLine: String) -> Bool {
+        return logLine.contains("TLS required for client connections")
     }
     
     deinit{
