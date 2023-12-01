@@ -21,7 +21,7 @@ public enum NatsEvent: String {
     case error          = "error"
     case dropped        = "dropped"
     case reconnecting   = "reconnecting"
-    case informed       = "informed"
+    case informed       = "informed" 
     static let all      = [ connected, disconnected, response, error, dropped, reconnecting ]
 }
 

@@ -7,11 +7,17 @@ import XCTest
 @testable import NatsSwift
 
 class SubscribeTests: XCTestCase {
+    var natsServer = NatsServer()
+
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
     func testClientSubscription() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         try? client.connect()
 
         var subscribed = false
@@ -29,9 +35,9 @@ class SubscribeTests: XCTestCase {
     }
 
     func testClientSubscriptionSync() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         try? client.connect()
 
         let handler: (NatsMessage) -> Void = { message in

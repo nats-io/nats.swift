@@ -8,11 +8,17 @@ import XCTest
 @testable import NatsSwift
 
 class PublishTests: XCTestCase {
+    var natsServer = NatsServer()
+
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
     func testClientPublish() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         try? client.connect()
 
         var responses = [String]()
@@ -35,9 +41,9 @@ class PublishTests: XCTestCase {
     }
 
     func testClientPublishSync() {
-
-        let client = NatsClient(TestSettings.natsUrl)
-
+        natsServer.start()
+        let client = NatsClient(natsServer.clientURL)
+        
         try? client.connect()
 
         var responses = [String]()
