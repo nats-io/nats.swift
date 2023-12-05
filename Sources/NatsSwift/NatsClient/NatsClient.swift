@@ -42,16 +42,16 @@ internal enum NatsOperation: String {
 actor Client {
     var urls: [URL] = []
     var pingInteval: TimeInterval = 1.0
-
+    
     internal let allocator = ByteBufferAllocator()
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler
-
+    
     init(urls: [URL]) {
         self.urls = urls
         self.buffer = allocator.buffer(capacity: 1024)
         self.connectionHandler = ConnectionHandler(inputBuffer: buffer, urls: urls)
-
+        
     }
     init(url: URL) {
         self.urls = [url]
@@ -65,7 +65,7 @@ extension Client {
         //TODO(jrm): reafactor for reconnection and review error handling.
         //TODO(jrm): handle response
         logger.debug("connect")
-       try await  self.connectionHandler.connect()
+        try await  self.connectionHandler.connect()
     }
 }
 
@@ -138,98 +138,92 @@ class ConnectionHandler: ChannelInboundHandler {
     
     private var firstMessageContinuation: CheckedContinuation<String, Error>?
     
-    func prepareForFirstMessage() async {
-        self.firstMessageContinuation = await withCheckedContinuation { continuation in
-            // Simply store the continuation to be resumed later
-        }
-    }
-        
-    func waitForFirstMessage() async throws -> String {
-        guard let firstMessageContinuation = self.firstMessageContinuation else {
-            throw NSError(domain: "MyErrorDomain", code: 0, userInfo: [NSLocalizedDescriptionKey: "Continuation not set"])
-        }
-
-        // Reset the continuation to prevent reuse
-        self.firstMessageContinuation = nil
-
-        // Create a Future to await the message
-        return try await withCheckedThrowingContinuation { continuation in
-            // Assign the continuation to the firstMessageContinuation
+    func connect() async throws {
+        let firstMessage = try await withCheckedThrowingContinuation { continuation in
             self.firstMessageContinuation = continuation
-        }
-    }
-        func connect() async throws {
-            await self.prepareForFirstMessage()
-            let bootstrap = ClientBootstrap(group: group)
-                .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
-                .channelInitializer { channel in
-                    //Fixme(jrm): do not ignore error from addHandler future.
-                    channel.pipeline.addHandler(self).whenComplete { result in
-                        switch result {
-                        case .success():
-                            print("success")
-                        case .failure(let error):
-                            print("error: \(error)")
-                        }
+                do {
+                    let bootstrap = ClientBootstrap(group: self.group)
+                        .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+                        .channelInitializer { channel in
+                            //Fixme(jrm): do not ignore error from addHandler future.
+                            channel.pipeline.addHandler(self).whenComplete { result in
+                                switch result {
+                                case .success():
+                                    print("success")
+                                case .failure(let error):
+                                    print("error: \(error)")
+                                }
+                            }
+                            return channel.eventLoop.makeSucceededFuture(())
+                        }.connectTimeout(.seconds(5))
+                    guard let url = self.urls.first, let host = url.host, let port = url.port else {
+                        throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
                     }
-                    return channel.eventLoop.makeSucceededFuture(())
-                }.connectTimeout(.seconds(5))
-            guard let url = urls.first, let host = url.host, let port = url.port else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
-            }
-            self.channel = try await bootstrap.connect(host: host, port: port).get()
-            
-            let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: false, lang: lang, version: version, natsProtocol: .original, tlsRequired: false, user: "", pass: "", authToken: "", headers: false, noResponders: false)
-            let data = try JSONEncoder().encode(connect)
-            try await self.channel?.writeAndFlush(data)
+                    self.channel = try bootstrap.connect(host: host, port: port).wait()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             // Wait for the first message after sending the connect request
-            let firstMessage = try await waitForFirstMessage()
-            print("Received first message: \(firstMessage)")
         }
+        print("Received first message: \(firstMessage)")
+        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: false, lang: self.lang, version: self.version, natsProtocol: .original, tlsRequired: false, user: "", pass: "", authToken: "", headers: false, noResponders: false)
+        let connectProtoStr = "CONNECT "
+        guard var data = connectProtoStr.data(using: .utf8) else {
+            fatalError("Failed converting string to Data")
+        }
+        let connectInfo = try JSONEncoder().encode(connect)
+        data.append(connectInfo)
+        let dataStr = String(data:data, encoding: .utf8)
+        print("client connect: \(dataStr!)")
+        var buffer = self.allocator.buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        let ioData: IOData = .byteBuffer(buffer)
+        try await self.channel?.writeAndFlush(ioData)
     }
+}
 
 /// Info to construct a CONNECT message.
- struct ConnectInfo: Encodable {
+struct ConnectInfo: Encodable {
     /// Turns on +OK protocol acknowledgments.
-     var verbose: Bool
+    var verbose: Bool
     /// Turns on additional strict format checking, e.g. for properly formed
     /// subjects.
-     var pedantic: Bool
+    var pedantic: Bool
     /// User's JWT.
-     var userJwt: String?
+    var userJwt: String?
     /// Public nkey.
-     var nkey: String
+    var nkey: String
     /// Signed nonce, encoded to Base64URL.
-     var signature: String?
+    var signature: String?
     /// Optional client name.
-     var name: String
+    var name: String
     /// If set to `true`, the server (version 1.2.0+) will not send originating
     /// messages from this connection to its own subscriptions. Clients should
     /// set this to `true` only for server supporting this feature, which is
     /// when proto in the INFO protocol is set to at least 1.
-     var echo: Bool
+    var echo: Bool
     /// The implementation language of the client.
-     var lang: String
+    var lang: String
     /// The version of the client.
-     var version: String
+    var version: String
     /// Sending 0 (or absent) indicates client supports original protocol.
     /// Sending 1 indicates that the client supports dynamic reconfiguration
     /// of cluster topology changes by asynchronously receiving INFO messages
     /// with known servers it can reconnect to.
-     var natsProtocol: NatsProtocol
+    var natsProtocol: NatsProtocol
     /// Indicates whether the client requires an SSL connection.
-     var tlsRequired: Bool
+    var tlsRequired: Bool
     /// Connection username (if `auth_required` is set)
-     var user: String
+    var user: String
     /// Connection password (if auth_required is set)
-     var pass: String
+    var pass: String
     /// Client authorization token (if auth_required is set)
-     var authToken: String
+    var authToken: String
     /// Whether the client supports the usage of headers.
-     var headers: Bool
+    var headers: Bool
     /// Whether the client supports no_responders.
-     var noResponders: Bool
-        enum CodingKeys: String, CodingKey {
+    var noResponders: Bool
+    enum CodingKeys: String, CodingKey {
         case verbose
         case pedantic
         case userJwt = "user_jwt"
@@ -261,7 +255,7 @@ open class NatsClient: NSObject {
     var urls = [String]()
     var connectedUrl: URL?
     public var config: NatsClientConfig
-
+    
     internal var server: NatsServer?
     internal var writeQueue = OperationQueue()
     internal var eventHandlerStore: [ NatsEvent: [ NatsEventHandler ] ] = [:]
@@ -274,12 +268,12 @@ open class NatsClient: NSObject {
         didSet {
             // fire event when state is changed only
             if oldValue != state {
-            switch state {
+                switch state {
                 case .connected:
                     self.fire(.connected)
                 case .disconnected:
                     self.fire(.disconnected)
-            }
+                }
             }
         }
     }
@@ -288,18 +282,18 @@ open class NatsClient: NSObject {
     internal var thread: Thread?
     internal var channel: Channel?
     internal let dispatchGroup = DispatchGroup()
-
+    
     // Buffer where incoming messages will be stroed
     internal var inputBuffer: ByteBuffer?
-
+    
     public init(_ aUrls: [String], _ config: NatsClientConfig) {
         for u in aUrls { self.urls.append(u) }
         self.config = config
-
+        
         writeQueue.maxConcurrentOperationCount = 1
         logger.debug("Init NatsClient with config: \(config)")
     }
-
+    
     public convenience init(_ url: String, _ config: NatsClientConfig? = nil) {
         let config = config ?? NatsClientConfig()
         self.init([ url ], config)
@@ -317,7 +311,7 @@ protocol NatsSubscribe {
     func subscribe(to subject: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject
     func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject
     func unsubscribe(from subject: NatsSubject)
-
+    
     func subscribeSync(to subject: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject
     func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject
     func unsubscribeSync(from subject: NatsSubject) throws
@@ -327,7 +321,7 @@ protocol NatsPublish {
     func publish(_ payload: String, to subject: String)
     func publish(_ payload: String, to subject: NatsSubject)
     func reply(to message: NatsMessage, withPayload payload: String)
-
+    
     func publishSync(_ payload: String, to subject: String) throws
     func publishSync(_ payload: String, to subject: NatsSubject) throws
     func replySync(to message: NatsMessage, withPayload payload: String) throws
