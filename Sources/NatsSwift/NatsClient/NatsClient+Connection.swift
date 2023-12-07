@@ -12,7 +12,7 @@ extension NatsClient: NatsConnection {
     // MARK: - Implement NatsConnection Protocol
 
     /// Connect to the NATS server
-    open func connect() throws {
+    public func connect() throws {
         logger.debug("Try to connect.")
         guard self.state != .connected else {
             logger.info("Already connected, skip connection.")
@@ -41,7 +41,7 @@ extension NatsClient: NatsConnection {
     }
 
     /// Disconnect from the NATS server
-    open func disconnect() {
+    public func disconnect() {
         logger.debug("Try to disconnect.")
         do {
             try self.channel?.close().wait()
@@ -58,7 +58,7 @@ extension NatsClient: NatsConnection {
 
     // MARK: - Internal Methods
 
-    open func reconnect() throws {
+    public func reconnect() throws {
         self.fire(.reconnecting)
 
         // disconnect - if not already
