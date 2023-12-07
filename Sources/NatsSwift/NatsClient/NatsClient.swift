@@ -65,7 +65,12 @@ extension Client {
         //TODO(jrm): reafactor for reconnection and review error handling.
         //TODO(jrm): handle response
         logger.debug("connect")
-        try await  self.connectionHandler.connect()
+        try await self.connectionHandler.connect()
+    }
+    
+    func publish(_ payload: String, subject: String) async throws {
+        logger.debug("publish")
+        try await self.connectionHandler.writeMessage(NatsMessage.publish(payload: payload, subject: subject))
     }
 }
 
@@ -76,6 +81,20 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
     internal var urls: [URL]
+    internal var state: NatsState = .disconnected
+    
+    func channelActive(context: ChannelHandlerContext) {
+        logger.debug("TCP channel active")
+        
+        self.state = .connected
+        inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
+    }
+    
+    func channelInactive(context: ChannelHandlerContext) {
+        logger.debug("TCP channel inactive")
+        
+        self.state = .disconnected
+    }
     
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         logger.debug("channel read")
@@ -100,10 +119,10 @@ class ConnectionHandler: ChannelInboundHandler {
             logger.debug("getting message type")
             guard let type = message.getMessageType() else { return }
             
-            if let continuation = self.firstMessageContinuation {
+            if let continuation = self.serverInfoContinuation {
                 logger.debug("first message callback")
                 continuation.resume(returning: message)
-                self.firstMessageContinuation = nil
+                self.serverInfoContinuation = nil
                 continue
             }
             
@@ -136,11 +155,12 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var group: MultiThreadedEventLoopGroup
     internal var channel: Channel?
     
-    private var firstMessageContinuation: CheckedContinuation<String, Error>?
+    private var serverInfoContinuation: CheckedContinuation<String, Error>?
     
     func connect() async throws {
         let firstMessage = try await withCheckedThrowingContinuation { continuation in
-            self.firstMessageContinuation = continuation
+            self.serverInfoContinuation = continuation
+            Task.detached {
                 do {
                     let bootstrap = ClientBootstrap(group: self.group)
                         .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
@@ -159,26 +179,35 @@ class ConnectionHandler: ChannelInboundHandler {
                     guard let url = self.urls.first, let host = url.host, let port = url.port else {
                         throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
                     }
-                    self.channel = try bootstrap.connect(host: host, port: port).wait()
+                    let connectFuture: EventLoopFuture<Channel> = bootstrap.connect(host: host, port: port)
+                    
+                    connectFuture.whenSuccess { channel in
+                        self.channel = channel
+                    }
+                    
+                    connectFuture.whenFailure { error in
+                        print(error)
+                    }
+                    self.channel = try await bootstrap.connect(host: host, port: port).get()
                 } catch {
                     continuation.resume(throwing: error)
                 }
+            }
             // Wait for the first message after sending the connect request
         }
         print("Received first message: \(firstMessage)")
         let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: false, lang: self.lang, version: self.version, natsProtocol: .original, tlsRequired: false, user: "", pass: "", authToken: "", headers: false, noResponders: false)
-        let connectProtoStr = "CONNECT "
-        guard var data = connectProtoStr.data(using: .utf8) else {
-            fatalError("Failed converting string to Data")
-        }
-        let connectInfo = try JSONEncoder().encode(connect)
-        data.append(connectInfo)
-        let dataStr = String(data:data, encoding: .utf8)
-        print("client connect: \(dataStr!)")
-        var buffer = self.allocator.buffer(capacity: data.count)
-        buffer.writeBytes(data)
-        let ioData: IOData = .byteBuffer(buffer)
-        try await self.channel?.writeAndFlush(ioData)
+
+        let connectStr = NatsMessage.connect(config: connect)
+        print(connectStr)
+        try await self.writeMessage(connectStr)
+    }
+    
+    func writeMessage(_ message: String) async throws {
+        print("msg: \(message)")
+        var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
+        buffer?.writeString(message)
+        try await self.channel?.writeAndFlush(buffer)
     }
 }
 
@@ -246,6 +275,17 @@ struct ConnectInfo: Encodable {
 enum NatsProtocol: Encodable {
     case original
     case dynamic
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+
+        switch self {
+            case .original:
+                try container.encode(0)
+            case .dynamic:
+                try container.encode(1)
+        }
+    }
 }
 
 

@@ -46,6 +46,12 @@ extension NatsMessage {
         guard let payload = data.toString() else { return "" }
         return "\(NatsOperation.connect.rawValue) \(payload)\r\n"
     }
+    
+    internal static func connect(config: ConnectInfo) -> String {
+        guard let data = try? JSONEncoder().encode(config) else { return "" }
+        guard let payload = data.toString() else { return "" }
+        return "\(NatsOperation.connect.rawValue) \(payload)\r\n"
+    }
 
     internal static func parse(_ message: String) -> NatsMessage? {
 
