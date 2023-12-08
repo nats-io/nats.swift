@@ -55,5 +55,4 @@ public struct NatsServer: Codable {
         self.connectUrls = data["connect_urls"] as? [String]
         self.tlsVerify = data["tls_verify"] as? Bool
     }
-
 }

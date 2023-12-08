@@ -70,7 +70,85 @@ extension Client {
     
     func publish(_ payload: String, subject: String) async throws {
         logger.debug("publish")
-        try await self.connectionHandler.writeMessage(NatsMessage.publish(payload: payload, subject: subject))
+        try await self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject))
+    }
+    
+    func subscribe(to subject: String) async throws -> Subscription {
+        logger.info("subscribe to subject \(subject)")
+        return try await self.connectionHandler.subscribe(subject)
+    }
+}
+
+// TODO(pp): Implement slow consumer
+class Subscription: AsyncIteratorProtocol {
+    typealias Element = NatsMessage
+    
+    private var buffer: [Element]
+    private let maxPending: UInt64
+    private var closed = false
+    private var continuation: CheckedContinuation<Element?, Never>?
+    private let lock = NSLock()
+    
+    private static let defaultMaxPending: UInt64 = 512*1024
+    
+    convenience init() {
+        self.init(maxPending: Subscription.defaultMaxPending)
+    }
+    
+    init(maxPending: uint64) {
+        self.maxPending = maxPending
+        self.buffer = []
+    }
+    
+    func next() async -> Element? {
+        let msg: NatsMessage? = lock.withLock {
+            if closed {
+                return nil
+            }
+
+            if let message = buffer.first {
+                buffer.removeFirst()
+                return message
+            }
+            return nil
+        }
+        if let msg {
+            return msg
+        }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+    
+    func receiveMessage(_ message: Element) {
+        lock.withLock {
+            if let continuation = self.continuation {
+                continuation.resume(returning: message)
+                self.continuation = nil
+            } else if buffer.count < maxPending {
+                buffer.append(message)
+            }
+        }
+     }
+
+     func complete() async {
+         lock.withLock {
+             closed = true
+             continuation?.resume(returning: nil)
+         }
+     }
+    
+}
+
+internal class SubscriptionCounter {
+    private var counter: UInt64 = 0
+    private let queue = DispatchQueue(label: "io.nats.swift.subscriptionCounter")
+    
+    func next() -> UInt64 {
+        queue.sync {
+            counter+=1
+            return counter
+        }
     }
 }
 
@@ -82,7 +160,10 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var inputBuffer: ByteBuffer
     internal var urls: [URL]
     internal var state: NatsState = .disconnected
-    
+    internal var subscriptions: [ UInt64: Subscription ]
+    internal var subscriptionCounter = SubscriptionCounter()
+    internal var serverInfo: ServerInfo?
+        
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
         
@@ -116,30 +197,57 @@ class ConnectionHandler: ChannelInboundHandler {
         logger.debug("parsing message")
         let messages = inputChunk.parseOutMessages()
         for message in messages {
-            logger.debug("getting message type")
-            guard let type = message.getMessageType() else { return }
+            logger.debug("getting message type from \(message)")
+            let op: ServerOp
+            do {
+                op = try ServerOp.parse(from: message)
+            } catch {
+                // TODO(pp): handle async error
+                logger.error("error parsing inbound msg: \(error)")
+                continue
+            }
             
             if let continuation = self.serverInfoContinuation {
-                logger.debug("first message callback")
-                continuation.resume(returning: message)
+                logger.debug("server info")
+                switch op {
+                case let .Error(err):
+                    continuation.resume(throwing: err)
+                case let .Info(info):
+                    continuation.resume(returning: info)
+                default:
+                    continuation.resume(throwing: NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unexpected operation; expected server info: \(message)"]))
+                }
                 self.serverInfoContinuation = nil
                 continue
             }
             
-            switch type {
-            case .ping:
+            if let continuation = self.connectionEstablishedContinuation {
+                logger.debug("conn established")
+                switch op {
+                case let .Error(err):
+                    continuation.resume(throwing: err)
+                default:
+                    continuation.resume()
+                }
+                self.connectionEstablishedContinuation = nil
+                continue
+            }
+            
+            switch op {
+            case .Ping:
                 logger.debug("ping")
-                let pong = NatsMessage.pong()
-                _ = self.channel?.write(pong)
+                var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
+                buffer?.writeString(OldNatsMessage.pong())
+                _ = self.channel?.writeAndFlush(buffer)
                 // self.sendMessage(NatsMessage.pong())
-            case .error:
-                logger.debug("error \(message)")
-            case .message:
-                logger.debug("message \(message)")
-                //   self.handleIncomingMessage(message)
-            case .info:
+            case let .Error(err):
+                logger.debug("error \(err)")
+            case let .Message(msg):
+                print("message \(message)")
+                self.handleIncomingMessage(msg)
+            case let .Info(serverInfo):
                 logger.debug("info \(message)")
-                //    self.updateServerInfo(with: message)
+                self.serverInfo = serverInfo
             default:
                 print("default")
             }
@@ -151,14 +259,16 @@ class ConnectionHandler: ChannelInboundHandler {
         self.urls = urls
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         self.inputBuffer = allocator.buffer(capacity: 1024)
+        self.subscriptions = [UInt64:Subscription]()
     }
     internal var group: MultiThreadedEventLoopGroup
     internal var channel: Channel?
     
-    private var serverInfoContinuation: CheckedContinuation<String, Error>?
+    private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
+    private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
     
     func connect() async throws {
-        let firstMessage = try await withCheckedThrowingContinuation { continuation in
+        let info = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
             Task.detached {
                 do {
@@ -179,15 +289,6 @@ class ConnectionHandler: ChannelInboundHandler {
                     guard let url = self.urls.first, let host = url.host, let port = url.port else {
                         throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
                     }
-                    let connectFuture: EventLoopFuture<Channel> = bootstrap.connect(host: host, port: port)
-                    
-                    connectFuture.whenSuccess { channel in
-                        self.channel = channel
-                    }
-                    
-                    connectFuture.whenFailure { error in
-                        print(error)
-                    }
                     self.channel = try await bootstrap.connect(host: host, port: port).get()
                 } catch {
                     continuation.resume(throwing: error)
@@ -195,12 +296,30 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             // Wait for the first message after sending the connect request
         }
-        print("Received first message: \(firstMessage)")
-        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: false, lang: self.lang, version: self.version, natsProtocol: .original, tlsRequired: false, user: "", pass: "", authToken: "", headers: false, noResponders: false)
-
-        let connectStr = NatsMessage.connect(config: connect)
-        print(connectStr)
-        try await self.writeMessage(connectStr)
+        print("Received first message: \(info)")
+        self.serverInfo = info
+        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: "", pass: "", authToken: "", headers: true, noResponders: true)
+        
+        try await withCheckedThrowingContinuation { continuation in
+            self.connectionEstablishedContinuation = continuation
+            Task.detached {
+                do {
+                    let connectStr = OldNatsMessage.connect(config: connect)
+                    print(connectStr)
+                    try await self.writeMessage(connectStr)
+                    try await self.writeMessage(OldNatsMessage.ping())
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+    
+    func handleIncomingMessage(_ message: MessageInbound) {
+        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length)
+        if let sub = self.subscriptions[message.sid] {
+            sub.receiveMessage(natsMsg)
+        }
     }
     
     func writeMessage(_ message: String) async throws {
@@ -208,6 +327,14 @@ class ConnectionHandler: ChannelInboundHandler {
         var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
         buffer?.writeString(message)
         try await self.channel?.writeAndFlush(buffer)
+    }
+    
+    func subscribe(_ subject: String) async throws -> Subscription {
+        let sid = self.subscriptionCounter.next()
+        try await writeMessage(OldNatsMessage.subscribe(subject: subject, sid: sid))
+        let sub = Subscription()
+        self.subscriptions[sid] = sub
+        return sub
     }
 }
 
@@ -275,15 +402,15 @@ struct ConnectInfo: Encodable {
 enum NatsProtocol: Encodable {
     case original
     case dynamic
-
+    
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-
+        
         switch self {
-            case .original:
-                try container.encode(0)
-            case .dynamic:
-                try container.encode(1)
+        case .original:
+            try container.encode(0)
+        case .dynamic:
+            try container.encode(1)
         }
     }
 }
@@ -299,8 +426,9 @@ open class NatsClient: NSObject {
     internal var server: NatsServer?
     internal var writeQueue = OperationQueue()
     internal var eventHandlerStore: [ NatsEvent: [ NatsEventHandler ] ] = [:]
-    internal var subjectHandlerStore: [ NatsSubject: (NatsMessage) -> Void] = [:]
+    internal var subjectHandlerStore: [ NatsSubject: (OldNatsMessage) -> Void] = [:]
     internal var messageQueue = OperationQueue()
+    
     public var connectionState: NatsState {
         get { return state }
     }
@@ -348,23 +476,23 @@ protocol NatsConnection {
 }
 
 protocol NatsSubscribe {
-    func subscribe(to subject: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject
-    func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject
+    func subscribe(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject
+    func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject
     func unsubscribe(from subject: NatsSubject)
     
-    func subscribeSync(to subject: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject
-    func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject
+    func subscribeSync(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject
+    func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject
     func unsubscribeSync(from subject: NatsSubject) throws
 }
 
 protocol NatsPublish {
     func publish(_ payload: String, to subject: String)
     func publish(_ payload: String, to subject: NatsSubject)
-    func reply(to message: NatsMessage, withPayload payload: String)
+    func reply(to message: OldNatsMessage, withPayload payload: String)
     
     func publishSync(_ payload: String, to subject: String) throws
     func publishSync(_ payload: String, to subject: NatsSubject) throws
-    func replySync(to message: NatsMessage, withPayload payload: String) throws
+    func replySync(to message: OldNatsMessage, withPayload payload: String) throws
 }
 
 protocol NatsEventBus {

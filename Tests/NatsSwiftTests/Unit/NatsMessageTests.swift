@@ -15,7 +15,7 @@ class NatsMessageTests: XCTestCase {
     func testMessageParser() {
 
         let str = "MSG swift.test 643CE192 6\r\ntest-1\r\n"
-        let message = NatsMessage.parse(str)
+        let message = OldNatsMessage.parse(str)
 
         XCTAssert(message?.payload == "test-1")
         XCTAssert(message?.subject.id == "643CE192")

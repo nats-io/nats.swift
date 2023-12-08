@@ -11,11 +11,11 @@ extension NatsClient: NatsSubscribe {
     // MARK: - Implement NatsSubscribe Protocol
 
     @discardableResult
-    open func subscribe(to subject: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject {
+    open func subscribe(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject {
         logger.info("subscribe to subject \(subject)")
         let nsub = NatsSubject(subject: subject)
 
-        self.sendMessage(NatsMessage.subscribe(subject: nsub.subject, sid: nsub.id))
+        self.sendMessage(OldNatsMessage.subscribe(subject: nsub.subject, sid: nsub.id))
 
         self.subjectHandlerStore[nsub] = handler
 
@@ -23,11 +23,11 @@ extension NatsClient: NatsSubscribe {
     }
 
     @discardableResult
-    open func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) -> NatsSubject {
+    open func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject {
         logger.info("subscribe to subject \(subject)")
         let nsub = NatsSubject(subject: subject)
 
-        self.sendMessage(NatsMessage.subscribe(subject: nsub.subject, sid: nsub.id, queue: queue))
+        self.sendMessage(OldNatsMessage.subscribe(subject: nsub.subject, sid: nsub.id, queue: queue))
 
         self.subjectHandlerStore[nsub] = handler
 
@@ -37,7 +37,7 @@ extension NatsClient: NatsSubscribe {
 
     open func unsubscribe(from subject: NatsSubject) {
         logger.info("unsubscribe from subject \(subject)")
-        self.sendMessage(NatsMessage.unsubscribe(sid: subject.id))
+        self.sendMessage(OldNatsMessage.unsubscribe(sid: subject.id))
         self.subjectHandlerStore[subject] = nil
 
     }
@@ -54,7 +54,7 @@ extension NatsClient: NatsSubscribe {
             group.leave()
         }
 
-        self.sendMessage(NatsMessage.unsubscribe(sid: subject.id))
+        self.sendMessage(OldNatsMessage.unsubscribe(sid: subject.id))
 
         group.wait()
 
@@ -67,18 +67,18 @@ extension NatsClient: NatsSubscribe {
     }
 
     @discardableResult
-    open func subscribeSync(to subject: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject {
+    open func subscribeSync(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject {
         return try subSync(to: subject, asPartOf: "", handler)
     }
 
     @discardableResult
-    open func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject {
+    open func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject {
         return try subSync(to: subject, asPartOf: queue, handler)
     }
 
     // MARK: - Private methods
 
-    private func subSync(to subject: String, asPartOf queue: String, _ handler: @escaping (NatsMessage) -> Void) throws -> NatsSubject {
+    private func subSync(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject {
         logger.info("subscribe synchronous from subject \(subject)")
         let group = DispatchGroup()
         group.enter()
@@ -91,7 +91,7 @@ extension NatsClient: NatsSubscribe {
         }
 
         let nsub = NatsSubject(subject: subject)
-        self.sendMessage(NatsMessage.subscribe(subject: nsub.subject, sid: nsub.id))
+        self.sendMessage(OldNatsMessage.subscribe(subject: nsub.subject, sid: nsub.id))
 
         group.wait()
 

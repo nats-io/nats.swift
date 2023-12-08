@@ -40,7 +40,7 @@ class SubscribeTests: XCTestCase {
         
         try? client.connect()
 
-        let handler: (NatsMessage) -> Void = { message in
+        let handler: (OldNatsMessage) -> Void = { message in
 
         }
 
