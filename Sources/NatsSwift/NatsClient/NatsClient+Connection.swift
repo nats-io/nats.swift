@@ -187,7 +187,7 @@ extension NatsClient: NatsConnection {
             "pass": password
             ] as [String : Any]
 
-        self.sendMessage(NatsMessage.connect(config: config))
+        self.sendMessage(OldNatsMessage.connect(config: config))
     }
 
 }

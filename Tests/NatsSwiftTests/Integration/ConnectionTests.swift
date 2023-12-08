@@ -20,10 +20,14 @@ class ConnectionTests: XCTestCase {
         logger.debug("Testing new client with log")
         let client = Client(url: URL(string: TestSettings.natsUrl)!)
         try await client.connect()
+        let sub = try await client.subscribe(to: "test")
+        try await client.publish("msg", subject: "test")
         
-        try await client.publish("gdsfgdsfg", subject: "cew")
+        if let msg = await sub.next() {
+            print("Received on \(msg.subject): \(msg.payload!)")
+        }
+        await sub.complete()
         
         XCTAssertNotNil(client, "Client should not be nil")
     }
-    
 }

@@ -12,14 +12,14 @@ extension NatsClient: NatsPublish {
 
     open func publish(_ payload: String, to subject: String) {
         logger.info("publish \(payload.count) characters to subject \(subject)")
-        sendMessage(NatsMessage.publish(payload: payload, subject: subject))
+        sendMessage(OldNatsMessage.publish(payload: payload, subject: subject))
     }
 
     open func publish(_ payload: String, to subject: NatsSubject) {
         publish(payload, to: subject.subject)
     }
 
-    open func reply(to message: NatsMessage, withPayload payload: String) {
+    open func reply(to message: OldNatsMessage, withPayload payload: String) {
         guard let replySubject = message.replySubject else { return }
         logger.info("reply \(payload.count) characters to subject \(replySubject.subject)")
         publish(payload, to: replySubject.subject)
@@ -51,7 +51,7 @@ extension NatsClient: NatsPublish {
         try publishSync(payload, to: subject.subject)
     }
 
-    open func replySync(to message: NatsMessage, withPayload payload: String) throws {
+    open func replySync(to message: OldNatsMessage, withPayload payload: String) throws {
         guard let replySubject = message.replySubject else { return }
         try publishSync(payload, to: replySubject.subject)
     }

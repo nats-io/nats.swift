@@ -36,7 +36,7 @@ extension NatsClient: ChannelInboundHandler {
 
             switch type {
             case .ping:
-                self.sendMessage(NatsMessage.pong())
+                self.sendMessage(OldNatsMessage.pong())
             case .ok:
                 self.fire(.response)
             case .error:
@@ -107,7 +107,7 @@ extension NatsClient {
             return
         }
 
-        guard let message = NatsMessage.parse(messageStr) else { return }
+        guard let message = OldNatsMessage.parse(messageStr) else { return }
 
         guard let handler = self.subjectHandlerStore[message.subject] else { return }
 
