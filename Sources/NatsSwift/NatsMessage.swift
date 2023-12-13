@@ -55,7 +55,7 @@ extension OldNatsMessage {
         guard let payload = data.toString() else { return "" }
         return "\(NatsOperation.connect.rawValue) \(payload)\r\n"
     }
-    
+
     internal static func connect(config: ConnectInfo) -> String {
         guard let data = try? JSONEncoder().encode(config) else { return "" }
         guard let payload = data.toString() else { return "" }
@@ -124,7 +124,7 @@ enum ServerOp {
     case Pong
     case Error(NatsError)
     case Message(MessageInbound)
-    
+
     static func parse(from message: String) throws -> ServerOp {
         guard message.count > 2 else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
@@ -150,7 +150,7 @@ enum ServerOp {
             guard isOperation(.info) else {
                 throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
             }
-            
+
             return try Info(ServerInfo.parse(message: message))
         case "+":
             guard isOperation(.ok) else {
@@ -179,7 +179,7 @@ internal struct MessageInbound {
     var reply: String?
     var payload: String?
     var length: UInt64
-    
+
     // Parse the operation syntax: MSG <subject> <sid> [reply-to] <#bytes>
     internal static func parse(message: String) throws -> MessageInbound {
         let components = message.components(separatedBy: CharacterSet.newlines).filter { !$0.isEmpty }
@@ -227,7 +227,7 @@ internal struct MessageInbound {
         default:
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
         }
-        
+
         return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: payload ,length: length)
     }
 }
@@ -286,7 +286,7 @@ struct ServerInfo: Codable {
         case headers
         case lameDuckMode = "ldm"
     }
-    
+
     internal static func parse(message: String) throws -> ServerInfo {
         let infoJSON = message.removeNewlines().removePrefix(NatsOperation.info.rawValue).data(using: .utf8)!
         return try JSONDecoder().decode(self, from: infoJSON)
@@ -299,23 +299,23 @@ enum ClientOp {
         var reply: String?
         var payload: String?
     }
-    
+
     internal struct SubscribeOp {
         var sid: UInt64
         var subject: String
         var queueGroup: String?
     }
-    
+
     internal struct UnsubscribeOp {
         var sid: UInt64
         var max: UInt64
     }
-    
+
     case Publish(MessageOp)
     case Subscribe(SubscribeOp)
     case Unsubscribe(UnsubscribeOp)
     case Connect(ConnectInfo)
-    
+
 //    internal func toCommand() throws -> String {
 //        let cmd: String
 //        switch self {
@@ -323,7 +323,7 @@ enum ClientOp {
 //            if let payload = msg.payload {
 //                print(payload)
 //            }
-//            
+//
 //        case let .Subscribe(sub):
 //            print(sub.subject)
 //        default:
