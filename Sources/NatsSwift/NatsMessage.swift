@@ -110,7 +110,7 @@ extension OldNatsMessage {
 }
 
 // TODO(pp) Add headers, status, description etc
-struct NatsMessage {
+public struct NatsMessage {
     public let payload: String?
     public let subject: String
     public let replySubject: String?
