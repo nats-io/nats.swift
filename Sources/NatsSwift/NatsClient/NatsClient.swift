@@ -123,7 +123,7 @@ public class Subscription: AsyncIteratorProtocol {
             self.continuation = continuation
         }
     }
-    
+
     func receiveMessage(_ message: Element) {
         lock.withLock {
             if let continuation = self.continuation {
@@ -141,13 +141,13 @@ public class Subscription: AsyncIteratorProtocol {
              continuation?.resume(returning: nil)
          }
      }
-    
+
 }
 
 internal class SubscriptionCounter {
     private var counter: UInt64 = 0
     private let queue = DispatchQueue(label: "io.nats.swift.subscriptionCounter")
-    
+
     func next() -> UInt64 {
         queue.sync {
             counter+=1
@@ -167,37 +167,37 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var subscriptions: [ UInt64: Subscription ]
     internal var subscriptionCounter = SubscriptionCounter()
     internal var serverInfo: ServerInfo?
-        
+
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
-        
+
         self.state = .connected
         inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
     }
-    
+
     func channelInactive(context: ChannelHandlerContext) {
         logger.debug("TCP channel inactive")
-        
+
         self.state = .disconnected
     }
-    
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         logger.debug("channel read")
         var byteBuffer = self.unwrapInboundIn(data)
         inputBuffer.writeBuffer(&byteBuffer)
     }
-    
+
     func channelReadComplete(context: ChannelHandlerContext) {
         logger.debug("Channel read complete")
-        
+
         let chunkLength = inputBuffer.readableBytes
-        
+
         logger.debug("reading string from buffer")
         guard let inputChunk = inputBuffer.readString(length: chunkLength) else {
             logger.warning("Input buffer can not read into string")
             return
         }
-        
+
         logger.debug("parsing message")
         let messages = inputChunk.parseOutMessages()
         for message in messages {
@@ -210,7 +210,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 logger.error("error parsing inbound msg: \(error)")
                 continue
             }
-            
+
             if let continuation = self.serverInfoContinuation {
                 logger.debug("server info")
                 switch op {
@@ -224,7 +224,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.serverInfoContinuation = nil
                 continue
             }
-            
+
             if let continuation = self.connectionEstablishedContinuation {
                 logger.debug("conn established")
                 switch op {
@@ -236,7 +236,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.connectionEstablishedContinuation = nil
                 continue
             }
-            
+
             switch op {
             case .Ping:
                 logger.debug("ping")
@@ -267,10 +267,10 @@ class ConnectionHandler: ChannelInboundHandler {
     }
     internal var group: MultiThreadedEventLoopGroup
     internal var channel: Channel?
-    
+
     private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
-    
+
     func connect() async throws {
         let info = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
@@ -303,7 +303,7 @@ class ConnectionHandler: ChannelInboundHandler {
         print("Received first message: \(info)")
         self.serverInfo = info
         let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: "", pass: "", authToken: "", headers: true, noResponders: true)
-        
+
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
             Task.detached {
@@ -312,27 +312,28 @@ class ConnectionHandler: ChannelInboundHandler {
                     print(connectStr)
                     try await self.writeMessage(connectStr)
                     try await self.writeMessage(OldNatsMessage.ping())
+                    self.channel?.flush()
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+        logger.debug("connection established")
     }
-    
+
     func handleIncomingMessage(_ message: MessageInbound) {
         let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
     }
-    
+
     func writeMessage(_ message: String) async throws {
-        print("msg: \(message)")
         var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
         buffer?.writeString(message)
         try await self.channel?.writeAndFlush(buffer)
     }
-    
+
     func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.next()
         try await writeMessage(OldNatsMessage.subscribe(subject: subject, sid: sid))
@@ -406,10 +407,10 @@ struct ConnectInfo: Encodable {
 enum NatsProtocol: Encodable {
     case original
     case dynamic
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        
+
         switch self {
         case .original:
             try container.encode(0)
@@ -426,13 +427,13 @@ open class NatsClient: NSObject {
     var urls = [String]()
     var connectedUrl: URL?
     public var config: NatsClientConfig
-    
+
     internal var server: NatsServer?
     internal var writeQueue = OperationQueue()
     internal var eventHandlerStore: [ NatsEvent: [ NatsEventHandler ] ] = [:]
     internal var subjectHandlerStore: [ NatsSubject: (OldNatsMessage) -> Void] = [:]
     internal var messageQueue = OperationQueue()
-    
+
     public var connectionState: NatsState {
         get { return state }
     }
@@ -454,18 +455,18 @@ open class NatsClient: NSObject {
     internal var thread: Thread?
     internal var channel: Channel?
     internal let dispatchGroup = DispatchGroup()
-    
+
     // Buffer where incoming messages will be stroed
     internal var inputBuffer: ByteBuffer?
-    
+
     public init(_ aUrls: [String], _ config: NatsClientConfig) {
         for u in aUrls { self.urls.append(u) }
         self.config = config
-        
+
         writeQueue.maxConcurrentOperationCount = 1
         logger.debug("Init NatsClient with config: \(config)")
     }
-    
+
     public convenience init(_ url: String, _ config: NatsClientConfig? = nil) {
         let config = config ?? NatsClientConfig()
         self.init([ url ], config)
@@ -483,7 +484,7 @@ protocol NatsSubscribe {
     func subscribe(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject
     func subscribe(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) -> NatsSubject
     func unsubscribe(from subject: NatsSubject)
-    
+
     func subscribeSync(to subject: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject
     func subscribeSync(to subject: String, asPartOf queue: String, _ handler: @escaping (OldNatsMessage) -> Void) throws -> NatsSubject
     func unsubscribeSync(from subject: NatsSubject) throws
@@ -493,7 +494,7 @@ protocol NatsPublish {
     func publish(_ payload: String, to subject: String)
     func publish(_ payload: String, to subject: NatsSubject)
     func reply(to message: OldNatsMessage, withPayload payload: String)
-    
+
     func publishSync(_ payload: String, to subject: String) throws
     func publishSync(_ payload: String, to subject: NatsSubject) throws
     func replySync(to message: OldNatsMessage, withPayload payload: String) throws
