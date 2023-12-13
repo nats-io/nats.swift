@@ -39,21 +39,21 @@ internal enum NatsOperation: String {
 }
 
 
-actor Client {
+public actor Client {
     var urls: [URL] = []
     var pingInteval: TimeInterval = 1.0
-    
+
     internal let allocator = ByteBufferAllocator()
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler
-    
-    init(urls: [URL]) {
+
+    public init(urls: [URL]) {
         self.urls = urls
         self.buffer = allocator.buffer(capacity: 1024)
         self.connectionHandler = ConnectionHandler(inputBuffer: buffer, urls: urls)
-        
+
     }
-    init(url: URL) {
+    public init(url: URL) {
         self.urls = [url]
         self.buffer = allocator.buffer(capacity: 1024)
         self.connectionHandler = ConnectionHandler(inputBuffer: buffer, urls: urls)
@@ -61,46 +61,50 @@ actor Client {
 }
 
 extension Client {
-    func connect() async throws  {
+    public func connect() async throws  {
         //TODO(jrm): reafactor for reconnection and review error handling.
         //TODO(jrm): handle response
         logger.debug("connect")
         try await self.connectionHandler.connect()
     }
-    
-    func publish(_ payload: String, subject: String) async throws {
+
+    public func publish(_ payload: String, subject: String) async throws {
         logger.debug("publish")
         try await self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject))
     }
-    
-    func subscribe(to subject: String) async throws -> Subscription {
+    public func flush() async throws {
+        logger.debug("flush")
+        self.connectionHandler.channel?.flush()
+    }
+
+    public func subscribe(to subject: String) async throws -> Subscription {
         logger.info("subscribe to subject \(subject)")
         return try await self.connectionHandler.subscribe(subject)
     }
 }
 
 // TODO(pp): Implement slow consumer
-class Subscription: AsyncIteratorProtocol {
-    typealias Element = NatsMessage
-    
+public class Subscription: AsyncIteratorProtocol {
+    public typealias Element = NatsMessage
+
     private var buffer: [Element]
     private let maxPending: UInt64
     private var closed = false
     private var continuation: CheckedContinuation<Element?, Never>?
     private let lock = NSLock()
-    
+
     private static let defaultMaxPending: UInt64 = 512*1024
-    
+
     convenience init() {
         self.init(maxPending: Subscription.defaultMaxPending)
     }
-    
+
     init(maxPending: uint64) {
         self.maxPending = maxPending
         self.buffer = []
     }
-    
-    func next() async -> Element? {
+
+    public func next() async -> Element? {
         let msg: NatsMessage? = lock.withLock {
             if closed {
                 return nil
