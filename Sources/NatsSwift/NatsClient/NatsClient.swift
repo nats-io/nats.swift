@@ -21,7 +21,7 @@ public enum NatsEvent: String {
     case error          = "error"
     case dropped        = "dropped"
     case reconnecting   = "reconnecting"
-    case informed       = "informed" 
+    case informed       = "informed"
     static let all      = [ connected, disconnected, response, error, dropped, reconnecting ]
 }
 
@@ -39,7 +39,7 @@ internal enum NatsOperation: String {
 }
 
 
-public actor Client {
+public class Client {
     var urls: [URL] = []
     var pingInteval: TimeInterval = 1.0
 
@@ -68,10 +68,14 @@ extension Client {
         try await self.connectionHandler.connect()
     }
 
-    public func publish(_ payload: String, subject: String) async throws {
+    public func publish(_ payload: String, subject: String)  throws {
         logger.debug("publish")
-        try await self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject))
+        guard let allocator = self.connectionHandler.channel?.allocator else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no allocator"])
+        }
+        try  self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject, using: allocator))
     }
+
     public func flush() async throws {
         logger.debug("flush")
         self.connectionHandler.channel?.flush()
@@ -312,12 +316,15 @@ class ConnectionHandler: ChannelInboundHandler {
                     print(connectStr)
                     try await self.writeMessage(connectStr)
                     try await self.writeMessage(OldNatsMessage.ping())
+                    print("ping sent")
                     self.channel?.flush()
+                    print("flushed")
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
+        print("connection established")
         logger.debug("connection established")
     }
 
@@ -328,11 +335,13 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    func writeMessage(_ message: String) async throws {
-        var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
-        buffer?.writeString(message)
-        try await self.channel?.writeAndFlush(buffer)
+    func writeMessage(_ message: ByteBuffer)  throws {
+        try channel?.write(message)
     }
+
+    func writeMessage(_ message: String) async throws {
+           let buffer = self.channel?.allocator.buffer(string: message)
+        try await channel?.write(buffer)}
 
     func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.next()

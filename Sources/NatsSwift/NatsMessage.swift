@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import NIO
 
 // TODO(pp): rework to have seperate structs for sending NatsMsg and for server operations (info, message with subscription ID, error etc)
 public struct OldNatsMessage {
@@ -26,10 +27,12 @@ public struct OldNatsMessage {
 }
 
 extension OldNatsMessage {
-
-    internal static func publish(payload: String, subject: String) -> String {
-        guard let data = payload.data(using: String.Encoding.utf8) else { return "" }
-        return "\(NatsOperation.publish.rawValue) \(subject) \(data.count)\r\n\(payload)\r\n"
+    internal static func publish(payload: String, subject: String, using allocator: ByteBufferAllocator) -> ByteBuffer {
+        var buffer = allocator.buffer(capacity: payload.utf8.count + subject.utf8.count + NatsOperation.publish.rawValue.count + 10) // Estimated capacity
+        buffer.writeString("\(NatsOperation.publish.rawValue) \(subject) \(payload.utf8.count)\r\n")
+        buffer.writeString(payload)
+        buffer.writeString("\r\n")
+        return buffer
     }
     internal static func subscribe(subject: String, sid: String, queue: String = "") -> String {
         return "\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n"
