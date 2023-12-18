@@ -336,7 +336,10 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func writeMessage(_ message: ByteBuffer)  throws {
-        try channel?.write(message)
+        try! channel?.write(message)
+        if channel?.isWritable ?? true {
+            channel?.flush()
+        }
     }
 
     func writeMessage(_ message: String) async throws {
