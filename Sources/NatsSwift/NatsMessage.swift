@@ -34,6 +34,21 @@ extension OldNatsMessage {
         buffer.writeString("\r\n")
         return buffer
     }
+    internal static func publish(payload: Data?, subject: String, using allocator: ByteBufferAllocator) -> ByteBuffer {
+        var buffer: ByteBuffer
+        if let payload {
+            buffer = allocator.buffer(capacity: payload.count + subject.utf8.count + NatsOperation.publish.rawValue.count + 10) // Estimated capacity
+            buffer.writeString("\(NatsOperation.publish.rawValue) \(subject) \(payload.count)\r\n")
+            buffer.writeData(payload)
+            buffer.writeString("\r\n")
+        } else {
+            buffer = allocator.buffer(capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 10) // Estimated capacity
+            buffer.writeString("\(NatsOperation.publish.rawValue) \(subject) 0\r\n")
+            buffer.writeString("\r\n")
+        }
+       
+        return buffer
+    }
     internal static func subscribe(subject: String, sid: String, queue: String = "") -> String {
         return "\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n"
     }
@@ -114,7 +129,7 @@ extension OldNatsMessage {
 
 // TODO(pp) Add headers, status, description etc
 public struct NatsMessage {
-    public let payload: String?
+    public let payload: Data?
     public let subject: String
     public let replySubject: String?
     public let length: UInt64
@@ -128,47 +143,27 @@ enum ServerOp {
     case Error(NatsError)
     case Message(MessageInbound)
 
-    static func parse(from message: String) throws -> ServerOp {
+    static func parse(from message: Data) throws -> ServerOp {
         guard message.count > 2 else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
         }
-
-        let isOperation: ((NatsOperation) -> Bool) = { no in
-            let l = no.rawValue.count - 1
-            guard message.count > l else { return false }
-            let operation = String(message[0...l]).uppercased()
-            guard operation == no.rawValue else { return false }
-            return true
-        }
-
-        let firstCharacter = String(message[0...0]).uppercased()
-
-        switch firstCharacter {
-        case "M":
-            guard isOperation(.message) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
-            }
-            return try Message(MessageInbound.parse(message: message))
-        case "I":
-            guard isOperation(.info) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
-            }
-
-            return try Info(ServerInfo.parse(message: message))
-        case "+":
-            guard isOperation(.ok) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
-            }
+        let msgType = message.getMessageType()
+        switch msgType {
+        case .message:
+            return try Message(MessageInbound.parse(data: message))
+        case .info:
+            return try Info(ServerInfo.parse(data: message))
+        case .ok:
             return Ok
-        case "-":
-            guard isOperation(.error) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
+        case .error:
+            if let errMsg = message.toString() {
+                return Error(NatsConnectionError(errMsg))
             }
-            return Error(NatsConnectionError(message))
-        case "P":
-            if isOperation(.ping) { return Ping }
-            if isOperation(.pong) { return Pong }
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
+            return Error(NatsConnectionError("unexpected error"))
+        case .ping:
+            return Ping
+        case .pong:
+            return Pong
         default:
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
         }
@@ -180,58 +175,50 @@ internal struct MessageInbound {
     var subject: String
     var sid: UInt64
     var reply: String?
-    var payload: String?
+    var payload: Data?
     var length: UInt64
 
     // Parse the operation syntax: MSG <subject> <sid> [reply-to] <#bytes>
-    internal static func parse(message: String) throws -> MessageInbound {
-        let components = message.components(separatedBy: CharacterSet.newlines).filter { !$0.isEmpty }
+    internal static func parse(data: Data) throws -> MessageInbound {
+        let newline = UInt8(ascii: "\n")
+        let space = UInt8(ascii: " ")
+        var components = data.split(separator: newline).filter { !$0.isEmpty }
 
-        if components.count <= 0 {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
+        guard let headerData = components.first else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message"])
         }
 
-        let payload = components[1]
-        let header = components[0]
-            .removePrefix(NatsOperation.message.rawValue)
-            .components(separatedBy: CharacterSet.whitespaces)
+        let payloadData = components.dropFirst().reduce(Data(), +)
+        let headerComponents = headerData
+            .dropFirst(NatsOperation.message.rawValue.count)  // Assuming the message starts with "MSG "
+            .split(separator: space)
             .filter { !$0.isEmpty }
 
-        let subject: String
-        let sid: UInt64
+        guard let subjectData = headerComponents.first,
+              let sidData = headerComponents.dropFirst().first,
+              let lengthData = headerComponents.dropFirst(2).first else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message header"])
+        }
+
+        let subject = String(decoding: subjectData, as: UTF8.self)
+        guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse subscription ID as number"])
+        }
+
         let length: UInt64
         let replySubject: String?
 
-        switch (header.count) {
-        case 3:
-            subject = header[0]
-            guard let parsedID = UInt64(header[1]) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse subscription ID as number: \(header[1])"])
-            }
-            sid = parsedID
-            guard let parsedLen = UInt64(header[2]) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse message length as number: \(header[2])"])
-            }
-            length = parsedLen
+        if headerComponents.count == 3 {
+            length = UInt64(String(decoding: lengthData, as: UTF8.self)) ?? 0
             replySubject = nil
-            break
-        case 4:
-            subject = header[0]
-            guard let parsedID = UInt64(header[1]) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse subscription ID as number: \(header[1])"])
-            }
-            sid = parsedID
-            replySubject = nil
-            guard let parsedLen = UInt64(header[2]) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse message length as number: \(header[3])"])
-            }
-            length = parsedLen
-            break
-        default:
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
+        } else if headerComponents.count == 4 {
+            replySubject = String(decoding: headerComponents[2], as: UTF8.self)
+            length = UInt64(String(decoding: headerComponents[3], as: UTF8.self)) ?? 0
+        } else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message header"])
         }
 
-        return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: payload ,length: length)
+        return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: payloadData, length: length)
     }
 }
 
@@ -290,9 +277,9 @@ struct ServerInfo: Codable {
         case lameDuckMode = "ldm"
     }
 
-    internal static func parse(message: String) throws -> ServerInfo {
-        let infoJSON = message.removeNewlines().removePrefix(NatsOperation.info.rawValue).data(using: .utf8)!
-        return try JSONDecoder().decode(self, from: infoJSON)
+    internal static func parse(data: Data) throws -> ServerInfo {
+        let info = data.removePrefix(NatsOperation.info.rawValue.data(using: .utf8)!)
+        return try JSONDecoder().decode(self, from: info)
     }
 }
 

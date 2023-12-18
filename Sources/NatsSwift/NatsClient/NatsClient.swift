@@ -5,6 +5,7 @@
 
 import Foundation
 import NIO
+import NIOFoundationCompat
 import Dispatch
 
 /// Client connection states
@@ -36,6 +37,14 @@ internal enum NatsOperation: String {
     case error          = "-ERR"
     case ping           = "PING"
     case pong           = "PONG"
+    
+    var rawBytes: [UInt8] {
+        return Array(self.rawValue.utf8)
+    }
+
+    static func allOperations() -> [NatsOperation] {
+        return [.connect, .subscribe, .unsubscribe, .publish, .message, .info, .ok, .error, .ping, .pong]
+    }
 }
 
 
@@ -68,12 +77,12 @@ extension Client {
         try await self.connectionHandler.connect()
     }
 
-    public func publish(_ payload: String, subject: String)  throws {
+    public func publish(_ payload: Data, subject: String)  throws {
         logger.debug("publish")
         guard let allocator = self.connectionHandler.channel?.allocator else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no allocator"])
         }
-        try  self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject, using: allocator))
+        try self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject, using: allocator))
     }
 
     public func flush() async throws {
@@ -194,13 +203,8 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelReadComplete(context: ChannelHandlerContext) {
         logger.debug("Channel read complete")
 
-        let chunkLength = inputBuffer.readableBytes
-
         logger.debug("reading string from buffer")
-        guard let inputChunk = inputBuffer.readString(length: chunkLength) else {
-            logger.warning("Input buffer can not read into string")
-            return
-        }
+        let inputChunk = Data(buffer: inputBuffer)
 
         logger.debug("parsing message")
         let messages = inputChunk.parseOutMessages()
@@ -244,14 +248,13 @@ class ConnectionHandler: ChannelInboundHandler {
             switch op {
             case .Ping:
                 logger.debug("ping")
-                var buffer = self.channel?.allocator.buffer(capacity: message.utf8.count)
+                var buffer = self.channel?.allocator.buffer(capacity: message.count)
                 buffer?.writeString(OldNatsMessage.pong())
                 _ = self.channel?.writeAndFlush(buffer)
                 // self.sendMessage(NatsMessage.pong())
             case let .Error(err):
                 logger.debug("error \(err)")
             case let .Message(msg):
-                print("message \(message)")
                 self.handleIncomingMessage(msg)
             case let .Info(serverInfo):
                 logger.debug("info \(message)")
@@ -336,7 +339,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func writeMessage(_ message: ByteBuffer)  throws {
-        try! channel?.write(message)
+        channel?.write(message)
         if channel?.isWritable ?? true {
             channel?.flush()
         }

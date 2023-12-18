@@ -25,10 +25,13 @@ class ConnectionTests: XCTestCase {
         logger.logLevel = .debug
         print("Testing new client")
         logger.debug("Testing new client with log")
+        print(natsServer.clientURL)
         let client = Client(url: URL(string: natsServer.clientURL)!)
         try await client.connect()
+        print("connected")
         let sub = try await client.subscribe(to: "test")
-        try client.publish("msg", subject: "test")
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        print("PUBLISHED successfully")
 
         if let msg = await sub.next() {
             print("Received on \(msg.subject): \(msg.payload!)")

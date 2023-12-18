@@ -17,7 +17,8 @@ let package = Package(
     targets: [
         .target(name: "NatsSwift", dependencies: [
             .product(name: "NIO", package: "swift-nio"),
-            .product(name: "Logging", package: "swift-log")
+            .product(name: "Logging", package: "swift-log"),
+            .product(name: "NIOFoundationCompat", package: "swift-nio")
         ]),
         .testTarget(name: "NatsSwiftTests", dependencies: ["NatsSwift"]),
 

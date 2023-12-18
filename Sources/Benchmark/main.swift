@@ -6,7 +6,7 @@ print("Connecting...")
 try! await nats.connect()
 print("Connected!")
 
-let data = "foo"
+let data = "foo".data(using: .utf8)!
 // Warmup
 print("Warming up...")
 for _ in 0..<10_000 {
