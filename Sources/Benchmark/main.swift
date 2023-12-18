@@ -14,9 +14,13 @@ for _ in 0..<10_000 {
 }
 print("Starting benchmark...")
 let now = DispatchTime.now()
-for _ in 0..<10_000_000 {
+let numMsgs = 10_000_000
+for _ in 0..<numMsgs {
     try!  nats.publish(data, subject: "foo")
 }
 try! await nats.flush()
 let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
+let msgsPerSec: Double = Double(numMsgs)/(Double(elapsed)/1_000_000_000)
 print("Elapsed: \(elapsed / 1000000)ms")
+print("\(msgsPerSec) msgs/s")
+
