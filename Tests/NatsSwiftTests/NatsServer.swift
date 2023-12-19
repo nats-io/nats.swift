@@ -45,7 +45,6 @@ class NatsServer {
         outputHandle.readabilityHandler = { fileHandle in
             let data = fileHandle.availableData
             if let line = String(data: data, encoding: .utf8) {
-                print(line)
                 lineCount += 1
 
                 serverError = self.extracErrorMessage(from: line)
