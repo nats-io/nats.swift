@@ -77,12 +77,9 @@ extension Client {
         try await self.connectionHandler.connect()
     }
 
-    public func publish(_ payload: Data, subject: String)  throws {
+    public func publish(_ payload: Data, subject: String) throws {
         logger.debug("publish")
-        guard let allocator = self.connectionHandler.channel?.allocator else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no allocator"])
-        }
-        try self.connectionHandler.writeMessage(OldNatsMessage.publish(payload: payload, subject: subject, using: allocator))
+        try self.connectionHandler.write(operation: ClientOp.Publish((subject, nil, payload)))
     }
 
     public func flush() async throws {
@@ -248,10 +245,13 @@ class ConnectionHandler: ChannelInboundHandler {
             switch op {
             case .Ping:
                 logger.debug("ping")
-                var buffer = self.channel?.allocator.buffer(capacity: message.count)
-                buffer?.writeString(OldNatsMessage.pong())
-                _ = self.channel?.writeAndFlush(buffer)
-                // self.sendMessage(NatsMessage.pong())
+                do {
+                    try self.write(operation: .Pong)
+                } catch {
+                    // TODO(pp): handle async error
+                    logger.error("error sending pong: \(error)")
+                    continue
+                }
             case let .Error(err):
                 logger.debug("error \(err)")
             case let .Message(msg):
@@ -315,10 +315,8 @@ class ConnectionHandler: ChannelInboundHandler {
             self.connectionEstablishedContinuation = continuation
             Task.detached {
                 do {
-                    let connectStr = OldNatsMessage.connect(config: connect)
-                    print(connectStr)
-                    try await self.writeMessage(connectStr)
-                    try await self.writeMessage(OldNatsMessage.ping())
+                    try self.write(operation: ClientOp.Connect(connect))
+                    try self.write(operation: ClientOp.Ping)
                     print("ping sent")
                     self.channel?.flush()
                     print("flushed")
@@ -337,6 +335,14 @@ class ConnectionHandler: ChannelInboundHandler {
             sub.receiveMessage(natsMsg)
         }
     }
+    
+    func write(operation: ClientOp) throws {
+        guard let allocator = self.channel?.allocator else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no allocator"])
+        }
+        let payload = try operation.asBytes(using: allocator)
+        try self.writeMessage(payload)
+    }
 
     func writeMessage(_ message: ByteBuffer)  throws {
         channel?.write(message)
@@ -345,13 +351,9 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    func writeMessage(_ message: String) async throws {
-           let buffer = self.channel?.allocator.buffer(string: message)
-        try await channel?.write(buffer)}
-
     func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.next()
-        try await writeMessage(OldNatsMessage.subscribe(subject: subject, sid: sid))
+        try write(operation: ClientOp.Subscribe((sid, subject, nil)))
         let sub = Subscription()
         self.subscriptions[sid] = sub
         return sub
