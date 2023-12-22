@@ -31,7 +31,7 @@ class ConnectionTests: XCTestCase {
         try client.publish("msg".data(using: .utf8)!, subject: "test")
 
         if let msg = await sub.next() {
-            print("Received on \(msg.subject): \(msg.payload!)")
+            print("Received on \(msg.subject): \(msg.payload!.toString()!)")
         }
         await sub.complete()
 

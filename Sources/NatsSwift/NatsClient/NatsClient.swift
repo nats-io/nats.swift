@@ -205,17 +205,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
         logger.debug("parsing message")
         let messages = inputChunk.parseOutMessages()
-        for message in messages {
-            logger.debug("getting message type from \(message)")
-            let op: ServerOp
-            do {
-                op = try ServerOp.parse(from: message)
-            } catch {
-                // TODO(pp): handle async error
-                logger.error("error parsing inbound msg: \(error)")
-                continue
-            }
-
+        for op in messages {
             if let continuation = self.serverInfoContinuation {
                 logger.debug("server info")
                 switch op {
@@ -224,7 +214,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 case let .Info(info):
                     continuation.resume(returning: info)
                 default:
-                    continuation.resume(throwing: NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unexpected operation; expected server info: \(message)"]))
+                    continuation.resume(throwing: NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unexpected operation; expected server info: \(op)"]))
                 }
                 self.serverInfoContinuation = nil
                 continue
@@ -257,7 +247,7 @@ class ConnectionHandler: ChannelInboundHandler {
             case let .Message(msg):
                 self.handleIncomingMessage(msg)
             case let .Info(serverInfo):
-                logger.debug("info \(message)")
+                logger.debug("info \(op)")
                 self.serverInfo = serverInfo
             default:
                 print("default")
