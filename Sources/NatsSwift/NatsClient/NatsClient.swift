@@ -37,7 +37,7 @@ internal enum NatsOperation: String {
     case error          = "-ERR"
     case ping           = "PING"
     case pong           = "PONG"
-    
+
     var rawBytes: [UInt8] {
         return Array(self.rawValue.utf8)
     }
@@ -77,9 +77,9 @@ extension Client {
         try await self.connectionHandler.connect()
     }
 
-    public func publish(_ payload: Data, subject: String) throws {
+    public func publish(_ payload: Data, subject: String, reply: String? = nil) throws {
         logger.debug("publish")
-        try self.connectionHandler.write(operation: ClientOp.Publish((subject, nil, payload)))
+        try self.connectionHandler.write(operation: ClientOp.Publish((subject, reply, payload)))
     }
 
     public func flush() async throws {
@@ -325,7 +325,7 @@ class ConnectionHandler: ChannelInboundHandler {
             sub.receiveMessage(natsMsg)
         }
     }
-    
+
     func write(operation: ClientOp) throws {
         guard let allocator = self.channel?.allocator else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no allocator"])
