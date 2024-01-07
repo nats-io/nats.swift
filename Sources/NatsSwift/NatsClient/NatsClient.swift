@@ -117,6 +117,7 @@ public class Subscription: AsyncIteratorProtocol {
     public func next() async -> Element? {
         let msg: NatsMessage? = lock.withLock {
             if closed {
+                print("closed")
                 return nil
             }
 
@@ -130,7 +131,9 @@ public class Subscription: AsyncIteratorProtocol {
             return msg
         }
         return await withCheckedContinuation { continuation in
-            self.continuation = continuation
+            lock.withLock{
+                self.continuation = continuation
+            }
         }
     }
 
@@ -177,6 +180,9 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var subscriptions: [ UInt64: Subscription ]
     internal var subscriptionCounter = SubscriptionCounter()
     internal var serverInfo: ServerInfo?
+    private var parseRemainder: Data?
+    
+    private var previousChunk: Data?
 
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
@@ -198,14 +204,18 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
-        logger.debug("Channel read complete")
+        var inputChunk = Data(buffer: inputBuffer)
+        
+        if let remainder = self.parseRemainder {
+            inputChunk.prepend(remainder)
+        }
 
-        logger.debug("reading string from buffer")
-        let inputChunk = Data(buffer: inputBuffer)
-
-        logger.debug("parsing message")
-        let messages = inputChunk.parseOutMessages()
-        for op in messages {
+        self.parseRemainder = nil
+        let parseResult = inputChunk.parseOutMessages()
+        if let remainder = parseResult.remainder {
+            self.parseRemainder = remainder
+        }
+        for op in parseResult.ops {
             if let continuation = self.serverInfoContinuation {
                 logger.debug("server info")
                 switch op {
@@ -250,9 +260,10 @@ class ConnectionHandler: ChannelInboundHandler {
                 logger.debug("info \(op)")
                 self.serverInfo = serverInfo
             default:
-                print("default")
+                logger.debug("unknown operation type")
             }
         }
+        self.previousChunk = inputChunk
         inputBuffer.clear()
     }
     init(inputBuffer: ByteBuffer, urls: [URL]) {
@@ -297,7 +308,6 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             // Wait for the first message after sending the connect request
         }
-        print("Received first message: \(info)")
         self.serverInfo = info
         let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: "", pass: "", authToken: "", headers: true, noResponders: true)
 
@@ -307,15 +317,12 @@ class ConnectionHandler: ChannelInboundHandler {
                 do {
                     try self.write(operation: ClientOp.Connect(connect))
                     try self.write(operation: ClientOp.Ping)
-                    print("ping sent")
                     self.channel?.flush()
-                    print("flushed")
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
-        print("connection established")
         logger.debug("connection established")
     }
 

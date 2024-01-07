@@ -22,7 +22,8 @@ let package = Package(
         ]),
         .testTarget(name: "NatsSwiftTests", dependencies: ["NatsSwift"]),
 
-        .executableTarget(name: "Benchmark", dependencies: ["NatsSwift"])
+        .executableTarget(name: "Benchmark", dependencies: ["NatsSwift"]),
+        .executableTarget(name: "BenchmarkPubSub", dependencies: ["NatsSwift"])
     ]
 )
 
