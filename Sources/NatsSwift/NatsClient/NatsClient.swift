@@ -182,8 +182,6 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var serverInfo: ServerInfo?
     private var parseRemainder: Data?
     
-    private var previousChunk: Data?
-
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
 
@@ -263,7 +261,6 @@ class ConnectionHandler: ChannelInboundHandler {
                 logger.debug("unknown operation type")
             }
         }
-        self.previousChunk = inputChunk
         inputBuffer.clear()
     }
     init(inputBuffer: ByteBuffer, urls: [URL]) {

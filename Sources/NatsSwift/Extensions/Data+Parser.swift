@@ -63,11 +63,11 @@ extension Data {
         return self.prefix(bytes.count).elementsEqual(bytes)
     }
     
-    mutating func prepend(_ other: Data) {
+    internal mutating func prepend(_ other: Data) {
         self = other + self
     }
     
-    func parseOutMessages() -> (ops: [ServerOp], remainder: Data?) {
+    internal func parseOutMessages() -> (ops: [ServerOp], remainder: Data?) {
         var serverOps = [ServerOp]()
         var startIndex = self.startIndex
         var remainder: Data?

@@ -17,21 +17,15 @@ let now = DispatchTime.now()
 let numMsgs = 1_000_000
 let sub = try await nats.subscribe(to: "foo")
 try await withThrowingTaskGroup(of: Void.self) { group in
-    // Adding a task for subscription
     group.addTask {
-        var diffFound = false
         for i in 0..<numMsgs {
-            let msg = await sub.next() // Assuming 'sub.next()' is an async function
-            if i % 1000 == 0 {
-                print("received \(i) msgs: \(String(data: msg!.payload!, encoding: .utf8))")
-            }
+            let msg = await sub.next()
         }
     }
 
-    // Adding a task for publishing
     group.addTask {
         for i in 0..<numMsgs {
-            try nats.publish("\(i)".data(using: .utf8)!, subject: "foo") // Assuming 'nats.publish()' is an async throwing function
+            try nats.publish("\(i)".data(using: .utf8)!, subject: "foo") 
             if i%1000 == 0 {
                 print("published \(i) msgs")
             }

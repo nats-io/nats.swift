@@ -42,7 +42,7 @@ enum ServerOp {
 }
 
 // TODO(pp): add headers and HMSG parsing
-internal struct MessageInbound {
+internal struct MessageInbound: Equatable {
     private static let newline = UInt8(ascii: "\n")
     private static let space = UInt8(ascii: " ")
     var subject: String
@@ -87,7 +87,7 @@ internal struct MessageInbound {
 
 
 /// Struct representing server information in NATS.
-struct ServerInfo: Codable {
+struct ServerInfo: Codable, Equatable {
     /// The unique identifier of the NATS server.
     let serverId: String
     /// Generated Server Name.
