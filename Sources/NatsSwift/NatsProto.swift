@@ -6,6 +6,27 @@
 import Foundation
 import NIO
 
+internal enum NatsOperation: String {
+    case connect        = "CONNECT"
+    case subscribe      = "SUB"
+    case unsubscribe    = "UNSUB"
+    case publish        = "PUB"
+    case message        = "MSG"
+    case info           = "INFO"
+    case ok             = "+OK"
+    case error          = "-ERR"
+    case ping           = "PING"
+    case pong           = "PONG"
+
+    var rawBytes: [UInt8] {
+        return Array(self.rawValue.utf8)
+    }
+
+    static func allOperations() -> [NatsOperation] {
+        return [.connect, .subscribe, .unsubscribe, .publish, .message, .info, .ok, .error, .ping, .pong]
+    }
+}
+
 enum ServerOp {
     case Ok
     case Info(ServerInfo)
@@ -200,5 +221,82 @@ enum ClientOp {
             buffer.writeString("\(NatsOperation.pong.rawValue)\r\n")
         }
         return buffer
+    }
+}
+
+/// Info to construct a CONNECT message.
+struct ConnectInfo: Encodable {
+    /// Turns on +OK protocol acknowledgments.
+    var verbose: Bool
+    /// Turns on additional strict format checking, e.g. for properly formed
+    /// subjects.
+    var pedantic: Bool
+    /// User's JWT.
+    var userJwt: String?
+    /// Public nkey.
+    var nkey: String
+    /// Signed nonce, encoded to Base64URL.
+    var signature: String?
+    /// Optional client name.
+    var name: String
+    /// If set to `true`, the server (version 1.2.0+) will not send originating
+    /// messages from this connection to its own subscriptions. Clients should
+    /// set this to `true` only for server supporting this feature, which is
+    /// when proto in the INFO protocol is set to at least 1.
+    var echo: Bool
+    /// The implementation language of the client.
+    var lang: String
+    /// The version of the client.
+    var version: String
+    /// Sending 0 (or absent) indicates client supports original protocol.
+    /// Sending 1 indicates that the client supports dynamic reconfiguration
+    /// of cluster topology changes by asynchronously receiving INFO messages
+    /// with known servers it can reconnect to.
+    var natsProtocol: NatsProtocol
+    /// Indicates whether the client requires an SSL connection.
+    var tlsRequired: Bool
+    /// Connection username (if `auth_required` is set)
+    var user: String
+    /// Connection password (if auth_required is set)
+    var pass: String
+    /// Client authorization token (if auth_required is set)
+    var authToken: String
+    /// Whether the client supports the usage of headers.
+    var headers: Bool
+    /// Whether the client supports no_responders.
+    var noResponders: Bool
+    enum CodingKeys: String, CodingKey {
+        case verbose
+        case pedantic
+        case userJwt = "user_jwt"
+        case nkey
+        case signature = "sig" // Custom key name for JSON
+        case name
+        case echo
+        case lang
+        case version
+        case natsProtocol = "protocol"
+        case tlsRequired = "tls_required"
+        case user
+        case pass
+        case authToken = "auth_token"
+        case headers
+        case noResponders = "no_responders"
+    }
+}
+
+enum NatsProtocol: Encodable {
+    case original
+    case dynamic
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+
+        switch self {
+        case .original:
+            try container.encode(0)
+        case .dynamic:
+            try container.encode(1)
+        }
     }
 }

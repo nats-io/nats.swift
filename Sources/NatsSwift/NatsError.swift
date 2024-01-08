@@ -3,6 +3,7 @@
 //  NatsSwift
 //
 
+// TODO(pp): For now we're using error implementation from old codebase, consider changing
 protocol NatsError: Error {
     var description: String { get set }
 }
