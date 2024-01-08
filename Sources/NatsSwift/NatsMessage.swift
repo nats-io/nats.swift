@@ -132,5 +132,5 @@ public struct NatsMessage {
     public let payload: Data?
     public let subject: String
     public let replySubject: String?
-    public let length: UInt64
+    public let length: Int
 }

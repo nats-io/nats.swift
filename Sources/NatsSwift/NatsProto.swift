@@ -42,14 +42,14 @@ enum ServerOp {
 }
 
 // TODO(pp): add headers and HMSG parsing
-internal struct MessageInbound {
+internal struct MessageInbound: Equatable {
     private static let newline = UInt8(ascii: "\n")
     private static let space = UInt8(ascii: " ")
     var subject: String
     var sid: UInt64
     var reply: String?
     var payload: Data?
-    var length: UInt64
+    var length: Int
     
     // Parse the operation syntax: MSG <subject> <sid> [reply-to]
     internal static func parse(data: Data) throws -> MessageInbound {
@@ -68,7 +68,7 @@ internal struct MessageInbound {
             if let replyData = replyData {
                 replySubject = String(decoding: replyData, as: UTF8.self)
             }
-            let length = UInt64(String(decoding: lengthData, as: UTF8.self)) ?? 0
+            let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
             return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: nil, length: length)
         }
         
@@ -87,7 +87,7 @@ internal struct MessageInbound {
 
 
 /// Struct representing server information in NATS.
-struct ServerInfo: Codable {
+struct ServerInfo: Codable, Equatable {
     /// The unique identifier of the NATS server.
     let serverId: String
     /// Generated Server Name.

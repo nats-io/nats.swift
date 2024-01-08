@@ -6,7 +6,11 @@
 import Foundation
 
 extension Data {
-    private static let crlf = Data([UInt8(ascii: "\r"), UInt8(ascii: "\n")])
+    private static let cr = UInt8(ascii: "\r")
+    private static let lf = UInt8(ascii: "\n")
+    private static let crlf = Data([cr, lf])
+    private static var currentNum = 0
+    private static var errored = false
     
     func removePrefix(_ prefix: Data) -> Data {
         guard self.starts(with: prefix) else { return self }
@@ -18,7 +22,7 @@ extension Data {
         var start = startIndex
         var end = startIndex
         var splitsCount = 0
-
+        
         while end < count {
             if splitsCount >= maxSplits {
                 break
@@ -34,13 +38,13 @@ extension Data {
             }
             end = index(after: end)
         }
-
+        
         if start <= endIndex {
             if !omittingEmptySubsequences || start != endIndex {
                 chunks.append(self[start..<endIndex])
             }
         }
-
+        
         return chunks
     }
     
@@ -59,45 +63,71 @@ extension Data {
         return self.prefix(bytes.count).elementsEqual(bytes)
     }
     
-    func parseOutMessages() -> [ServerOp] {
+    internal mutating func prepend(_ other: Data) {
+        self = other + self
+    }
+    
+    internal func parseOutMessages() -> (ops: [ServerOp], remainder: Data?) {
         var serverOps = [ServerOp]()
         var startIndex = self.startIndex
-        
-        while startIndex < self.endIndex, let range = self[startIndex...].range(of: Data.crlf) {
-            let lineEndIndex = range.lowerBound
-            let nextLineStartIndex = self.index(range.upperBound, offsetBy: 0, limitedBy: self.endIndex) ?? self.endIndex
+        var remainder: Data?
+
+        while startIndex < self.endIndex {
+            var nextLineStartIndex: Int
+            var lineData: Data
+            if let range = self[startIndex...].range(of: Data.crlf) {
+                let lineEndIndex = range.lowerBound
+                nextLineStartIndex = self.index(range.upperBound, offsetBy: 0, limitedBy: self.endIndex) ?? self.endIndex
+                lineData = self[startIndex..<lineEndIndex]
+            } else {
+                remainder = self[startIndex..<self.endIndex]
+                break
+            }
+            if lineData.count == 0 {
+                startIndex = nextLineStartIndex
+                continue
+            }
             
-            let lineData = self[startIndex..<lineEndIndex]
-            var serverOp: ServerOp
+            let serverOp: ServerOp
             do {
                 serverOp = try ServerOp.parse(from: lineData)
             } catch {
                 // TODO(pp): handle this error properly (maybe surface in throw)
                 logger.error("Error parsing message: \(error)")
-                return serverOps
+                startIndex = nextLineStartIndex
+                continue
             }
             
-            // if it's a message, get the next line as well and include as payload
+            // if it's a message, get the full payload and add to returned data
             if case .Message(var msg) = serverOp {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
-                } else if nextLineStartIndex < self.endIndex, let nextLineRange = self[nextLineStartIndex...].range(of: Data.crlf) {
-                    let nextLineEndIndex = nextLineRange.lowerBound
-                    msg.payload = self[nextLineStartIndex..<nextLineEndIndex]
+                } else {
+                    let payloadEndIndex: Int
+                    let payloadStartIndex: Int
+                    var payload = Data()
+                    payloadEndIndex = nextLineStartIndex + msg.length
+                    payloadStartIndex = nextLineStartIndex
+                    // include crlf in the expected payload leangth
+                    if payloadEndIndex + Data.crlf.count <= endIndex {
+                        payload.append(self[payloadStartIndex..<payloadEndIndex])
+                        msg.payload = payload
+                        startIndex = self.index(payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex) ?? self.endIndex
+                    } else {
+                        remainder = self[startIndex..<self.endIndex]
+                        break
+                    }
                     serverOps.append(.Message(msg))
-                    startIndex = self.index(nextLineRange.upperBound, offsetBy: 0, limitedBy: self.endIndex) ?? self.endIndex
                     continue
                 }
-                
             } else {
                 // otherwise, just add this server op to the result
                 serverOps.append(serverOp)
             }
-            
-            // Move to the start of the next line
             startIndex = nextLineStartIndex
+            
         }
         
-        return serverOps
+        return (serverOps, remainder)
     }
 }
