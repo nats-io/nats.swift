@@ -117,7 +117,6 @@ public class Subscription: AsyncIteratorProtocol {
     public func next() async -> Element? {
         let msg: NatsMessage? = lock.withLock {
             if closed {
-                print("closed")
                 return nil
             }
 
