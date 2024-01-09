@@ -8,7 +8,11 @@ class HeadersTests: XCTestCase {
         ("testAppend", testAppend),
         ("testSubscript", testSubscript),
         ("testInsert", testInsert),
-        ("testSerialize", testSerialize)
+        ("testSerialize", testSerialize),
+        ("testValidHeaderName", testValidHeaderName),
+        ("testDollarHeaderName", testDollarHeaderName),
+        ("testInvalidHeaderName", testInvalidHeaderName),
+        ("testInvalidHeaderNameWithSpecialCharacters", testInvalidHeaderNameWithSpecialCharacters)
 
     ]
 
@@ -35,6 +39,22 @@ class HeadersTests: XCTestCase {
         let byteArray: [UInt8] = Array(expected.utf8)
 
         XCTAssertEqual(hm.toBytes(), byteArray)
+    }
+
+    func testValidHeaderName() {
+        XCTAssertNoThrow(try HeaderName("X-Custom-Header"))
+    }
+
+    func testDollarHeaderName() {
+        XCTAssertNoThrow(try HeaderName("$Dollar"))
+    }
+
+    func testInvalidHeaderName() {
+        XCTAssertThrowsError(try HeaderName("Invalid Header Name"))
+    }
+
+    func testInvalidHeaderNameWithSpecialCharacters() {
+        XCTAssertThrowsError(try HeaderName("Invalid:Header:Name"))
     }
 
 func testSubscript() {
