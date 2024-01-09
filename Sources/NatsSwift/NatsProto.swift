@@ -34,7 +34,7 @@ enum ServerOp {
     case Pong
     case Error(NatsError)
     case Message(MessageInbound)
-    
+
     static func parse(from message: Data) throws -> ServerOp {
         guard message.count > 2 else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
@@ -71,15 +71,15 @@ internal struct MessageInbound: Equatable {
     var reply: String?
     var payload: Data?
     var length: Int
-    
+
     // Parse the operation syntax: MSG <subject> <sid> [reply-to]
     internal static func parse(data: Data) throws -> MessageInbound {
         let protoComponents = data
             .dropFirst(NatsOperation.message.rawValue.count)  // Assuming the message starts with "MSG "
             .split(separator: space)
             .filter { !$0.isEmpty }
-        
-        
+
+
         let parseArgs: ((Data, Data, Data?, Data) throws -> MessageInbound) = { subjectData, sidData, replyData, lengthData in
             let subject = String(decoding: subjectData, as: UTF8.self)
             guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
@@ -92,7 +92,7 @@ internal struct MessageInbound: Equatable {
             let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
             return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: nil, length: length)
         }
-        
+
         var msg: MessageInbound
         switch protoComponents.count {
         case 3:
@@ -141,9 +141,9 @@ struct ServerInfo: Codable, Equatable {
     let headers: Bool
     /// Whether server goes into lame duck mode.
     let lameDuckMode: Bool?
-    
+
     private static let prefix = NatsOperation.info.rawValue.data(using: .utf8)!
-    
+
     private enum CodingKeys: String, CodingKey {
         case serverId = "server_id"
         case serverName = "server_name"
@@ -162,7 +162,7 @@ struct ServerInfo: Codable, Equatable {
         case headers
         case lameDuckMode = "ldm"
     }
-    
+
     internal static func parse(data: Data) throws -> ServerInfo {
         let info = data.removePrefix(prefix)
         return try JSONDecoder().decode(self, from: info)
@@ -176,21 +176,34 @@ enum ClientOp {
     case Connect(ConnectInfo)
     case Ping
     case Pong
-    
+
     internal func asBytes(using allocator: ByteBufferAllocator) throws -> ByteBuffer {
         var buffer: ByteBuffer
         switch self {
         case let .Publish((subject, reply, payload)):
             if let payload = payload {
-                buffer = allocator.buffer(capacity: payload.count + subject.utf8.count + NatsOperation.publish.rawValue.count + 10)
-                buffer.writeString("\(NatsOperation.publish.rawValue) \(subject) \(payload.count)\r\n")
+                buffer = allocator.buffer(capacity: payload.count + subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
+                buffer.writeData(NatsOperation.publish.rawBytes)
+                buffer.writeString(" ")
+                buffer.writeString(subject)
+                buffer.writeString(" ")
+                if let reply = reply {
+                    buffer.writeString("\(reply) ")
+                }
+                buffer.writeString("\(payload.count)\r\n")
                 buffer.writeData(payload)
                 buffer.writeString("\r\n")
             } else {
-                buffer = allocator.buffer(capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 10)
-                buffer.writeString("\(NatsOperation.publish.rawValue) \(subject) 0\r\n")
+                buffer = allocator.buffer(capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
+                buffer.writeData(NatsOperation.publish.rawBytes)
+                buffer.writeString(" ")
+                buffer.writeString(subject)
+                if let reply = reply {
+                    buffer.writeString("\(reply) ")
+                }
+                buffer.writeString("0\r\n")
             }
-            
+
         case let .Subscribe((sid, subject, queue)):
             buffer = allocator.buffer(capacity: 0)
             if let queue {
@@ -198,7 +211,7 @@ enum ClientOp {
             } else {
                 buffer.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(sid)\r\n")
             }
-            
+
         case let .Unsubscribe((sid, max)):
             buffer = allocator.buffer(capacity: 0)
             if let max {
