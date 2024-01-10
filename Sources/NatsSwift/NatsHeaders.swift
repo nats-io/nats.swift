@@ -2,23 +2,23 @@ import Foundation
 
 
 // Represents NATS header field value in Swift.
-struct HeaderValue: Equatable, CustomStringConvertible {
+public struct HeaderValue: Equatable, CustomStringConvertible {
     private var inner: String
 
-    init(_ value: String) {
+    public init(_ value: String) {
         self.inner = value
     }
 
-    var description: String {
+    public var description: String {
         return inner
     }
 }
 
 // Errors for parsing HeaderValue and HeaderName
-enum ParseHeaderValueError: Error, CustomStringConvertible {
+public enum ParseHeaderValueError: Error, CustomStringConvertible {
     case invalidCharacter
 
-    var description: String {
+    public var description: String {
         switch self {
         case .invalidCharacter:
             return "Invalid character found in header value (value cannot contain '\\r' or '\\n')"
@@ -26,10 +26,10 @@ enum ParseHeaderValueError: Error, CustomStringConvertible {
     }
 }
 
-enum ParseHeaderNameError: Error, CustomStringConvertible {
+public enum ParseHeaderNameError: Error, CustomStringConvertible {
     case invalidCharacter
 
-    var description: String {
+    public var description: String {
         switch self {
         case .invalidCharacter:
             return "Invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
@@ -38,31 +38,31 @@ enum ParseHeaderNameError: Error, CustomStringConvertible {
 }
 
 // Custom header representation in Swift
-struct HeaderName: Equatable, Hashable, CustomStringConvertible {
+public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
     private var inner: String
 
-    init(_ value: String) throws {
+    public init(_ value: String) throws {
             if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
                 throw ParseHeaderNameError.invalidCharacter
         }
         self.inner = value
     }
 
-    var description: String {
+    public var description: String {
         return inner
     }
 
     // Example of standard headers
-    static let natsStream = try! HeaderName("Nats-Stream")
-    static let natsSequence = try! HeaderName("Nats-Sequence")
+    public static let natsStream = try! HeaderName("Nats-Stream")
+    public static let natsSequence = try! HeaderName("Nats-Sequence")
     // Add other standard headers as needed...
 }
 
 // Represents a NATS header map in Swift.
-struct HeaderMap {
+public struct HeaderMap: Equatable {
     private var inner: [HeaderName: [HeaderValue]]
 
-    init() {
+    public init() {
         self.inner = [:]
     }
 
@@ -70,11 +70,11 @@ struct HeaderMap {
         return inner.isEmpty
     }
 
-    mutating func insert(_ name: HeaderName, _ value: HeaderValue) {
+    public mutating func insert(_ name: HeaderName, _ value: HeaderValue) {
         self.inner[name] = [value]
     }
 
-    mutating func append(_ name: HeaderName, _ value: HeaderValue) {
+    public mutating func append(_ name: HeaderName, _ value: HeaderValue) {
         if inner[name] != nil {
             inner[name]?.append(value)
         } else {
@@ -82,11 +82,11 @@ struct HeaderMap {
         }
     }
 
-    func get(_ name: HeaderName) -> HeaderValue? {
+    public func get(_ name: HeaderName) -> HeaderValue? {
         return inner[name]?.first
     }
 
-    func getAll(_ name: HeaderName) -> [HeaderValue] {
+    public func getAll(_ name: HeaderName) -> [HeaderValue] {
         return inner[name] ?? []
     }
 
@@ -97,7 +97,7 @@ struct HeaderMap {
         for (name, values) in inner {
             for value in values {
                 bytes.append(contentsOf: name.description.utf8)
-                bytes.append(contentsOf: ": ".utf8)
+                bytes.append(contentsOf: ":".utf8)
                 bytes.append(contentsOf: value.description.utf8)
                 bytes.append(contentsOf: "\r\n".utf8)
             }

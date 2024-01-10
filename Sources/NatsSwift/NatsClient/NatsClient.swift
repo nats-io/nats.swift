@@ -48,9 +48,9 @@ extension Client {
         try await self.connectionHandler.connect()
     }
 
-    public func publish(_ payload: Data, subject: String, reply: String? = nil) throws {
+    public func publish(_ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil) throws {
         logger.debug("publish")
-        try self.connectionHandler.write(operation: ClientOp.Publish((subject, reply, payload)))
+        try self.connectionHandler.write(operation: ClientOp.Publish((subject, reply, payload, headers)))
     }
 
     public func flush() async throws {
@@ -66,6 +66,7 @@ extension Client {
 
 // TODO(pp): Implement slow consumer
 public class Subscription: AsyncIteratorProtocol {
+
     public typealias Element = NatsMessage
 
     private var buffer: [Element]
@@ -151,7 +152,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var subscriptionCounter = SubscriptionCounter()
     internal var serverInfo: ServerInfo?
     private var parseRemainder: Data?
-    
+
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
 
@@ -173,7 +174,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func channelReadComplete(context: ChannelHandlerContext) {
         var inputChunk = Data(buffer: inputBuffer)
-        
+
         if let remainder = self.parseRemainder {
             inputChunk.prepend(remainder)
         }
@@ -224,6 +225,8 @@ class ConnectionHandler: ChannelInboundHandler {
                 logger.debug("error \(err)")
             case let .Message(msg):
                 self.handleIncomingMessage(msg)
+            case let .HMessage(msg):
+                self.handleIncomingHMessage(msg)
             case let .Info(serverInfo):
                 logger.debug("info \(op)")
                 self.serverInfo = serverInfo
@@ -294,7 +297,14 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func handleIncomingMessage(_ message: MessageInbound) {
-        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length)
+        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length, headers: nil, status: nil)
+        if let sub = self.subscriptions[message.sid] {
+            sub.receiveMessage(natsMsg)
+        }
+    }
+
+    func handleIncomingHMessage(_ message: HMessageInbound) {
+        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length, headers: message.headers, status: nil)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
