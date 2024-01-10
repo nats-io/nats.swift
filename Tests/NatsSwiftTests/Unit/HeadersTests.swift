@@ -35,7 +35,7 @@ class HeadersTests: XCTestCase {
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("bar"), HeaderValue("foo"))
 
-        let expected = "NATS/1.0\r\nfoo: bar\r\nfoo: baz\r\nbar: foo\r\n\r\n"
+        let expected = "NATS/1.0\r\nfoo:bar\r\nfoo:baz\r\nbar:foo\r\n\r\n"
         let byteArray: [UInt8] = Array(expected.utf8)
 
         XCTAssertEqual(hm.toBytes(), byteArray)

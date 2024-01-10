@@ -26,7 +26,7 @@ class ParserTests: XCTestCase {
             let givenChunks: [String]
             let expectedOps: [ServerOp]
         }
-        
+
         let fail: ((Int, String) -> String) = { index, name in
             return "Test case: \(index)\n Input: \(name)"
         }
@@ -113,7 +113,7 @@ class ParserTests: XCTestCase {
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                    
+
                 case .Ping:
                     if case .Ping = tc.expectedOps[i] {} else {
                         XCTFail(fail(tn, tc.name))
@@ -128,6 +128,12 @@ class ParserTests: XCTestCase {
                     }
                 case .Message(let msg):
                     if case .Message(let expectedMessage) = tc.expectedOps[i] {
+                        XCTAssertEqual(msg, expectedMessage, fail(tn, tc.name))
+                    } else {
+                        XCTFail(fail(tn, tc.name))
+                    }
+                case .HMessage(let msg):
+                    if case .HMessage(let expectedMessage) = tc.expectedOps[i] {
                         XCTAssertEqual(msg, expectedMessage, fail(tn, tc.name))
                     } else {
                         XCTFail(fail(tn, tc.name))
