@@ -18,14 +18,39 @@ let numMsgs = 1_000_000
 let sub = try await nats.subscribe(to: "foo")
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask {
+        var hm = HeaderMap()
+        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
+        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
+        hm.insert(try! HeaderName("another"), HeaderValue("one"))
         for i in 0..<numMsgs {
             let msg = await sub.next()
+            guard let payload = msg?.payload else {
+                print("empty payload!")
+                continue
+            }
+            if String(data: payload, encoding: .utf8) != "\(i)" {
+                print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8))")
+            }
+            guard let headers = msg?.headers else {
+                print("empty headers!")
+                continue
+            }
+            if headers != hm {
+                print("invalid headers; expected: \(hm); got: \(headers)")
+            }
+            if i%1000 == 0 {
+                print("received \(i) msgs")
+            }
         }
     }
 
     group.addTask {
+        var hm = HeaderMap()
+        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
+        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
+        hm.insert(try! HeaderName("another"), HeaderValue("one"))
         for i in 0..<numMsgs {
-            try nats.publish("\(i)".data(using: .utf8)!, subject: "foo") 
+            try nats.publish("\(i)".data(using: .utf8)!, subject: "foo", headers: hm)
             if i%1000 == 0 {
                 print("published \(i) msgs")
             }
