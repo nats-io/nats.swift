@@ -7,7 +7,7 @@ import Foundation
 import XCTest
 
 class NatsServer {
-    var port: UInt? { return natsServerPort }
+    var port: Int? { return natsServerPort }
     var clientURL: String {
         let scheme = tlsEnabled ? "tls://" : "nats://"
         if let natsServerPort {
@@ -18,7 +18,7 @@ class NatsServer {
     }
     
     private var process: Process?
-    private var natsServerPort: UInt?
+    private var natsServerPort: Int?
     private var tlsEnabled = false
     
     // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
@@ -39,7 +39,7 @@ class NatsServer {
         let semaphore = DispatchSemaphore(value: 0)
         var lineCount = 0
         let maxLines = 100
-        var serverPort: UInt?
+        var serverPort: Int?
         var serverError: String?
         
         outputHandle.readabilityHandler = { fileHandle in
@@ -81,7 +81,7 @@ class NatsServer {
         tlsEnabled = false
     }
     
-    private func extractPort(from string: String) -> UInt? {
+    private func extractPort(from string: String) -> Int? {
         let pattern = "Listening for client connections on [^:]+:(\\d+)"
         
         let regex = try! NSRegularExpression(pattern: pattern)
@@ -91,7 +91,7 @@ class NatsServer {
             let portRange = match.range(at: 1)
             if let swiftRange = Range(portRange, in: string) {
                 let portString = String(string[swiftRange])
-                return UInt(portString)
+                return Int(portString)
             }
         }
         

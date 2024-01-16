@@ -1,7 +1,7 @@
 import NatsSwift
 import Foundation
 
-let nats = Client(url: URL(string: "nats://localhost:4222")!)
+let nats = ClientOptions().urls([URL(string: "nats://localhost:4222")!]).build()
 print("Connecting...")
 try! await nats.connect()
 print("Connected!")
