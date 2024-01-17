@@ -112,6 +112,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
+    // TODO(pp): add retryOnFailedConnect option
     func connect() async throws {
         let info = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
@@ -184,6 +185,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 do {
                     try await self.connect()
                 } catch {
+                    // TODO(pp): add option to set this to exponential backoff (with jitter)
                     try await Task.sleep(nanoseconds: self.reconnectWait)
                     attempts += 1
                     continue
