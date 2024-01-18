@@ -34,8 +34,9 @@ class CoreNatsTests: XCTestCase {
 
         try client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await sub.next() {
+            if let msg = await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
             }
@@ -55,8 +56,9 @@ class CoreNatsTests: XCTestCase {
 
         try client.publish("msg".data(using: .utf8)!, subject: "test", reply: "reply")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await sub.next() {
+            if let msg = await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 XCTAssertEqual(msg.replySubject, "reply")
                 expectation.fulfill()
@@ -73,7 +75,8 @@ class CoreNatsTests: XCTestCase {
          try await client.connect()
          let sub = try await client.subscribe(to: "test")
          try client.publish("msg".data(using: .utf8)!, subject: "test")
-         let message = await sub.next()
+         let iter = sub.makeAsyncIterator()
+         let message = await iter.next()
          print( "payload: \(String(data:message!.payload!, encoding: .utf8)!)")
          XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
      }
@@ -115,9 +118,11 @@ class CoreNatsTests: XCTestCase {
         }
 
         // make sure sub receives messages
-        for _ in 0..<10 {
-            let _ = await sub.next()
+        for await msg in sub {
             messagesReceived += 1
+            if messagesReceived == 10 {
+                break
+            }
         }
 
         // restart the server
@@ -132,9 +137,12 @@ class CoreNatsTests: XCTestCase {
                 try client.publish(payload, subject: "foo")
             }
         }
-        for _ in 0..<10 {
-            let _ = await sub.next()
+        
+        for await msg in sub {
             messagesReceived += 1
+            if messagesReceived == 10 {
+                break
+            }
         }
 
         // Check if the total number of messages received matches the number sent

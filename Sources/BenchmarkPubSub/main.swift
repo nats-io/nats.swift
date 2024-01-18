@@ -22,16 +22,13 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
-        for i in 0..<numMsgs {
-            let msg = await sub.next()
-            guard let payload = msg?.payload else {
-                print("empty payload!")
-                continue
-            }
+        var i = 0
+        for await msg in sub {
+            let payload = msg.payload!
             if String(data: payload, encoding: .utf8) != "\(i)" {
                 print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8))")
             }
-            guard let headers = msg?.headers else {
+            guard let headers = msg.headers else {
                 print("empty headers!")
                 continue
             }
