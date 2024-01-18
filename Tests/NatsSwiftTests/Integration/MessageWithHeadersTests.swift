@@ -20,7 +20,7 @@ class TestMessageWithHeadersTests: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = Client(url : URL(string: "nats://localhost:4222")!)
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
         let sub = try await client.subscribe(to: "foo")

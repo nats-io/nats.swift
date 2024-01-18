@@ -16,17 +16,19 @@ class CoreNatsTests: XCTestCase {
         ("testSubscribe", testSubscribe),
         ("testConnect", testConnect)
     ]
-   var natsServer = NatsServer()
+    var natsServer = NatsServer()
 
-     override func tearDown() {
-         super.tearDown()
-         natsServer.stop()
-     }
+    override func tearDown() {
+        super.tearDown()
+        natsServer.stop()
+    }
 
-     func testPublish() async throws {
+    func testPublish() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = Client(url: URL(string: natsServer.clientURL)!)
+        let client = ClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
         try await client.connect()
         let sub = try await client.subscribe(to: "test")
 
@@ -40,12 +42,14 @@ class CoreNatsTests: XCTestCase {
         }
         wait(for: [expectation], timeout: 5.0)
         await sub.complete()
-     }
+    }
 
-     func testPublishWithReply() async throws {
+    func testPublishWithReply() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = Client(url: URL(string: natsServer.clientURL)!)
+        let client = ClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
         try await client.connect()
         let sub = try await client.subscribe(to: "test")
 
@@ -65,7 +69,7 @@ class CoreNatsTests: XCTestCase {
      func testSubscribe() async throws {
          natsServer.start()
          logger.logLevel = .debug
-         let client = Client(url: URL(string: natsServer.clientURL)!)
+         let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
          try await client.connect()
          let sub = try await client.subscribe(to: "test")
          try client.publish("msg".data(using: .utf8)!, subject: "test")
@@ -77,8 +81,63 @@ class CoreNatsTests: XCTestCase {
     func testConnect() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = Client(url: URL(string: natsServer.clientURL)!)
+        let client = ClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
         try await client.connect()
         XCTAssertNotNil(client, "Client should not be nil")
+    }
+
+    func testReconnect() async throws {
+        natsServer.start()
+        let port = natsServer.port!
+        logger.logLevel = .debug
+
+        let client = ClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(1)
+            .build()
+
+        try await client.connect()
+
+
+        // Payload to publish
+        let payload = "hello".data(using: .utf8)!
+
+        var messagesReceived = 0
+        let sub = try! await client.subscribe(to: "foo")
+
+        // publish some messages
+        Task {
+            for _ in 0..<10 {
+                try client.publish(payload, subject: "foo")
+            }
+        }
+
+        // make sure sub receives messages
+        for _ in 0..<10 {
+            let _ = await sub.next()
+            messagesReceived += 1
+        }
+
+        // restart the server
+        natsServer.stop()
+        sleep(1)
+        natsServer.start(port: port)
+        sleep(2)
+
+        // publish more messages, sub should receive them
+        Task {
+            for _ in 0..<10 {
+                try client.publish(payload, subject: "foo")
+            }
+        }
+        for _ in 0..<10 {
+            let _ = await sub.next()
+            messagesReceived += 1
+        }
+
+        // Check if the total number of messages received matches the number sent
+        XCTAssertEqual(20, messagesReceived, "Mismatch in the number of messages sent and received")
     }
 }
