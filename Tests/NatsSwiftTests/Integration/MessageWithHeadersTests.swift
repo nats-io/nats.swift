@@ -32,7 +32,8 @@ class TestMessageWithHeadersTests: XCTestCase {
 
         try client.publish("hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
 
-        let msg =  await sub.next()
+        let iter = sub.makeAsyncIterator()
+        let msg =  await iter.next()
         XCTAssertEqual(msg!.headers, hm)
 
     }
