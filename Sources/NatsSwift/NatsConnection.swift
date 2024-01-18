@@ -33,6 +33,7 @@ class ConnectionHandler: ChannelInboundHandler {
         inputBuffer.writeBuffer(&byteBuffer)
     }
 
+    // TODO(pp): errors in parser should trigger context.fireErrorCaught() which invokes errorCaught() and invokes reconnect
     func channelReadComplete(context: ChannelHandlerContext) {
         var inputChunk = Data(buffer: inputBuffer)
         
@@ -171,6 +172,13 @@ class ConnectionHandler: ChannelInboundHandler {
         logger.debug("TCP channel inactive")
 
         handleDisconnect()
+    }
+    
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // TODO(pp): implement Close() on the connection and call it here
+        logger.debug("Encountered error on the channel: \(error)")
+        self.state = .Disconnected
+        handleReconnect()
     }
     
     func handleDisconnect() {
