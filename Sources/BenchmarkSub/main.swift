@@ -12,7 +12,7 @@ print("Starting benchmark...")
 print("Waiting for first message...")
 var now = DispatchTime.now()
 let numMsgs = 1_000_000
-let sub = try await nats.subscribe(to: "foo")
+let sub = try await nats.subscribe(to: "foo").makeAsyncIterator()
 var hm = HeaderMap()
 hm.append(try! HeaderName("foo"), HeaderValue("bar"))
 hm.append(try! HeaderName("foo"), HeaderValue("baz"))
