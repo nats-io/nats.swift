@@ -19,12 +19,13 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let reconnectWait: UInt64
     internal let maxReconnects: Int?
     internal let pingInterval: TimeInterval
-    
+
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .Pending
     internal var subscriptions: [ UInt64: Subscription ]
     internal var subscriptionCounter = SubscriptionCounter()
     internal var serverInfo: ServerInfo?
+    internal var auth: Auth?
     private var parseRemainder: Data?
 
 
@@ -37,7 +38,7 @@ class ConnectionHandler: ChannelInboundHandler {
     // TODO(pp): errors in parser should trigger context.fireErrorCaught() which invokes errorCaught() and invokes reconnect
     func channelReadComplete(context: ChannelHandlerContext) {
         var inputChunk = Data(buffer: inputBuffer)
-        
+
         if let remainder = self.parseRemainder {
             inputChunk.prepend(remainder)
         }
@@ -99,7 +100,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         inputBuffer.clear()
     }
-    init(inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?, pingInterval: TimeInterval) {
+    init(inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?, pingInterval: TimeInterval, auth: Auth?) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
@@ -107,8 +108,10 @@ class ConnectionHandler: ChannelInboundHandler {
         self.subscriptions = [UInt64:Subscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
+        self.auth = auth
         self.pingInterval = pingInterval
     }
+
     internal var group: MultiThreadedEventLoopGroup
     internal var channel: Channel?
 
@@ -146,7 +149,8 @@ class ConnectionHandler: ChannelInboundHandler {
             // Wait for the first message after sending the connect request
         }
         self.serverInfo = info
-        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: "", pass: "", authToken: "", headers: true, noResponders: true)
+        // TODO(jrm): Add rest of auth here.
+        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: "", headers: true, noResponders: true)
 
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
@@ -163,7 +167,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.state = .Connected
         logger.debug("connection established")
     }
-    
+
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
 
@@ -175,19 +179,19 @@ class ConnectionHandler: ChannelInboundHandler {
 
         handleDisconnect()
     }
-    
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // TODO(pp): implement Close() on the connection and call it here
         logger.debug("Encountered error on the channel: \(error)")
         self.state = .Disconnected
         handleReconnect()
     }
-    
+
     func handleDisconnect() {
         self.state = .Disconnected
         handleReconnect()
     }
-    
+
     func handleReconnect() {
         Task {
             var attempts = 0

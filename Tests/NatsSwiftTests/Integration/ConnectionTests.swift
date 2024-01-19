@@ -14,7 +14,9 @@ class CoreNatsTests: XCTestCase {
         ("testPublish", testPublish),
         ("testPublishWithReply", testPublishWithReply),
         ("testSubscribe", testSubscribe),
-        ("testConnect", testConnect)
+        ("testConnect", testConnect),
+        ("testReconnect", testReconnect),
+        ("testUsernameAndPassword", testUsernameAndPassword),
     ]
     var natsServer = NatsServer()
 
@@ -137,7 +139,7 @@ class CoreNatsTests: XCTestCase {
                 try client.publish(payload, subject: "foo")
             }
         }
-        
+
         for await msg in sub {
             messagesReceived += 1
             if messagesReceived == 10 {
@@ -147,5 +149,20 @@ class CoreNatsTests: XCTestCase {
 
         // Check if the total number of messages received matches the number sent
         XCTAssertEqual(20, messagesReceived, "Mismatch in the number of messages sent and received")
+    }
+
+    func testUsernameAndPassword() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = ClientOptions()
+            .url(URL(string: "nats://localhost:4222")!)
+            .username_and_password("user", "pass")
+            .maxReconnects(5)
+            .build()
+        try await client.connect()
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        try await client.flush()
+        try await client.subscribe(to: "test")
+        XCTAssertNotNil(client, "Client should not be nil")
     }
 }
