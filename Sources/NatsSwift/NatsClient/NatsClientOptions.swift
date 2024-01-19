@@ -13,6 +13,7 @@ public class ClientOptions {
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int = 60
+    private var auth: Auth? = nil
 
     public init() {}
 
@@ -20,7 +21,7 @@ public class ClientOptions {
         self.urls = urls
         return self
     }
-    
+
     public func url(_ url: URL) -> ClientOptions {
         self.urls = [url]
         return self
@@ -41,6 +42,16 @@ public class ClientOptions {
         return self
     }
 
+    public func username_and_password(_ username: String, _ password: String) -> ClientOptions {
+        if self.auth == nil {
+            self.auth = Auth(user: username, password: password)
+        } else {
+            self.auth?.user = username
+            self.auth?.password = password
+        }
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(
@@ -48,9 +59,10 @@ public class ClientOptions {
             urls: urls,
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
-            pingInterval: pingInterval
+            pingInterval: pingInterval,
+            auth: auth
         )
-        
+
         return client
     }
 }
