@@ -10,7 +10,7 @@ import Dispatch
 
 public class ClientOptions {
     private var urls: [URL] = []
-    private var pingInterval: TimeInterval = 1.0
+    private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int = 60
 
@@ -43,12 +43,14 @@ public class ClientOptions {
 
     public func build() -> Client {
         let client = Client()
-        client.urls = urls
-        client.pingInteval = pingInterval
-        client.reconnectWait = reconnectWait
-        client.maxReconnects = maxReconnects
+        client.connectionHandler = ConnectionHandler(
+            inputBuffer: client.buffer,
+            urls: urls,
+            reconnectWait: reconnectWait,
+            maxReconnects: maxReconnects,
+            pingInterval: pingInterval
+        )
         
-        client.connectionHandler.urls = urls
         return client
     }
 }
