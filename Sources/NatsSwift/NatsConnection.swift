@@ -18,6 +18,7 @@ class ConnectionHandler: ChannelInboundHandler {
     // nanoseconds representation of TimeInterval
     internal let reconnectWait: UInt64
     internal let maxReconnects: Int?
+    internal let pingInterval: TimeInterval
     
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .Pending
@@ -98,7 +99,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         inputBuffer.clear()
     }
-    init(inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?) {
+    init(inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?, pingInterval: TimeInterval) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
@@ -106,6 +107,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.subscriptions = [UInt64:Subscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
+        self.pingInterval = pingInterval
     }
     internal var group: MultiThreadedEventLoopGroup
     internal var channel: Channel?
