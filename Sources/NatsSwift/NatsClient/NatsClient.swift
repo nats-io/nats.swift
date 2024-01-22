@@ -51,6 +51,7 @@ public class Client {
             urls: urls,
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
+            pingInterval: pingInteval,
             auth: auth
         )
     }
