@@ -20,7 +20,13 @@ let package = Package(
             .product(name: "Logging", package: "swift-log"),
             .product(name: "NIOFoundationCompat", package: "swift-nio")
         ]),
-        .testTarget(name: "NatsSwiftTests", dependencies: ["NatsSwift"]),
+        .testTarget(
+                    name: "NatsSwiftTests",
+                    dependencies: ["NatsSwift"],
+                    resources: [
+                        .process("Integration/Resources")
+                    ]
+        ),
 
         .executableTarget(name: "Benchmark", dependencies: ["NatsSwift"]),
         .executableTarget(name: "BenchmarkPubSub", dependencies: ["NatsSwift"]),
