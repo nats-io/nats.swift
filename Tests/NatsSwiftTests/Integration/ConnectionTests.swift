@@ -152,11 +152,17 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testUsernameAndPassword() async throws {
-        natsServer.start()
         logger.logLevel = .debug
+        let currentFile = URL(fileURLWithPath: #file)
+        // Navigate up to the Tests directory
+        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
+        // Construct the path to the resource
+        let resourceURL = testsDir
+            .appendingPathComponent("Integration/Resources/creds.conf", isDirectory: false)
+        natsServer.start(cfg: resourceURL.path)
         let client = ClientOptions()
-            .url(URL(string: "nats://localhost:4222")!)
-            .username_and_password("user", "pass")
+            .url(URL(string:natsServer.clientURL)!)
+            .username_and_password("derek", "s3cr3t")
             .maxReconnects(5)
             .build()
         try await client.connect()
@@ -164,5 +170,21 @@ class CoreNatsTests: XCTestCase {
         try await client.flush()
         try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
+
+
+        // Test if client with bad credentials throws an error
+        let bad_creds_client = ClientOptions()
+            .url(URL(string:natsServer.clientURL)!)
+            .username_and_password("derek", "badpassword")
+            .maxReconnects(5)
+            .build()
+
+        do {
+            try await bad_creds_client.connect()
+            XCTFail("Should have thrown an error")
+        } catch {
+            XCTAssertNotNil(error, "Error should not be nil")
+        }
+
     }
 }
