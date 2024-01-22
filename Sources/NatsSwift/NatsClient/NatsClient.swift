@@ -22,10 +22,14 @@ public enum NatsState {
 public struct Auth {
     var user: String?
     var password: String?
+    var token: String?
 
     init(user: String, password: String) {
         self.user = user
         self.password = password
+    }
+    init(token: String) {
+        self.token = token
     }
 }
 

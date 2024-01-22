@@ -52,6 +52,15 @@ public class ClientOptions {
         return self
     }
 
+    public func token(_ token: String) -> ClientOptions {
+        if self.auth == nil {
+            self.auth = Auth(token: token)
+        } else {
+            self.auth?.token = token
+        }
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(
