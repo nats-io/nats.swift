@@ -17,6 +17,7 @@ public enum NatsState {
     case Pending
     case Connected
     case Disconnected
+    case Closed
 }
 
 public struct Auth {
@@ -66,6 +67,14 @@ extension Client {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         try await connectionHandler.connect()
+    }
+    
+    public func close() async throws {
+        logger.debug("close")
+        guard let connectionHandler = self.connectionHandler else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+        }
+        try await connectionHandler.close()
     }
 
     public func publish(_ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil) throws {

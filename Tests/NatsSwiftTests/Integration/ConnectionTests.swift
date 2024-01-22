@@ -121,7 +121,7 @@ class CoreNatsTests: XCTestCase {
         }
 
         // make sure sub receives messages
-        for await msg in sub {
+        for await _ in sub {
             messagesReceived += 1
             if messagesReceived == 10 {
                 break
@@ -140,16 +140,17 @@ class CoreNatsTests: XCTestCase {
                 try client.publish(payload, subject: "foo")
             }
         }
-
-        for await msg in sub {
+        
+        for await _ in sub {
             messagesReceived += 1
-            if messagesReceived == 10 {
+            if messagesReceived == 20 {
                 break
             }
         }
 
         // Check if the total number of messages received matches the number sent
         XCTAssertEqual(20, messagesReceived, "Mismatch in the number of messages sent and received")
+        try await client.close()
     }
 
     func testUsernameAndPassword() async throws {
@@ -226,3 +227,4 @@ class CoreNatsTests: XCTestCase {
 
     }
 }
+
