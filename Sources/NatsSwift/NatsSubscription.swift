@@ -84,15 +84,3 @@ public class Subscription: AsyncSequence {
         }
     }
 }
-
-internal class SubscriptionCounter {
-    private var counter: UInt64 = 0
-    private let queue = DispatchQueue(label: "io.nats.swift.subscriptionCounter")
-
-    func next() -> UInt64 {
-        queue.sync {
-            counter+=1
-            return counter
-        }
-    }
-}

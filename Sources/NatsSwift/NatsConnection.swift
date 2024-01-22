@@ -7,6 +7,7 @@ import Foundation
 import NIO
 import NIOFoundationCompat
 import Dispatch
+import Atomics
 
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
@@ -14,6 +15,8 @@ class ConnectionHandler: ChannelInboundHandler {
     
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
+
+    // Connection options
     internal var urls: [URL]
     // nanoseconds representation of TimeInterval
     internal let reconnectWait: UInt64
@@ -23,10 +26,12 @@ class ConnectionHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .Pending
     internal var subscriptions: [ UInt64: Subscription ]
-    internal var subscriptionCounter = SubscriptionCounter()
+    internal var subscriptionCounter = ManagedAtomic<UInt64>(0)
     internal var serverInfo: ServerInfo?
     internal var auth: Auth?
     private var parseRemainder: Data?
+    private var pingTask: RepeatedTask?
+    private var outstandingPings = ManagedAtomic<UInt8>(0)
 
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -50,6 +55,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         for op in parseResult.ops {
             if let continuation = self.serverInfoContinuation {
+                self.serverInfoContinuation = nil
                 logger.debug("server info")
                 switch op {
                 case let .Error(err):
@@ -57,13 +63,14 @@ class ConnectionHandler: ChannelInboundHandler {
                 case let .Info(info):
                     continuation.resume(returning: info)
                 default:
-                    continuation.resume(throwing: NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unexpected operation; expected server info: \(op)"]))
+                    // ignore until we get either error or server info
+                    continue
                 }
-                self.serverInfoContinuation = nil
                 continue
             }
 
             if let continuation = self.connectionEstablishedContinuation {
+                self.connectionEstablishedContinuation = nil
                 logger.debug("conn established")
                 switch op {
                 case let .Error(err):
@@ -71,7 +78,6 @@ class ConnectionHandler: ChannelInboundHandler {
                 default:
                     continuation.resume()
                 }
-                self.connectionEstablishedContinuation = nil
                 continue
             }
 
@@ -85,6 +91,9 @@ class ConnectionHandler: ChannelInboundHandler {
                     logger.error("error sending pong: \(error)")
                     continue
                 }
+            case .Pong:
+                logger.debug("pong")
+                self.outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
             case let .Error(err):
                 logger.debug("error \(err)")
             case let .Message(msg):
@@ -165,7 +174,42 @@ class ConnectionHandler: ChannelInboundHandler {
             }
         }
         self.state = .Connected
+        guard let channel = self.channel else {
+            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty channel"])
+        }
+        // Schedule the task to send a PING periodically
+        let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval*1_000_000_000))
+        self.pingTask = channel.eventLoop.scheduleRepeatedTask(initialDelay: pingInterval, delay: pingInterval) { [weak self] task in
+             self?.sendPing()
+         }
         logger.debug("connection established")
+    }
+
+    func close() async throws {
+        self.state = .Closed
+        try await disconnect()
+        try await self.group.shutdownGracefully()
+    }
+
+    func disconnect() async throws {
+        self.pingTask?.cancel()
+        try await self.channel?.close().get()
+    }
+
+    private func sendPing() {
+        let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(ordering: AtomicUpdateOrdering.relaxed)
+        if pingsOut > 2 {
+            handleDisconnect()
+            return
+        }
+        let ping = ClientOp.Ping
+        do {
+            try self.write(operation: ping)
+            logger.debug("sent ping: \(pingsOut)")
+        } catch {
+            logger.error("Unable to send ping: \(error)")
+        }
+
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -177,18 +221,43 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelInactive(context: ChannelHandlerContext) {
         logger.debug("TCP channel inactive")
 
-        handleDisconnect()
+        if self.state == .Connected {
+            handleDisconnect()
+        }
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         // TODO(pp): implement Close() on the connection and call it here
         logger.debug("Encountered error on the channel: \(error)")
-        self.state = .Disconnected
-        handleReconnect()
+        context.close(promise: nil)
+        if self.state == .Connected {
+            handleDisconnect()
+        } else if self.state == .Disconnected {
+            handleReconnect()
+        }
     }
 
     func handleDisconnect() {
         self.state = .Disconnected
+        if let channel = self.channel {
+            let promise = channel.eventLoop.makePromise(of: Void.self)
+            Task {
+                do {
+                    try await self.disconnect()
+                    promise.succeed()
+                } catch {
+                    promise.fail(error)
+                }
+            }
+            promise.futureResult.whenComplete { result in
+                do {
+                  try result.get()
+                } catch {
+                    logger.error("Error closing connection: \(error)")
+                }
+            }
+        }
+
         handleReconnect()
     }
 
@@ -200,10 +269,12 @@ class ConnectionHandler: ChannelInboundHandler {
                     try await self.connect()
                 } catch {
                     // TODO(pp): add option to set this to exponential backoff (with jitter)
+                    logger.debug("could not reconnect: \(error)")
                     try await Task.sleep(nanoseconds: self.reconnectWait)
                     attempts += 1
                     continue
                 }
+                logger.debug("reconnected")
                 break
             }
             for (sid, sub) in self.subscriptions {
@@ -242,7 +313,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func subscribe(_ subject: String) async throws -> Subscription {
-        let sid = self.subscriptionCounter.next()
+        let sid = self.subscriptionCounter.wrappingIncrementThenLoad(ordering: AtomicUpdateOrdering.relaxed)
         try write(operation: ClientOp.Subscribe((sid, subject, nil)))
         let sub = Subscription(subject: subject)
         self.subscriptions[sid] = sub
