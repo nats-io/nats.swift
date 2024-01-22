@@ -150,7 +150,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         self.serverInfo = info
         // TODO(jrm): Add rest of auth here.
-        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: "", headers: true, noResponders: true)
+        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation

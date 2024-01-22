@@ -17,6 +17,7 @@ class CoreNatsTests: XCTestCase {
         ("testConnect", testConnect),
         ("testReconnect", testReconnect),
         ("testUsernameAndPassword", testUsernameAndPassword),
+        ("testTokenAuth", testTokenAuth)
     ]
     var natsServer = NatsServer()
 
@@ -176,6 +177,43 @@ class CoreNatsTests: XCTestCase {
         let bad_creds_client = ClientOptions()
             .url(URL(string:natsServer.clientURL)!)
             .username_and_password("derek", "badpassword")
+            .maxReconnects(5)
+            .build()
+
+        do {
+            try await bad_creds_client.connect()
+            XCTFail("Should have thrown an error")
+        } catch {
+            XCTAssertNotNil(error, "Error should not be nil")
+        }
+
+    }
+
+    func testTokenAuth() async throws {
+        logger.logLevel = .debug
+        let currentFile = URL(fileURLWithPath: #file)
+        // Navigate up to the Tests directory
+        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
+        // Construct the path to the resource
+        let resourceURL = testsDir
+            .appendingPathComponent("Integration/Resources/token.conf", isDirectory: false)
+        natsServer.start(cfg: resourceURL.path)
+        let client = ClientOptions()
+            .url(URL(string:natsServer.clientURL)!)
+            .token("s3cr3t")
+            .maxReconnects(5)
+            .build()
+        try await client.connect()
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        try await client.flush()
+        try await client.subscribe(to: "test")
+        XCTAssertNotNil(client, "Client should not be nil")
+
+
+        // Test if client with bad credentials throws an error
+        let bad_creds_client = ClientOptions()
+            .url(URL(string:natsServer.clientURL)!)
+            .token("badtoken")
             .maxReconnects(5)
             .build()
 
