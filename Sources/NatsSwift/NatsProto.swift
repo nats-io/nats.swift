@@ -34,10 +34,10 @@ enum ServerOp {
     case Info(ServerInfo)
     case Ping
     case Pong
-    case Error(NatsError)
+    case Error(NatsConnectionError)
     case Message(MessageInbound)
     case HMessage(HMessageInbound)
-
+    
     static func parse(from message: Data) throws -> ServerOp {
         guard message.count > 2 else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
@@ -53,7 +53,7 @@ enum ServerOp {
         case .ok:
             return Ok
         case .error:
-            if let errMsg = message.toString() {
+            if let errMsg = message.removePrefix(Data(NatsOperation.error.rawBytes)).toString() {
                 return Error(NatsConnectionError(errMsg))
             }
             return Error(NatsConnectionError("unexpected error"))

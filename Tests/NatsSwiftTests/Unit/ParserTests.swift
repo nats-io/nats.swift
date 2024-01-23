@@ -96,7 +96,7 @@ class ParserTests: XCTestCase {
                 if let prevRemainder {
                     chunkData.prepend(prevRemainder)
                 }
-                let res = chunkData.parseOutMessages()
+                let res = try! chunkData.parseOutMessages()
                 prevRemainder = res.remainder
                 ops.append(contentsOf: res.ops)
             }

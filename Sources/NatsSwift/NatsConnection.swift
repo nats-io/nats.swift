@@ -49,7 +49,15 @@ class ConnectionHandler: ChannelInboundHandler {
         }
 
         self.parseRemainder = nil
-        let parseResult = inputChunk.parseOutMessages()
+        let parseResult: (ops: [ServerOp], remainder: Data?)
+        do {
+            parseResult = try inputChunk.parseOutMessages()
+        } catch {
+            // if parsing throws an error, return and reconnect
+            inputBuffer.clear()
+            context.fireErrorCaught(error)
+            return
+        }
         if let remainder = parseResult.remainder {
             self.parseRemainder = remainder
         }
@@ -96,6 +104,14 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
             case let .Error(err):
                 logger.debug("error \(err)")
+                
+                let normalizedError = err.normalizedError
+                // on some errors, force reconnect
+                if normalizedError == "stale connection" || normalizedError == "maximum connections exceeded" {
+                    inputBuffer.clear()
+                    context.fireErrorCaught(err)
+                }
+                // TODO(pp): handle auth errors here
             case let .Message(msg):
                 self.handleIncomingMessage(msg)
             case let .HMessage(msg):
