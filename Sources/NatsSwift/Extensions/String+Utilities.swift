@@ -6,10 +6,15 @@
 import Foundation
 
 extension String {
+    private static let charactersToTrim: CharacterSet = .whitespacesAndNewlines.union(CharacterSet(charactersIn: "'"))
 
     static func hash() -> String {
         let uuid = String.uuid()
         return uuid[0...7]
+    }
+    
+    func trimWhitespacesAndApostrophes() -> String {
+        return self.trimmingCharacters(in: String.charactersToTrim)
     }
 
     static func uuid() -> String {

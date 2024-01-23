@@ -67,7 +67,7 @@ extension Data {
         self = other + self
     }
 
-    internal func parseOutMessages() -> (ops: [ServerOp], remainder: Data?) {
+    internal func parseOutMessages() throws -> (ops: [ServerOp], remainder: Data?) {
         var serverOps = [ServerOp]()
         var startIndex = self.startIndex
         var remainder: Data?
@@ -88,15 +88,7 @@ extension Data {
                 continue
             }
 
-            let serverOp: ServerOp
-            do {
-                serverOp = try ServerOp.parse(from: lineData)
-            } catch {
-                // TODO(pp): handle this error properly (maybe surface in throw)
-                logger.error("Error parsing message: \(error)")
-                startIndex = nextLineStartIndex
-                continue
-            }
+            let serverOp = try ServerOp.parse(from: lineData)
 
             // if it's a message, get the full payload and add to returned data
             if case .Message(var msg) = serverOp {

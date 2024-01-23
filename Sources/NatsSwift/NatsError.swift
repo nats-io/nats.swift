@@ -10,6 +10,9 @@ protocol NatsError: Error {
 
 struct NatsConnectionError: NatsError {
     var description: String
+    var normalizedError: String {
+        return description.trimWhitespacesAndApostrophes().lowercased()
+    }
     init(_ description: String) {
         self.description = description
     }
