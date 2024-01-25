@@ -180,40 +180,32 @@ class ConnectionHandler: ChannelInboundHandler {
         var initialConnect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "",  name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
         if let auth = self.auth {
-            print("in auth path")
             if  let credentialsPath = auth.credentialsPath {
                 let credentials = try await URLSession.shared.data(from: credentialsPath).0
                 guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
-                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract jwt from credentials file"])
+                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract JWT from credentials file"])
                 }
-                print("JWT: \(String(data: jwt, encoding: .utf8)!)")
                 guard let nkey = JwtUtils.parseDecoratedNKey(contents:  credentials) else {
                     throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract NKEY from credentials file"])
                 }
-                print("NKEY: \(nkey)")
                 guard let nonce = self.serverInfo?.nonce else  {
                     throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "missing nonce"])
                 }
-                print("NONCE: \(nonce)")
-                print("SEED: \(String(data: nkey, encoding: .utf8)!)")
                 let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
                 let nonceData = nonce.data(using: .utf8)!
-                print("NONCE DATA: \(nonceData)")
                 let sig  = try keypair.sign(input: nonceData)
-                print("SIG: \(sig)")
                 var base64sig = sig.base64EncodedString()
-                print("SIG STRING: \(base64sig)")
+                // Swift does not support URL safe Base64, so we have to make it URL safe ourselves.
                  base64sig = base64sig
                      .replacingOccurrences(of: "+", with: "-")
                      .replacingOccurrences(of: "/", with: "_")
+                // Swift does not support Base64 without padding, so we remove padding manually.
                 base64sig = base64sig.trimmingCharacters(in: CharacterSet(charactersIn: "="))
                 initialConnect.signature = base64sig
                 initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
-                print("SIG: \(initialConnect.signature)")
             }
         }
         let connect = initialConnect
-        print("WHOLE CONNECT: \(connect)")
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
             Task.detached {
