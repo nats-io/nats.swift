@@ -24,6 +24,11 @@ public struct Auth {
     var user: String?
     var password: String?
     var token: String?
+    var credentialsPath: URL?
+
+    init() {
+
+    }
 
     init(user: String, password: String) {
         self.user = user
@@ -31,6 +36,11 @@ public struct Auth {
     }
     init(token: String) {
         self.token = token
+    }
+    static func fromCredentials(_ credentials: URL) -> Auth {
+        var auth = Auth()
+        auth.credentialsPath = credentials
+        return auth
     }
 }
 
@@ -68,7 +78,7 @@ extension Client {
         }
         try await connectionHandler.connect()
     }
-    
+
     public func close() async throws {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {

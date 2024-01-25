@@ -8,11 +8,12 @@ import NIO
 import NIOFoundationCompat
 import Dispatch
 import Atomics
+import NKeys
 
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
     let version = "0.0.1"
-    
+
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
 
@@ -104,7 +105,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
             case let .Error(err):
                 logger.debug("error \(err)")
-                
+
                 let normalizedError = err.normalizedError
                 // on some errors, force reconnect
                 if normalizedError == "stale connection" || normalizedError == "maximum connections exceeded" {
@@ -175,8 +176,44 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         self.serverInfo = info
         // TODO(jrm): Add rest of auth here.
-        let connect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "", signature: nil, name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
+        var initialConnect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "",  name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: self.auth?.token ?? "", headers: true, noResponders: true)
+
+        if let auth = self.auth {
+            print("in auth path")
+            if  let credentialsPath = auth.credentialsPath {
+                let credentials = try await URLSession.shared.data(from: credentialsPath).0
+                guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
+                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract jwt from credentials file"])
+                }
+                print("JWT: \(String(data: jwt, encoding: .utf8)!)")
+                guard let nkey = JwtUtils.parseDecoratedNKey(contents:  credentials) else {
+                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract NKEY from credentials file"])
+                }
+                print("NKEY: \(nkey)")
+                guard let nonce = self.serverInfo?.nonce else  {
+                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "missing nonce"])
+                }
+                print("NONCE: \(nonce)")
+                print("SEED: \(String(data: nkey, encoding: .utf8)!)")
+                let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
+                let nonceData = nonce.data(using: .utf8)!
+                print("NONCE DATA: \(nonceData)")
+                let sig  = try keypair.sign(input: nonceData)
+                print("SIG: \(sig)")
+                var base64sig = sig.base64EncodedString()
+                print("SIG STRING: \(base64sig)")
+                 base64sig = base64sig
+                     .replacingOccurrences(of: "+", with: "-")
+                     .replacingOccurrences(of: "/", with: "_")
+                base64sig = base64sig.trimmingCharacters(in: CharacterSet(charactersIn: "="))
+                initialConnect.signature = base64sig
+                initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
+                print("SIG: \(initialConnect.signature)")
+            }
+        }
+        let connect = initialConnect
+        print("WHOLE CONNECT: \(connect)")
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
             Task.detached {

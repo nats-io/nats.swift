@@ -345,7 +345,7 @@ struct ConnectInfo: Encodable {
     enum CodingKeys: String, CodingKey {
         case verbose
         case pedantic
-        case userJwt = "user_jwt"
+        case userJwt = "jwt"
         case nkey
         case signature = "sig" // Custom key name for JSON
         case name
