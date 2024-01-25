@@ -61,6 +61,15 @@ public class ClientOptions {
         return self
     }
 
+    public func credentials_file(_ credentials: URL) -> ClientOptions {
+        if self.auth == nil {
+            self.auth = Auth.fromCredentials(credentials)
+        } else {
+            self.auth?.credentialsPath = credentials
+        }
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(

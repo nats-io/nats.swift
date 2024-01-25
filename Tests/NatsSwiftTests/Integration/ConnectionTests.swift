@@ -224,6 +224,26 @@ class CoreNatsTests: XCTestCase {
         } catch {
             XCTAssertNotNil(error, "Error should not be nil")
         }
+    }
+
+    func testCredentialsAuth() async throws {
+        logger.logLevel = .debug
+        let currentFile = URL(fileURLWithPath: #file)
+        // Navigate up to the Tests directory
+        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
+        // Construct the path to the resource
+        let resourceURL = testsDir
+            .appendingPathComponent("Integration/Resources/jwt.conf", isDirectory: false)
+        natsServer.start(cfg: resourceURL.path)
+
+        let credsURL = testsDir.appendingPathComponent("Integration/Resources/TestUser.creds", isDirectory: false)
+
+        let client = ClientOptions().url(URL(string:natsServer.clientURL)!).credentials_file(credsURL).build()
+        try await client.connect()
+        let subscribe = try await client.subscribe(to: "foo").makeAsyncIterator()
+        try  client.publish("data".data(using: .utf8)!, subject: "foo")
+        let message = await subscribe.next()
+        print("message: \(message!.subject)")
 
     }
 }
