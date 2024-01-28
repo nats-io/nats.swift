@@ -27,9 +27,10 @@ for i in 1...numMsgs {
         continue
     }
     if String(data: payload, encoding: .utf8) != "\(i)" {
-        print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8))")
+        let emptyString = ""
+        print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)")
     }
-    guard let headers = msg?.headers else {
+    guard msg?.headers != nil else {
         print("empty headers!")
         continue
     }

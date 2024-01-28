@@ -26,7 +26,8 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         for await msg in sub {
             let payload = msg.payload!
             if String(data: payload, encoding: .utf8) != "\(i)" {
-                print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8))")
+                let emptyString = ""
+                print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)")
             }
             guard let headers = msg.headers else {
                 print("empty headers!")
@@ -38,6 +39,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
             if i%1000 == 0 {
                 print("received \(i) msgs")
             }
+            i += 1
         }
     }
 
