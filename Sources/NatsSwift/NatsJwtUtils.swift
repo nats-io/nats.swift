@@ -23,9 +23,8 @@ class JwtUtils {
         guard let contentsString = String(data: contents, encoding: .utf8) else {
             return nil
         }
-        let matches = userConfigRE.matches(in: contentsString, options: [], range: NSRange(contentsString.startIndex..., in: contentsString))
-        if let match = matches.first, let range = Range(match.range(at: 1), in: contentsString) {
-            return String(contentsString[range]).data(using: .utf8)
+        if let match = parseDecoratedJWT(contents: contentsString) {
+            return match.data(using: .utf8)
         }
         return nil
     }
@@ -38,15 +37,14 @@ class JwtUtils {
         }
         return nil
     }
-    
+
     /// Parses a credentials file and returns its nkey.
     static func parseDecoratedNKey(contents: Data) -> Data? {
         guard let contentsString = String(data: contents, encoding: .utf8) else {
             return nil
         }
-        let matches = userConfigRE.matches(in: contentsString, options: [], range: NSRange(contentsString.startIndex..., in: contentsString))
-        if matches.count > 1, let range = Range(matches[1].range(at: 1), in: contentsString) {
-            return String(contentsString[range]).data(using: .utf8)
+        if let match = parseDecoratedNKey(contents: contentsString) {
+            return match.data(using: .utf8)
         }
         return nil
     }
