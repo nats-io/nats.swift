@@ -194,13 +194,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
                 let nonceData = nonce.data(using: .utf8)!
                 let sig  = try keypair.sign(input: nonceData)
-                var base64sig = sig.base64EncodedString()
-                // Swift does not support URL safe Base64, so we have to make it URL safe ourselves.
-                 base64sig = base64sig
-                     .replacingOccurrences(of: "+", with: "-")
-                     .replacingOccurrences(of: "/", with: "_")
-                // Swift does not support Base64 without padding, so we remove padding manually.
-                base64sig = base64sig.trimmingCharacters(in: CharacterSet(charactersIn: "="))
+                let base64sig = sig.base64EncodedURLSafeNotPadded()
                 initialConnect.signature = base64sig
                 initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
             }
