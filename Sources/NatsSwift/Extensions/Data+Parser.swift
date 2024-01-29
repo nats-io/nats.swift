@@ -136,7 +136,7 @@ extension Data {
                     if let headersString = String(data: headersData, encoding: .utf8) {
                         let headersArray = headersString.split(separator: "\r\n")
                         // TODO: unused now, but probably we should validate?
-                        let versionLine = headersArray[0]
+                        // let versionLine = headersArray[0]
 
                         for header in headersArray.dropFirst() {
                             let headerParts = header.split(separator: ":")

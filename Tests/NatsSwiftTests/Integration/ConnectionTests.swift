@@ -44,7 +44,7 @@ class CoreNatsTests: XCTestCase {
                 expectation.fulfill()
             }
         }
-        wait(for: [expectation], timeout: 5.0)
+        await fulfillment(of: [expectation], timeout: 5.0)
         await sub.complete()
     }
 
@@ -67,7 +67,7 @@ class CoreNatsTests: XCTestCase {
                 expectation.fulfill()
             }
         }
-        wait(for: [expectation], timeout: 5.0)
+        await fulfillment(of: [expectation], timeout: 5.0)
         await sub.complete()
      }
 
@@ -170,7 +170,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        try await client.subscribe(to: "test")
+        _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
 
@@ -207,7 +207,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        try await client.subscribe(to: "test")
+        _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
 
