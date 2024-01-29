@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing! This document contains `nats-io/nkeys.swift` specific contributing details. If you are a first-time contributor, please refer to the general [NATS Contributor Guide](https://nats.io/contributing/) to get a comprehensive overview of contributing to the NATS project.
+Thanks for your interest in contributing! This document contains `nats-io/nats.swift` specific contributing details. If you are a first-time contributor, please refer to the general [NATS Contributor Guide](https://nats.io/contributing/) to get a comprehensive overview of contributing to the NATS project.
 
 ## Getting started
 
@@ -10,7 +10,7 @@ There are there general ways you can contribute to this repo:
 - Reporting a bug or regression
 - Contributing changes to the source code
 
-For the first two, refer to the [GitHub Issues](https://github.com/nats-io/nkeys.swift/issues/new/choose) which guides you through the available options along with the needed information to collect.
+For the first two, refer to the [GitHub Issues](https://github.com/nats-io/nats.swift/issues/new/choose) which guides you through the available options along with the needed information to collect.
 
 ## Contributing Changes
 
@@ -20,7 +20,7 @@ Proposing source code changes is done through GitHub's standard pull request wor
 
 If your branch is a work-in-progress then please start by creating your pull requests as draft, by clicking the down-arrow next to the `Create pull request` button and instead selecting `Create draft pull request`.
 
-This will defer the automatic process of requesting a review from the Nex team and significantly reduces noise until you are ready. Once you are happy with your PR, you can click the `Ready for review` button.
+This will defer the automatic process of requesting a review from the NATS Swift team and significantly reduces noise until you are ready. Once you are happy with your PR, you can click the `Ready for review` button.
 
 ### Guidelines
 
@@ -34,5 +34,5 @@ A good pull request includes:
 
 ## Get Help
 
-If you have questions about the contribution process, please start a [GitHub discussion](https://github.com/nats-io/nkeys.swift/discussions), join the [NATS Slack](https://slack.nats.io/), or send your question to the [NATS Google Group](https://groups.google.com/forum/#!forum/natsio).
+If you have questions about the contribution process, please start a [GitHub discussion](https://github.com/nats-io/nats.swift/discussions), join the [NATS Slack](https://slack.nats.io/), or send your question to the [NATS Google Group](https://groups.google.com/forum/#!forum/natsio).
 
