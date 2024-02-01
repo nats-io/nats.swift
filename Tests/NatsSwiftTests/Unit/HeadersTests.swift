@@ -1,5 +1,5 @@
-
 import XCTest
+
 @testable import NatsSwift
 
 class HeadersTests: XCTestCase {
@@ -12,7 +12,7 @@ class HeadersTests: XCTestCase {
         ("testValidHeaderName", testValidHeaderName),
         ("testDollarHeaderName", testDollarHeaderName),
         ("testInvalidHeaderName", testInvalidHeaderName),
-        ("testInvalidHeaderNameWithSpecialCharacters", testInvalidHeaderNameWithSpecialCharacters)
+        ("testInvalidHeaderNameWithSpecialCharacters", testInvalidHeaderNameWithSpecialCharacters),
 
     ]
 
@@ -57,22 +57,22 @@ class HeadersTests: XCTestCase {
         XCTAssertThrowsError(try HeaderName("Invalid:Header:Name"))
     }
 
-func testSubscript() {
-    var hm = HeaderMap()
+    func testSubscript() {
+        var hm = HeaderMap()
 
-    // Test setting a value
-    hm[try! HeaderName("foo")] = HeaderValue("bar")
-    XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("bar"))
+        // Test setting a value
+        hm[try! HeaderName("foo")] = HeaderValue("bar")
+        XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("bar"))
 
-    // Test updating existing value
-    hm[try! HeaderName("foo")] = HeaderValue("baz")
-    XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("baz"))
+        // Test updating existing value
+        hm[try! HeaderName("foo")] = HeaderValue("baz")
+        XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("baz"))
 
-    // Test retrieving non-existing value (should be nil or default)
-    XCTAssertNil(hm[try! HeaderName("non-existing")])
+        // Test retrieving non-existing value (should be nil or default)
+        XCTAssertNil(hm[try! HeaderName("non-existing")])
 
-    // Test removal of a value
-    hm[try! HeaderName("foo")] = nil
-    XCTAssertNil(hm[try! HeaderName("foo")])
+        // Test removal of a value
+        hm[try! HeaderName("foo")] = nil
+        XCTAssertNil(hm[try! HeaderName("foo")])
     }
 }

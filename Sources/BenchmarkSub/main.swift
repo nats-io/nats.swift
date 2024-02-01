@@ -1,5 +1,5 @@
-import NatsSwift
 import Foundation
+import NatsSwift
 
 let nats = ClientOptions().url(URL(string: "nats://localhost:4222")!).build()
 print("Connecting...")
@@ -28,18 +28,20 @@ for i in 1...numMsgs {
     }
     if String(data: payload, encoding: .utf8) != "\(i)" {
         let emptyString = ""
-        print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)")
+        print(
+            "invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)"
+        )
     }
     guard msg?.headers != nil else {
         print("empty headers!")
         continue
     }
-    if i%1000 == 0 {
+    if i % 1000 == 0 {
         print("received \(i) msgs")
     }
 }
 
 let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
-let msgsPerSec: Double = Double(numMsgs)/(Double(elapsed)/1_000_000_000)
-print("Elapsed: \(elapsed / 1000000)ms")
+let msgsPerSec: Double = Double(numMsgs) / (Double(elapsed) / 1_000_000_000)
+print("Elapsed: \(elapsed / 1_000_000)ms")
 print("\(msgsPerSec) msgs/s")

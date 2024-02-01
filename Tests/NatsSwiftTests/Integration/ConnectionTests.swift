@@ -3,9 +3,10 @@
 //  NatsSwiftTests
 //
 
-import XCTest
-import NIO
 import Logging
+import NIO
+import XCTest
+
 @testable import NatsSwift
 
 class CoreNatsTests: XCTestCase {
@@ -17,7 +18,7 @@ class CoreNatsTests: XCTestCase {
         ("testConnect", testConnect),
         ("testReconnect", testReconnect),
         ("testUsernameAndPassword", testUsernameAndPassword),
-        ("testTokenAuth", testTokenAuth)
+        ("testTokenAuth", testTokenAuth),
     ]
     var natsServer = NatsServer()
 
@@ -69,20 +70,20 @@ class CoreNatsTests: XCTestCase {
         }
         await fulfillment(of: [expectation], timeout: 5.0)
         await sub.complete()
-     }
+    }
 
-     func testSubscribe() async throws {
-         natsServer.start()
-         logger.logLevel = .debug
-         let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
-         try await client.connect()
-         let sub = try await client.subscribe(to: "test")
-         try client.publish("msg".data(using: .utf8)!, subject: "test")
-         let iter = sub.makeAsyncIterator()
-         let message = await iter.next()
-         print( "payload: \(String(data:message!.payload!, encoding: .utf8)!)")
-         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
-     }
+    func testSubscribe() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+        let sub = try await client.subscribe(to: "test")
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        let iter = sub.makeAsyncIterator()
+        let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
+        XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+    }
 
     func testConnect() async throws {
         natsServer.start()
@@ -105,7 +106,6 @@ class CoreNatsTests: XCTestCase {
             .build()
 
         try await client.connect()
-
 
         // Payload to publish
         let payload = "hello".data(using: .utf8)!
@@ -140,7 +140,7 @@ class CoreNatsTests: XCTestCase {
                 try client.publish(payload, subject: "foo")
             }
         }
-        
+
         for await _ in sub {
             messagesReceived += 1
             if messagesReceived == 20 {
@@ -159,11 +159,12 @@ class CoreNatsTests: XCTestCase {
         // Navigate up to the Tests directory
         let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         // Construct the path to the resource
-        let resourceURL = testsDir
+        let resourceURL =
+            testsDir
             .appendingPathComponent("Integration/Resources/creds.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
         let client = ClientOptions()
-            .url(URL(string:natsServer.clientURL)!)
+            .url(URL(string: natsServer.clientURL)!)
             .username_and_password("derek", "s3cr3t")
             .maxReconnects(5)
             .build()
@@ -173,10 +174,9 @@ class CoreNatsTests: XCTestCase {
         _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
-
         // Test if client with bad credentials throws an error
         let bad_creds_client = ClientOptions()
-            .url(URL(string:natsServer.clientURL)!)
+            .url(URL(string: natsServer.clientURL)!)
             .username_and_password("derek", "badpassword")
             .maxReconnects(5)
             .build()
@@ -196,11 +196,12 @@ class CoreNatsTests: XCTestCase {
         // Navigate up to the Tests directory
         let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         // Construct the path to the resource
-        let resourceURL = testsDir
+        let resourceURL =
+            testsDir
             .appendingPathComponent("Integration/Resources/token.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
         let client = ClientOptions()
-            .url(URL(string:natsServer.clientURL)!)
+            .url(URL(string: natsServer.clientURL)!)
             .token("s3cr3t")
             .maxReconnects(5)
             .build()
@@ -210,10 +211,9 @@ class CoreNatsTests: XCTestCase {
         _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
-
         // Test if client with bad credentials throws an error
         let bad_creds_client = ClientOptions()
-            .url(URL(string:natsServer.clientURL)!)
+            .url(URL(string: natsServer.clientURL)!)
             .token("badtoken")
             .maxReconnects(5)
             .build()
@@ -232,19 +232,22 @@ class CoreNatsTests: XCTestCase {
         // Navigate up to the Tests directory
         let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         // Construct the path to the resource
-        let resourceURL = testsDir
+        let resourceURL =
+            testsDir
             .appendingPathComponent("Integration/Resources/jwt.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
 
-        let credsURL = testsDir.appendingPathComponent("Integration/Resources/TestUser.creds", isDirectory: false)
+        let credsURL = testsDir.appendingPathComponent(
+            "Integration/Resources/TestUser.creds", isDirectory: false)
 
-        let client = ClientOptions().url(URL(string:natsServer.clientURL)!).credentials_file(credsURL).build()
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).credentials_file(
+            credsURL
+        ).build()
         try await client.connect()
         let subscribe = try await client.subscribe(to: "foo").makeAsyncIterator()
-        try  client.publish("data".data(using: .utf8)!, subject: "foo")
+        try client.publish("data".data(using: .utf8)!, subject: "foo")
         let message = await subscribe.next()
         print("message: \(message!.subject)")
 
     }
 }
-

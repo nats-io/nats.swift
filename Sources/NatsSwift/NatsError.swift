@@ -38,5 +38,3 @@ struct NatsTimeoutError: NatsError {
         self.description = description
     }
 }
-
-

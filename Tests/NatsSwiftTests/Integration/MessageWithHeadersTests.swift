@@ -1,6 +1,7 @@
 import Foundation
 import Logging
 import XCTest
+
 @testable import NatsSwift
 
 class TestMessageWithHeadersTests: XCTestCase {
@@ -16,7 +17,7 @@ class TestMessageWithHeadersTests: XCTestCase {
         natsServer.stop()
     }
 
-    func testMessageWithHeaders() async throws  {
+    func testMessageWithHeaders() async throws {
         natsServer.start()
         logger.logLevel = .debug
 
@@ -33,7 +34,7 @@ class TestMessageWithHeadersTests: XCTestCase {
         try client.publish("hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
 
         let iter = sub.makeAsyncIterator()
-        let msg =  await iter.next()
+        let msg = await iter.next()
         XCTAssertEqual(msg!.headers, hm)
 
     }

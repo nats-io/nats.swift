@@ -3,10 +3,10 @@
 //  NatsSwift
 //
 
+import Dispatch
 import Foundation
 import NIO
 import NIOFoundationCompat
-import Dispatch
 
 public class ClientOptions {
     private var urls: [URL] = []
