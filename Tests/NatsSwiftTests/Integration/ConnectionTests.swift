@@ -165,7 +165,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start(cfg: resourceURL.path)
         let client = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .username_and_password("derek", "s3cr3t")
+            .usernameAndPassword("derek", "s3cr3t")
             .maxReconnects(5)
             .build()
         try await client.connect()
@@ -175,14 +175,14 @@ class CoreNatsTests: XCTestCase {
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
-        let bad_creds_client = ClientOptions()
+        let badCertsClient = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .username_and_password("derek", "badpassword")
+            .usernameAndPassword("derek", "badpassword")
             .maxReconnects(5)
             .build()
 
         do {
-            try await bad_creds_client.connect()
+            try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
         } catch {
             XCTAssertNotNil(error, "Error should not be nil")
@@ -212,14 +212,14 @@ class CoreNatsTests: XCTestCase {
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
-        let bad_creds_client = ClientOptions()
+        let badCertsClient = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .token("badtoken")
             .maxReconnects(5)
             .build()
 
         do {
-            try await bad_creds_client.connect()
+            try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
         } catch {
             XCTAssertNotNil(error, "Error should not be nil")
@@ -240,7 +240,7 @@ class CoreNatsTests: XCTestCase {
         let credsURL = testsDir.appendingPathComponent(
             "Integration/Resources/TestUser.creds", isDirectory: false)
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).credentials_file(
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).credentialsFile(
             credsURL
         ).build()
         try await client.connect()

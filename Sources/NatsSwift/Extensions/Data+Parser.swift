@@ -95,7 +95,7 @@ extension Data {
             let serverOp = try ServerOp.parse(from: lineData)
 
             // if it's a message, get the full payload and add to returned data
-            if case .Message(var msg) = serverOp {
+            if case .message(var msg) = serverOp {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
                 } else {
@@ -113,11 +113,11 @@ extension Data {
                         self.index(
                             payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
                         ?? self.endIndex
-                    serverOps.append(.Message(msg))
+                    serverOps.append(.message(msg))
                     continue
                 }
                 //TODO(jrm): Add HMSG handling here too.
-            } else if case .HMessage(var msg) = serverOp {
+            } else if case .hMessage(var msg) = serverOp {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
                 } else {
@@ -167,7 +167,7 @@ extension Data {
                         self.index(
                             payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
                         ?? self.endIndex
-                    serverOps.append(.HMessage(msg))
+                    serverOps.append(.hMessage(msg))
                     continue
                 }
 

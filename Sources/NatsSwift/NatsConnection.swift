@@ -25,7 +25,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let pingInterval: TimeInterval
 
     typealias InboundIn = ByteBuffer
-    internal var state: NatsState = .Pending
+    internal var state: NatsState = .pending
     internal var subscriptions: [UInt64: Subscription]
     internal var subscriptionCounter = ManagedAtomic<UInt64>(0)
     internal var serverInfo: ServerInfo?
@@ -66,9 +66,9 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.serverInfoContinuation = nil
                 logger.debug("server info")
                 switch op {
-                case let .Error(err):
+                case .error(let err):
                     continuation.resume(throwing: err)
-                case let .Info(info):
+                case .info(let info):
                     continuation.resume(returning: info)
                 default:
                     // ignore until we get either error or server info
@@ -81,7 +81,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.connectionEstablishedContinuation = nil
                 logger.debug("conn established")
                 switch op {
-                case let .Error(err):
+                case .error(let err):
                     continuation.resume(throwing: err)
                 default:
                     continuation.resume()
@@ -90,19 +90,19 @@ class ConnectionHandler: ChannelInboundHandler {
             }
 
             switch op {
-            case .Ping:
+            case .ping:
                 logger.debug("ping")
                 do {
-                    try self.write(operation: .Pong)
+                    try self.write(operation: .pong)
                 } catch {
                     // TODO(pp): handle async error
                     logger.error("error sending pong: \(error)")
                     continue
                 }
-            case .Pong:
+            case .pong:
                 logger.debug("pong")
                 self.outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
-            case let .Error(err):
+            case .error(let err):
                 logger.debug("error \(err)")
 
                 let normalizedError = err.normalizedError
@@ -114,11 +114,11 @@ class ConnectionHandler: ChannelInboundHandler {
                     context.fireErrorCaught(err)
                 }
             // TODO(pp): handle auth errors here
-            case let .Message(msg):
+            case .message(let msg):
                 self.handleIncomingMessage(msg)
-            case let .HMessage(msg):
+            case .hMessage(let msg):
                 self.handleIncomingHMessage(msg)
-            case let .Info(serverInfo):
+            case .info(let serverInfo):
                 logger.debug("info \(op)")
                 self.serverInfo = serverInfo
             default:
@@ -221,15 +221,15 @@ class ConnectionHandler: ChannelInboundHandler {
             self.connectionEstablishedContinuation = continuation
             Task.detached {
                 do {
-                    try self.write(operation: ClientOp.Connect(connect))
-                    try self.write(operation: ClientOp.Ping)
+                    try self.write(operation: ClientOp.connect(connect))
+                    try self.write(operation: ClientOp.ping)
                     self.channel?.flush()
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
-        self.state = .Connected
+        self.state = .pending
         guard let channel = self.channel else {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty channel"])
         }
@@ -244,7 +244,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func close() async throws {
-        self.state = .Closed
+        self.state = .closed
         try await disconnect()
         try await self.group.shutdownGracefully()
     }
@@ -261,7 +261,7 @@ class ConnectionHandler: ChannelInboundHandler {
             handleDisconnect()
             return
         }
-        let ping = ClientOp.Ping
+        let ping = ClientOp.ping
         do {
             try self.write(operation: ping)
             logger.debug("sent ping: \(pingsOut)")
@@ -280,7 +280,7 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelInactive(context: ChannelHandlerContext) {
         logger.debug("TCP channel inactive")
 
-        if self.state == .Connected {
+        if self.state == .pending {
             handleDisconnect()
         }
     }
@@ -289,15 +289,15 @@ class ConnectionHandler: ChannelInboundHandler {
         // TODO(pp): implement Close() on the connection and call it here
         logger.debug("Encountered error on the channel: \(error)")
         context.close(promise: nil)
-        if self.state == .Connected {
+        if self.state == .pending {
             handleDisconnect()
-        } else if self.state == .Disconnected {
+        } else if self.state == .disconnected {
             handleReconnect()
         }
     }
 
     func handleDisconnect() {
-        self.state = .Disconnected
+        self.state = .disconnected
         if let channel = self.channel {
             let promise = channel.eventLoop.makePromise(of: Void.self)
             Task {
@@ -337,7 +337,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 break
             }
             for (sid, sub) in self.subscriptions {
-                try write(operation: ClientOp.Subscribe((sid, sub.subject, nil)))
+                try write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
             }
         }
     }
@@ -378,7 +378,7 @@ class ConnectionHandler: ChannelInboundHandler {
     func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
-        try write(operation: ClientOp.Subscribe((sid, subject, nil)))
+        try write(operation: ClientOp.subscribe((sid, subject, nil)))
         let sub = Subscription(subject: subject)
         self.subscriptions[sid] = sub
         return sub
