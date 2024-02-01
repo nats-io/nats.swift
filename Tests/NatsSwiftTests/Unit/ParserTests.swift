@@ -37,12 +37,12 @@ class ParserTests: XCTestCase {
                 name: "Single chunk, different operations",
                 givenChunks: ["MSG foo 1 5\r\nhello\r\n+OK\r\nPONG\r\n"],
                 expectedOps: [
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
-                    .Ok,
-                    .Pong,
+                    .ok,
+                    .pong,
                 ]
             ),
             TestCase(
@@ -56,31 +56,31 @@ class ParserTests: XCTestCase {
                     "hello\r\n",
                 ],
                 expectedOps: [
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
@@ -96,15 +96,15 @@ class ParserTests: XCTestCase {
                     "oo 1 5\r\nhello\r\n",
                 ],
                 expectedOps: [
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
                     ),
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
                     ),
@@ -116,7 +116,7 @@ class ParserTests: XCTestCase {
                     "MSG foo 1 7\r\nhe\r\nllo\r\n"
                 ],
                 expectedOps: [
-                    .Message(
+                    .message(
                         MessageInbound(
                             subject: "foo", sid: 1, payload: Data("he\r\nllo".utf8), length: 7))
                 ]
@@ -139,41 +139,41 @@ class ParserTests: XCTestCase {
             XCTAssertEqual(ops.count, tc.expectedOps.count)
             for (i, op) in ops.enumerated() {
                 switch op {
-                case .Ok:
-                    if case .Ok = tc.expectedOps[i] {
+                case .ok:
+                    if case .ok = tc.expectedOps[i] {
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                case .Info(let info):
-                    if case .Info(let expectedInfo) = tc.expectedOps[i] {
+                case .info(let info):
+                    if case .info(let expectedInfo) = tc.expectedOps[i] {
                         XCTAssertEqual(info, expectedInfo, fail(tn, tc.name))
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
 
-                case .Ping:
-                    if case .Ping = tc.expectedOps[i] {
+                case .ping:
+                    if case .ping = tc.expectedOps[i] {
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                case .Pong:
-                    if case .Pong = tc.expectedOps[i] {
+                case .pong:
+                    if case .pong = tc.expectedOps[i] {
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                case .Error(_):
-                    if case .Error(_) = tc.expectedOps[i] {
+                case .error(_):
+                    if case .error(_) = tc.expectedOps[i] {
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                case .Message(let msg):
-                    if case .Message(let expectedMessage) = tc.expectedOps[i] {
+                case .message(let msg):
+                    if case .message(let expectedMessage) = tc.expectedOps[i] {
                         XCTAssertEqual(msg, expectedMessage, fail(tn, tc.name))
                     } else {
                         XCTFail(fail(tn, tc.name))
                     }
-                case .HMessage(let msg):
-                    if case .HMessage(let expectedMessage) = tc.expectedOps[i] {
+                case .hMessage(let msg):
+                    if case .hMessage(let expectedMessage) = tc.expectedOps[i] {
                         XCTAssertEqual(msg, expectedMessage, fail(tn, tc.name))
                     } else {
                         XCTFail(fail(tn, tc.name))

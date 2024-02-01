@@ -33,39 +33,39 @@ internal enum NatsOperation: String {
 }
 
 enum ServerOp {
-    case Ok
-    case Info(ServerInfo)
-    case Ping
-    case Pong
-    case Error(NatsConnectionError)
-    case Message(MessageInbound)
-    case HMessage(HMessageInbound)
+    case ok
+    case info(ServerInfo)
+    case ping
+    case pong
+    case error(NatsConnectionError)
+    case message(MessageInbound)
+    case hMessage(HMessageInbound)
 
-    static func parse(from message: Data) throws -> ServerOp {
-        guard message.count > 2 else {
+    static func parse(from msg: Data) throws -> ServerOp {
+        guard msg.count > 2 else {
             throw NSError(
                 domain: "nats_swift", code: 1,
                 userInfo: ["message": "unable to parse inbound message: \(message)"])
         }
-        let msgType = message.getMessageType()
+        let msgType = msg.getMessageType()
         switch msgType {
         case .message:
-            return try Message(MessageInbound.parse(data: message))
+            return try message(MessageInbound.parse(data: msg))
         case .hmessage:
-            return try HMessage(HMessageInbound.parse(data: message))
+            return try hMessage(HMessageInbound.parse(data: msg))
         case .info:
-            return try Info(ServerInfo.parse(data: message))
+            return try info(ServerInfo.parse(data: msg))
         case .ok:
-            return Ok
+            return ok
         case .error:
-            if let errMsg = message.removePrefix(Data(NatsOperation.error.rawBytes)).toString() {
-                return Error(NatsConnectionError(errMsg))
+            if let errMsg = msg.removePrefix(Data(NatsOperation.error.rawBytes)).toString() {
+                return error(NatsConnectionError(errMsg))
             }
-            return Error(NatsConnectionError("unexpected error"))
+            return error(NatsConnectionError("unexpected error"))
         case .ping:
-            return Ping
+            return ping
         case .pong:
-            return Pong
+            return pong
         default:
             throw NSError(
                 domain: "nats_swift", code: 1,
@@ -90,7 +90,7 @@ internal struct HMessageInbound: Equatable {
     internal static func parse(data: Data) throws -> HMessageInbound {
         let protoComponents =
             data
-            .dropFirst(NatsOperation.hmessage.rawValue.count)  // Assuming the message starts with "HMSG "
+            .dropFirst(NatsOperation.hmessage.rawValue.count)  // Assuming msg starts with "HMSG "
             .split(separator: space)
             .filter { !$0.isEmpty }
 
@@ -146,7 +146,7 @@ internal struct MessageInbound: Equatable {
     internal static func parse(data: Data) throws -> MessageInbound {
         let protoComponents =
             data
-            .dropFirst(NatsOperation.message.rawValue.count)  // Assuming the message starts with "MSG "
+            .dropFirst(NatsOperation.message.rawValue.count)  // Assuming msg starts with "MSG "
             .split(separator: space)
             .filter { !$0.isEmpty }
 
@@ -246,17 +246,17 @@ struct ServerInfo: Codable, Equatable {
 }
 
 enum ClientOp {
-    case Publish((subject: String, reply: String?, payload: Data?, headers: HeaderMap?))
-    case Subscribe((sid: UInt64, subject: String, queue: String?))
-    case Unsubscribe((sid: UInt64, max: UInt64?))
-    case Connect(ConnectInfo)
-    case Ping
-    case Pong
+    case publish((subject: String, reply: String?, payload: Data?, headers: HeaderMap?))
+    case subscribe((sid: UInt64, subject: String, queue: String?))
+    case unsubscribe((sid: UInt64, max: UInt64?))
+    case connect(ConnectInfo)
+    case ping
+    case pong
 
     internal func asBytes(using allocator: ByteBufferAllocator) throws -> ByteBuffer {
         var buffer: ByteBuffer
         switch self {
-        case let .Publish((subject, reply, payload, headers)):
+        case .publish((let subject, let reply, let payload, let headers)):
             if let payload = payload {
                 buffer = allocator.buffer(
                     capacity: payload.count + subject.utf8.count
@@ -295,7 +295,7 @@ enum ClientOp {
                 buffer.writeString("0\r\n")
             }
 
-        case let .Subscribe((sid, subject, queue)):
+        case .subscribe((let sid, let subject, let queue)):
             buffer = allocator.buffer(capacity: 0)
             if let queue {
                 buffer.writeString(
@@ -304,24 +304,24 @@ enum ClientOp {
                 buffer.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(sid)\r\n")
             }
 
-        case let .Unsubscribe((sid, max)):
+        case .unsubscribe((let sid, let max)):
             buffer = allocator.buffer(capacity: 0)
             if let max {
                 buffer.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid) \(max)\r\n")
             } else {
                 buffer.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid)\r\n")
             }
-        case let .Connect(info):
+        case .connect(let info):
             let json = try JSONEncoder().encode(info)
             buffer = allocator.buffer(capacity: json.count + 5)
             buffer.writeString("\(NatsOperation.connect.rawValue) ")
             buffer.writeData(json)
             buffer.writeString("\r\n")
             return buffer
-        case .Ping:
+        case .ping:
             buffer = allocator.buffer(capacity: 8)
             buffer.writeString("\(NatsOperation.ping.rawValue)\r\n")
-        case .Pong:
+        case .pong:
             buffer = allocator.buffer(capacity: 8)
             buffer.writeString("\(NatsOperation.pong.rawValue)\r\n")
         }

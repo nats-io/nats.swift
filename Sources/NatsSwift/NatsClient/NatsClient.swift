@@ -13,10 +13,10 @@ var logger = Logger(label: "NatsSwift")
 
 /// Client connection states
 public enum NatsState {
-    case Pending
-    case Connected
-    case Disconnected
-    case Closed
+    case pending
+    case connected
+    case disconnected
+    case closed
 }
 
 public struct Auth {
@@ -96,7 +96,7 @@ extension Client {
             throw NSError(
                 domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
-        try connectionHandler.write(operation: ClientOp.Publish((subject, reply, payload, headers)))
+        try connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
     }
 
     public func flush() async throws {

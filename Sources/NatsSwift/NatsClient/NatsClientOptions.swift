@@ -42,7 +42,7 @@ public class ClientOptions {
         return self
     }
 
-    public func username_and_password(_ username: String, _ password: String) -> ClientOptions {
+    public func usernameAndPassword(_ username: String, _ password: String) -> ClientOptions {
         if self.auth == nil {
             self.auth = Auth(user: username, password: password)
         } else {
@@ -61,7 +61,7 @@ public class ClientOptions {
         return self
     }
 
-    public func credentials_file(_ credentials: URL) -> ClientOptions {
+    public func credentialsFile(_ credentials: URL) -> ClientOptions {
         if self.auth == nil {
             self.auth = Auth.fromCredentials(credentials)
         } else {
