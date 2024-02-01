@@ -4,6 +4,7 @@
 //
 
 import XCTest
+
 @testable import NatsSwift
 
 class ParserTests: XCTestCase {
@@ -36,9 +37,12 @@ class ParserTests: XCTestCase {
                 name: "Single chunk, different operations",
                 givenChunks: ["MSG foo 1 5\r\nhello\r\n+OK\r\nPONG\r\n"],
                 expectedOps: [
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
                     .Ok,
-                    .Pong
+                    .Pong,
                 ]
             ),
             TestCase(
@@ -49,16 +53,37 @@ class ParserTests: XCTestCase {
                     "oo 1 5\r\nhello\r\nMSG foo 1 5\r\nworld",
                     "\r\nMSG foo 1 5\r\nhello\r",
                     "\nMSG foo 1 5\r\nworld\r\nMSG foo 1 5\r\n",
-                    "hello\r\n"
+                    "hello\r\n",
                 ],
                 expectedOps: [
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
                 ]
             ),
             TestCase(
@@ -68,23 +93,34 @@ class ParserTests: XCTestCase {
                     "",
                     "",
                     "rld\r\nMSG f",
-                    "oo 1 5\r\nhello\r\n"
+                    "oo 1 5\r\nhello\r\n",
                 ],
                 expectedOps: [
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)),
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "world".data(using: .utf8)!, length: 5)
+                    ),
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, length: 5)
+                    ),
                 ]
             ),
             TestCase(
                 name: "With crlf in payload",
                 givenChunks: [
-                    "MSG foo 1 7\r\nhe\r\nllo\r\n",
+                    "MSG foo 1 7\r\nhe\r\nllo\r\n"
                 ],
                 expectedOps: [
-                    .Message(MessageInbound(subject: "foo", sid: 1, payload: Data("he\r\nllo".utf8), length: 7))
+                    .Message(
+                        MessageInbound(
+                            subject: "foo", sid: 1, payload: Data("he\r\nllo".utf8), length: 7))
                 ]
-            )
+            ),
         ]
 
         for (tn, tc) in testCases.enumerated() {
@@ -104,7 +140,8 @@ class ParserTests: XCTestCase {
             for (i, op) in ops.enumerated() {
                 switch op {
                 case .Ok:
-                    if case .Ok = tc.expectedOps[i] {} else {
+                    if case .Ok = tc.expectedOps[i] {
+                    } else {
                         XCTFail(fail(tn, tc.name))
                     }
                 case .Info(let info):
@@ -115,15 +152,18 @@ class ParserTests: XCTestCase {
                     }
 
                 case .Ping:
-                    if case .Ping = tc.expectedOps[i] {} else {
+                    if case .Ping = tc.expectedOps[i] {
+                    } else {
                         XCTFail(fail(tn, tc.name))
                     }
                 case .Pong:
-                    if case .Pong = tc.expectedOps[i] {} else {
+                    if case .Pong = tc.expectedOps[i] {
+                    } else {
                         XCTFail(fail(tn, tc.name))
                     }
                 case .Error(_):
-                    if case .Error(_) = tc.expectedOps[i] {} else {
+                    if case .Error(_) = tc.expectedOps[i] {
+                    } else {
                         XCTFail(fail(tn, tc.name))
                     }
                 case .Message(let msg):

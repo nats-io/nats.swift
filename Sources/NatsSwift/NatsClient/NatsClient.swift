@@ -3,12 +3,11 @@
 //  NatsSwift
 //
 
+import Dispatch
 import Foundation
+import Logging
 import NIO
 import NIOFoundationCompat
-import Dispatch
-
-import Logging
 
 var logger = Logger(label: "NatsSwift")
 
@@ -69,12 +68,13 @@ public class Client {
 }
 
 extension Client {
-    public func connect() async throws  {
+    public func connect() async throws {
         //TODO(jrm): reafactor for reconnection and review error handling.
         //TODO(jrm): handle response
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+            throw NSError(
+                domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         try await connectionHandler.connect()
     }
@@ -82,15 +82,19 @@ extension Client {
     public func close() async throws {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+            throw NSError(
+                domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         try await connectionHandler.close()
     }
 
-    public func publish(_ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil) throws {
+    public func publish(
+        _ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil
+    ) throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+            throw NSError(
+                domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         try connectionHandler.write(operation: ClientOp.Publish((subject, reply, payload, headers)))
     }
@@ -98,7 +102,8 @@ extension Client {
     public func flush() async throws {
         logger.debug("flush")
         guard let connectionHandler = self.connectionHandler else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+            throw NSError(
+                domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         connectionHandler.channel?.flush()
     }
@@ -106,7 +111,8 @@ extension Client {
     public func subscribe(to subject: String) async throws -> Subscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
+            throw NSError(
+                domain: "nats_swift", code: 1, userInfo: ["message": "empty connection handler"])
         }
         return try await connectionHandler.subscribe(subject)
 

@@ -7,25 +7,28 @@ import Foundation
 import NIO
 
 internal enum NatsOperation: String {
-    case connect        = "CONNECT"
-    case subscribe      = "SUB"
-    case unsubscribe    = "UNSUB"
-    case publish        = "PUB"
-    case hpublish        = "HPUB"
-    case message        = "MSG"
-    case hmessage        = "HMSG"
-    case info           = "INFO"
-    case ok             = "+OK"
-    case error          = "-ERR"
-    case ping           = "PING"
-    case pong           = "PONG"
+    case connect = "CONNECT"
+    case subscribe = "SUB"
+    case unsubscribe = "UNSUB"
+    case publish = "PUB"
+    case hpublish = "HPUB"
+    case message = "MSG"
+    case hmessage = "HMSG"
+    case info = "INFO"
+    case ok = "+OK"
+    case error = "-ERR"
+    case ping = "PING"
+    case pong = "PONG"
 
     var rawBytes: [UInt8] {
         return Array(self.rawValue.utf8)
     }
 
     static func allOperations() -> [NatsOperation] {
-        return [.connect, .subscribe, .unsubscribe, .publish, .message, .hmessage, .info, .ok, .error, .ping, .pong]
+        return [
+            .connect, .subscribe, .unsubscribe, .publish, .message, .hmessage, .info, .ok, .error,
+            .ping, .pong,
+        ]
     }
 }
 
@@ -37,10 +40,12 @@ enum ServerOp {
     case Error(NatsConnectionError)
     case Message(MessageInbound)
     case HMessage(HMessageInbound)
-    
+
     static func parse(from message: Data) throws -> ServerOp {
         guard message.count > 2 else {
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message: \(message)"])
+            throw NSError(
+                domain: "nats_swift", code: 1,
+                userInfo: ["message": "unable to parse inbound message: \(message)"])
         }
         let msgType = message.getMessageType()
         switch msgType {
@@ -62,7 +67,9 @@ enum ServerOp {
         case .pong:
             return Pong
         default:
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "Unknown server op: \(message)"])
+            throw NSError(
+                domain: "nats_swift", code: 1,
+                userInfo: ["message": "Unknown server op: \(message)"])
         }
     }
 }
@@ -81,16 +88,19 @@ internal struct HMessageInbound: Equatable {
 
     // Parse the operation syntax: HMSG <subject> <sid> [reply-to]
     internal static func parse(data: Data) throws -> HMessageInbound {
-        let protoComponents = data
+        let protoComponents =
+            data
             .dropFirst(NatsOperation.hmessage.rawValue.count)  // Assuming the message starts with "HMSG "
             .split(separator: space)
             .filter { !$0.isEmpty }
 
-
-        let parseArgs: ((Data, Data, Data?,Data, Data) throws -> HMessageInbound) = { subjectData, sidData, replyData, lengthHeaders, lengthData in
+        let parseArgs: ((Data, Data, Data?, Data, Data) throws -> HMessageInbound) = {
+            subjectData, sidData, replyData, lengthHeaders, lengthData in
             let subject = String(decoding: subjectData, as: UTF8.self)
             guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse subscription ID as number"])
+                throw NSError(
+                    domain: "nats_swift", code: 1,
+                    userInfo: ["message": "unable to parse subscription ID as number"])
             }
             var replySubject: String? = nil
             if let replyData = replyData {
@@ -98,17 +108,25 @@ internal struct HMessageInbound: Equatable {
             }
             let headersLength = Int(String(decoding: lengthHeaders, as: UTF8.self)) ?? 0
             let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
-            return HMessageInbound(subject: subject, sid: sid, reply: replySubject, payload: nil, headers: HeaderMap(), headersLength: headersLength, length: length)
+            return HMessageInbound(
+                subject: subject, sid: sid, reply: replySubject, payload: nil, headers: HeaderMap(),
+                headersLength: headersLength, length: length)
         }
 
         var msg: HMessageInbound
         switch protoComponents.count {
         case 4:
-            msg = try parseArgs(protoComponents[0], protoComponents[1], nil, protoComponents[2], protoComponents[3])
+            msg = try parseArgs(
+                protoComponents[0], protoComponents[1], nil, protoComponents[2],
+                protoComponents[3])
         case 5:
-            msg = try parseArgs(protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3], protoComponents[4])
+            msg = try parseArgs(
+                protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3],
+                protoComponents[4])
         default:
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message header"])
+            throw NSError(
+                domain: "nats_swift", code: 1,
+                userInfo: ["message": "unable to parse inbound message header"])
         }
         return msg
     }
@@ -126,23 +144,27 @@ internal struct MessageInbound: Equatable {
 
     // Parse the operation syntax: MSG <subject> <sid> [reply-to]
     internal static func parse(data: Data) throws -> MessageInbound {
-        let protoComponents = data
+        let protoComponents =
+            data
             .dropFirst(NatsOperation.message.rawValue.count)  // Assuming the message starts with "MSG "
             .split(separator: space)
             .filter { !$0.isEmpty }
 
-
-        let parseArgs: ((Data, Data, Data?, Data) throws -> MessageInbound) = { subjectData, sidData, replyData, lengthData in
+        let parseArgs: ((Data, Data, Data?, Data) throws -> MessageInbound) = {
+            subjectData, sidData, replyData, lengthData in
             let subject = String(decoding: subjectData, as: UTF8.self)
             guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
-                throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse subscription ID as number"])
+                throw NSError(
+                    domain: "nats_swift", code: 1,
+                    userInfo: ["message": "unable to parse subscription ID as number"])
             }
             var replySubject: String? = nil
             if let replyData = replyData {
                 replySubject = String(decoding: replyData, as: UTF8.self)
             }
             let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
-            return MessageInbound(subject: subject, sid: sid, reply: replySubject, payload: nil, length: length)
+            return MessageInbound(
+                subject: subject, sid: sid, reply: replySubject, payload: nil, length: length)
         }
 
         var msg: MessageInbound
@@ -150,14 +172,16 @@ internal struct MessageInbound: Equatable {
         case 3:
             msg = try parseArgs(protoComponents[0], protoComponents[1], nil, protoComponents[2])
         case 4:
-            msg = try parseArgs(protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3])
+            msg = try parseArgs(
+                protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3])
         default:
-            throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "unable to parse inbound message header"])
+            throw NSError(
+                domain: "nats_swift", code: 1,
+                userInfo: ["message": "unable to parse inbound message header"])
         }
         return msg
     }
 }
-
 
 /// Struct representing server information in NATS.
 struct ServerInfo: Codable, Equatable {
@@ -222,7 +246,7 @@ struct ServerInfo: Codable, Equatable {
 }
 
 enum ClientOp {
-    case Publish((subject: String, reply: String?, payload: Data?, headers: HeaderMap? ))
+    case Publish((subject: String, reply: String?, payload: Data?, headers: HeaderMap?))
     case Subscribe((sid: UInt64, subject: String, queue: String?))
     case Unsubscribe((sid: UInt64, max: UInt64?))
     case Connect(ConnectInfo)
@@ -234,8 +258,10 @@ enum ClientOp {
         switch self {
         case let .Publish((subject, reply, payload, headers)):
             if let payload = payload {
-                buffer = allocator.buffer(capacity: payload.count + subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
-                if  headers != nil {
+                buffer = allocator.buffer(
+                    capacity: payload.count + subject.utf8.count
+                        + NatsOperation.publish.rawValue.count + 12)
+                if headers != nil {
                     buffer.writeData(NatsOperation.hpublish.rawBytes)
                 } else {
                     buffer.writeData(NatsOperation.publish.rawBytes)
@@ -253,12 +279,13 @@ enum ClientOp {
                     buffer.writeString("\(headersLen) \(totalLen)\r\n")
                     buffer.writeData(headers)
                 } else {
-                buffer.writeString("\(payload.count)\r\n")
+                    buffer.writeString("\(payload.count)\r\n")
                 }
                 buffer.writeData(payload)
                 buffer.writeString("\r\n")
             } else {
-                buffer = allocator.buffer(capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
+                buffer = allocator.buffer(
+                    capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
                 buffer.writeData(NatsOperation.publish.rawBytes)
                 buffer.writeString(" ")
                 buffer.writeString(subject)
@@ -271,7 +298,8 @@ enum ClientOp {
         case let .Subscribe((sid, subject, queue)):
             buffer = allocator.buffer(capacity: 0)
             if let queue {
-                buffer.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n")
+                buffer.writeString(
+                    "\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n")
             } else {
                 buffer.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(sid)\r\n")
             }
@@ -285,7 +313,7 @@ enum ClientOp {
             }
         case let .Connect(info):
             let json = try JSONEncoder().encode(info)
-            buffer = allocator.buffer(capacity: json.count+5)
+            buffer = allocator.buffer(capacity: json.count + 5)
             buffer.writeString("\(NatsOperation.connect.rawValue) ")
             buffer.writeData(json)
             buffer.writeString("\r\n")
@@ -347,7 +375,7 @@ struct ConnectInfo: Encodable {
         case pedantic
         case userJwt = "jwt"
         case nkey
-        case signature = "sig" // Custom key name for JSON
+        case signature = "sig"  // Custom key name for JSON
         case name
         case echo
         case lang

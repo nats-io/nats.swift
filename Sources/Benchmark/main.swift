@@ -1,5 +1,5 @@
-import NatsSwift
 import Foundation
+import NatsSwift
 
 let nats = ClientOptions()
     .url(URL(string: "nats://localhost:4222")!)
@@ -22,6 +22,6 @@ for _ in 0..<numMsgs {
 }
 try! await nats.flush()
 let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
-let msgsPerSec: Double = Double(numMsgs)/(Double(elapsed)/1_000_000_000)
-print("Elapsed: \(elapsed / 1000000)ms")
+let msgsPerSec: Double = Double(numMsgs) / (Double(elapsed) / 1_000_000_000)
+print("Elapsed: \(elapsed / 1_000_000)ms")
 print("\(msgsPerSec) msgs/s")

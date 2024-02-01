@@ -1,6 +1,5 @@
 import Foundation
 
-
 // Represents NATS header field value in Swift.
 public struct HeaderValue: Equatable, CustomStringConvertible {
     private var inner: String
@@ -32,7 +31,8 @@ public enum ParseHeaderNameError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .invalidCharacter:
-            return "Invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
+            return
+                "Invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
         }
     }
 }
@@ -42,8 +42,8 @@ public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
     private var inner: String
 
     public init(_ value: String) throws {
-            if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
-                throw ParseHeaderNameError.invalidCharacter
+        if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
+            throw ParseHeaderNameError.invalidCharacter
         }
         self.inner = value
     }
@@ -121,5 +121,3 @@ extension HeaderMap {
         }
     }
 }
-
-

@@ -3,11 +3,11 @@
 //  NatsSwoft
 //
 
+import Atomics
+import Dispatch
 import Foundation
 import NIO
 import NIOFoundationCompat
-import Dispatch
-import Atomics
 import NKeys
 
 class ConnectionHandler: ChannelInboundHandler {
@@ -26,14 +26,13 @@ class ConnectionHandler: ChannelInboundHandler {
 
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .Pending
-    internal var subscriptions: [ UInt64: Subscription ]
+    internal var subscriptions: [UInt64: Subscription]
     internal var subscriptionCounter = ManagedAtomic<UInt64>(0)
     internal var serverInfo: ServerInfo?
     internal var auth: Auth?
     private var parseRemainder: Data?
     private var pingTask: RepeatedTask?
     private var outstandingPings = ManagedAtomic<UInt8>(0)
-
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         logger.debug("channel read")
@@ -108,11 +107,13 @@ class ConnectionHandler: ChannelInboundHandler {
 
                 let normalizedError = err.normalizedError
                 // on some errors, force reconnect
-                if normalizedError == "stale connection" || normalizedError == "maximum connections exceeded" {
+                if normalizedError == "stale connection"
+                    || normalizedError == "maximum connections exceeded"
+                {
                     inputBuffer.clear()
                     context.fireErrorCaught(err)
                 }
-                // TODO(pp): handle auth errors here
+            // TODO(pp): handle auth errors here
             case let .Message(msg):
                 self.handleIncomingMessage(msg)
             case let .HMessage(msg):
@@ -126,12 +127,15 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         inputBuffer.clear()
     }
-    init(inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?, pingInterval: TimeInterval, auth: Auth?) {
+    init(
+        inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
+        pingInterval: TimeInterval, auth: Auth?
+    ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         self.inputBuffer = allocator.buffer(capacity: 1024)
-        self.subscriptions = [UInt64:Subscription]()
+        self.subscriptions = [UInt64: Subscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
         self.auth = auth
@@ -151,7 +155,10 @@ class ConnectionHandler: ChannelInboundHandler {
             Task.detached {
                 do {
                     let bootstrap = ClientBootstrap(group: self.group)
-                        .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+                        .channelOption(
+                            ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
+                            value: 1
+                        )
                         .channelInitializer { channel in
                             //Fixme(jrm): do not ignore error from addHandler future.
                             channel.pipeline.addHandler(self).whenComplete { result in
@@ -165,7 +172,8 @@ class ConnectionHandler: ChannelInboundHandler {
                             return channel.eventLoop.makeSucceededFuture(())
                         }.connectTimeout(.seconds(5))
                     guard let url = self.urls.first, let host = url.host, let port = url.port else {
-                        throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
+                        throw NSError(
+                            domain: "nats_swift", code: 1, userInfo: ["message": "no url"])
                     }
                     self.channel = try await bootstrap.connect(host: host, port: port).get()
                 } catch {
@@ -177,23 +185,32 @@ class ConnectionHandler: ChannelInboundHandler {
         self.serverInfo = info
         // TODO(jrm): Add rest of auth here.
 
-        var initialConnect = ConnectInfo(verbose: false, pedantic: false, userJwt: nil, nkey: "",  name: "", echo: true, lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false, user: self.auth?.user ?? "", pass: self.auth?.password ?? "", authToken: self.auth?.token ?? "", headers: true, noResponders: true)
+        var initialConnect = ConnectInfo(
+            verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
+            lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
+            user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
+            authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
         if let auth = self.auth {
-            if  let credentialsPath = auth.credentialsPath {
+            if let credentialsPath = auth.credentialsPath {
                 let credentials = try await URLSession.shared.data(from: credentialsPath).0
                 guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
-                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract JWT from credentials file"])
+                    throw NSError(
+                        domain: "nats_swift", code: 1,
+                        userInfo: ["message": "failed to extract JWT from credentials file"])
                 }
-                guard let nkey = JwtUtils.parseDecoratedNKey(contents:  credentials) else {
-                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "failed to extract NKEY from credentials file"])
+                guard let nkey = JwtUtils.parseDecoratedNKey(contents: credentials) else {
+                    throw NSError(
+                        domain: "nats_swift", code: 1,
+                        userInfo: ["message": "failed to extract NKEY from credentials file"])
                 }
-                guard let nonce = self.serverInfo?.nonce else  {
-                    throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "missing nonce"])
+                guard let nonce = self.serverInfo?.nonce else {
+                    throw NSError(
+                        domain: "nats_swift", code: 1, userInfo: ["message": "missing nonce"])
                 }
                 let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
                 let nonceData = nonce.data(using: .utf8)!
-                let sig  = try keypair.sign(input: nonceData)
+                let sig = try keypair.sign(input: nonceData)
                 let base64sig = sig.base64EncodedURLSafeNotPadded()
                 initialConnect.signature = base64sig
                 initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
@@ -217,10 +234,12 @@ class ConnectionHandler: ChannelInboundHandler {
             throw NSError(domain: "nats_swift", code: 1, userInfo: ["message": "empty channel"])
         }
         // Schedule the task to send a PING periodically
-        let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval*1_000_000_000))
-        self.pingTask = channel.eventLoop.scheduleRepeatedTask(initialDelay: pingInterval, delay: pingInterval) { [weak self] task in
-             self?.sendPing()
-         }
+        let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval * 1_000_000_000))
+        self.pingTask = channel.eventLoop.scheduleRepeatedTask(
+            initialDelay: pingInterval, delay: pingInterval
+        ) { [weak self] task in
+            self?.sendPing()
+        }
         logger.debug("connection established")
     }
 
@@ -236,7 +255,8 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     private func sendPing() {
-        let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(ordering: AtomicUpdateOrdering.relaxed)
+        let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(
+            ordering: AtomicUpdateOrdering.relaxed)
         if pingsOut > 2 {
             handleDisconnect()
             return
@@ -290,7 +310,7 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             promise.futureResult.whenComplete { result in
                 do {
-                  try result.get()
+                    try result.get()
                 } catch {
                     logger.error("Error closing connection: \(error)")
                 }
@@ -323,14 +343,18 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func handleIncomingMessage(_ message: MessageInbound) {
-        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length, headers: nil, status: nil)
+        let natsMsg = NatsMessage(
+            payload: message.payload, subject: message.subject, replySubject: message.reply,
+            length: message.length, headers: nil, status: nil)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
     }
 
     func handleIncomingHMessage(_ message: HMessageInbound) {
-        let natsMsg = NatsMessage(payload: message.payload, subject: message.subject, replySubject: message.reply, length: message.length, headers: message.headers, status: nil)
+        let natsMsg = NatsMessage(
+            payload: message.payload, subject: message.subject, replySubject: message.reply,
+            length: message.length, headers: message.headers, status: nil)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
@@ -344,7 +368,7 @@ class ConnectionHandler: ChannelInboundHandler {
         try self.writeMessage(payload)
     }
 
-    func writeMessage(_ message: ByteBuffer)  throws {
+    func writeMessage(_ message: ByteBuffer) throws {
         _ = channel?.write(message)
         if channel?.isWritable ?? true {
             channel?.flush()
@@ -352,7 +376,8 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func subscribe(_ subject: String) async throws -> Subscription {
-        let sid = self.subscriptionCounter.wrappingIncrementThenLoad(ordering: AtomicUpdateOrdering.relaxed)
+        let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
+            ordering: AtomicUpdateOrdering.relaxed)
         try write(operation: ClientOp.Subscribe((sid, subject, nil)))
         let sub = Subscription(subject: subject)
         self.subscriptions[sid] = sub

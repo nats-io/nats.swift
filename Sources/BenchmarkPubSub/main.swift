@@ -1,5 +1,5 @@
-import NatsSwift
 import Foundation
+import NatsSwift
 
 let nats = ClientOptions().urls([URL(string: "nats://localhost:4222")!]).build()
 print("Connecting...")
@@ -27,7 +27,9 @@ try await withThrowingTaskGroup(of: Void.self) { group in
             let payload = msg.payload!
             if String(data: payload, encoding: .utf8) != "\(i)" {
                 let emptyString = ""
-                print("invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)")
+                print(
+                    "invalid payload; expected: \(i); got: \(String(data: payload, encoding: .utf8) ?? emptyString)"
+                )
             }
             guard let headers = msg.headers else {
                 print("empty headers!")
@@ -36,7 +38,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
             if headers != hm {
                 print("invalid headers; expected: \(hm); got: \(headers)")
             }
-            if i%1000 == 0 {
+            if i % 1000 == 0 {
                 print("received \(i) msgs")
             }
             i += 1
@@ -50,7 +52,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
         for i in 0..<numMsgs {
             try nats.publish("\(i)".data(using: .utf8)!, subject: "foo", headers: hm)
-            if i%1000 == 0 {
+            if i % 1000 == 0 {
                 print("published \(i) msgs")
             }
         }
@@ -62,6 +64,6 @@ try await withThrowingTaskGroup(of: Void.self) { group in
 
 try! await nats.flush()
 let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
-let msgsPerSec: Double = Double(numMsgs)/(Double(elapsed)/1_000_000_000)
-print("Elapsed: \(elapsed / 1000000)ms")
+let msgsPerSec: Double = Double(numMsgs) / (Double(elapsed) / 1_000_000_000)
+print("Elapsed: \(elapsed / 1_000_000)ms")
 print("\(msgsPerSec) msgs/s")

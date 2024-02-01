@@ -17,7 +17,9 @@ extension Data {
         return self.dropFirst(prefix.count)
     }
 
-    func split(separator: Data, maxSplits: Int = .max, omittingEmptySubsequences: Bool = true) -> [Data] {
+    func split(separator: Data, maxSplits: Int = .max, omittingEmptySubsequences: Bool = true)
+        -> [Data]
+    {
         var chunks: [Data] = []
         var start = startIndex
         var end = startIndex
@@ -77,7 +79,9 @@ extension Data {
             var lineData: Data
             if let range = self[startIndex...].range(of: Data.crlf) {
                 let lineEndIndex = range.lowerBound
-                nextLineStartIndex = self.index(range.upperBound, offsetBy: 0, limitedBy: self.endIndex) ?? self.endIndex
+                nextLineStartIndex =
+                    self.index(range.upperBound, offsetBy: 0, limitedBy: self.endIndex)
+                    ?? self.endIndex
                 lineData = self[startIndex..<lineEndIndex]
             } else {
                 remainder = self[startIndex..<self.endIndex]
@@ -105,12 +109,15 @@ extension Data {
                     }
                     payload.append(self[payloadStartIndex..<payloadEndIndex])
                     msg.payload = payload
-                    startIndex = self.index(payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex) ?? self.endIndex
+                    startIndex =
+                        self.index(
+                            payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
+                        ?? self.endIndex
                     serverOps.append(.Message(msg))
                     continue
                 }
-            //TODO(jrm): Add HMSG handling here too.
-            } else if case .HMessage(var msg) = serverOp  {
+                //TODO(jrm): Add HMSG handling here too.
+            } else if case .HMessage(var msg) = serverOp {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
                 } else {
@@ -118,13 +125,13 @@ extension Data {
                     let headersEndIndex = nextLineStartIndex + msg.headersLength
                     let payloadStartIndex = headersEndIndex
                     let payloadEndIndex = nextLineStartIndex + msg.length
-                    
+
                     var payload: Data?
                     if msg.length > msg.headersLength {
                         payload = Data()
                     }
                     var headers = HeaderMap()
-                    
+
                     // if the whole msg length (including training crlf) is longer
                     // than the remaining chunk, break and return the remainder
                     if payloadEndIndex + Data.crlf.count > endIndex {
@@ -132,7 +139,7 @@ extension Data {
                         break
                     }
 
-                   let headersData = self[headersStartIndex..<headersEndIndex]
+                    let headersData = self[headersStartIndex..<headersEndIndex]
                     if let headersString = String(data: headersData, encoding: .utf8) {
                         let headersArray = headersString.split(separator: "\r\n")
                         // TODO: unused now, but probably we should validate?
@@ -141,7 +148,9 @@ extension Data {
                         for header in headersArray.dropFirst() {
                             let headerParts = header.split(separator: ":")
                             if headerParts.count == 2 {
-                                headers.append(try! HeaderName(String(headerParts[0])), HeaderValue(String(headerParts[1])))
+                                headers.append(
+                                    try! HeaderName(String(headerParts[0])),
+                                    HeaderValue(String(headerParts[1])))
                             } else {
                                 logger.error("Error parsing header: \(header)")
                             }
@@ -153,8 +162,11 @@ extension Data {
                         payload.append(self[payloadStartIndex..<payloadEndIndex])
                         msg.payload = payload
                     }
-                    
-                    startIndex = self.index(payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex) ?? self.endIndex
+
+                    startIndex =
+                        self.index(
+                            payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
+                        ?? self.endIndex
                     serverOps.append(.HMessage(msg))
                     continue
                 }

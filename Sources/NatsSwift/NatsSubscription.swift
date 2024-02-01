@@ -17,7 +17,7 @@ public class Subscription: AsyncSequence {
     private let lock = NSLock()
     public let subject: String
 
-    private static let defaultMaxPending: UInt64 = 512*1024
+    private static let defaultMaxPending: UInt64 = 512 * 1024
 
     convenience init(subject: String) {
         self.init(subject: subject, maxPending: Subscription.defaultMaxPending)
@@ -65,7 +65,7 @@ public class Subscription: AsyncSequence {
             await subscription.nextMessage()
         }
     }
-    
+
     private func nextMessage() async -> Element? {
         await withCheckedContinuation { continuation in
             lock.withLock {
