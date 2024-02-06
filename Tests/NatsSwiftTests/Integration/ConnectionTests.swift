@@ -19,6 +19,7 @@ class CoreNatsTests: XCTestCase {
         ("testReconnect", testReconnect),
         ("testUsernameAndPassword", testUsernameAndPassword),
         ("testTokenAuth", testTokenAuth),
+        ("testWithTls", testWithTls),
     ]
     var natsServer = NatsServer()
 
@@ -248,6 +249,20 @@ class CoreNatsTests: XCTestCase {
         try client.publish("data".data(using: .utf8)!, subject: "foo")
         let message = await subscribe.next()
         print("message: \(message!.subject)")
+    }
 
+    func testWithTls() async throws {
+        logger.logLevel = .debug
+
+        natsServer.start()
+        let client = ClientOptions()
+            .url(URL(string: "tls://demo.nats.io:4222")!)
+            .enforceTls()
+            .build()
+
+        try await client.connect()
+        print("connected")
+        try client.publish("msg".data(using: .utf8)!, subject: "dupa")
+        try await client.flush()
     }
 }

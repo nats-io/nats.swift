@@ -14,6 +14,7 @@ public class ClientOptions {
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int = 60
     private var auth: Auth? = nil
+    private var withTls: Bool = false
 
     public init() {}
 
@@ -70,6 +71,11 @@ public class ClientOptions {
         return self
     }
 
+    public func enforceTls() -> ClientOptions {
+        self.withTls = true
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(
@@ -78,7 +84,8 @@ public class ClientOptions {
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
             pingInterval: pingInterval,
-            auth: auth
+            auth: auth,
+            withTls: withTls
         )
 
         return client
