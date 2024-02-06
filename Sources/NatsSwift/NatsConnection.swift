@@ -9,6 +9,7 @@ import Foundation
 import NIO
 import NIOFoundationCompat
 import NKeys
+import NIOSSL
 
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
@@ -25,6 +26,8 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let reconnectWait: UInt64
     internal let maxReconnects: Int?
     internal let pingInterval: TimeInterval
+    internal let withTls: Bool
+    internal let tlsFirst: Bool = false
 
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .pending
@@ -133,7 +136,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
-        pingInterval: TimeInterval, auth: Auth?
+        pingInterval: TimeInterval, auth: Auth?, withTls: Bool
     ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
@@ -144,6 +147,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.maxReconnects = maxReconnects
         self.auth = auth
         self.pingInterval = pingInterval
+        self.withTls = withTls
     }
 
     internal var group: MultiThreadedEventLoopGroup
@@ -164,6 +168,30 @@ class ConnectionHandler: ChannelInboundHandler {
                             value: 1
                         )
                         .channelInitializer { channel in
+                            if self.withTls && self.tlsFirst {
+                                print("tls first")
+                                let tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+                                do {
+                                    let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                                    // FIXME(jrm): Consider better way to pick hostname.
+                                    let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host())
+                                    //Fixme(jrm): do not ignore error from addHandler future.
+                                    channel.pipeline.addHandler(sslHandler).flatMap { _ in
+                                        channel.pipeline.addHandler(self)
+                                    }.whenComplete { result in
+                                        switch result {
+                                            case .success():
+                                                print("success")
+                                            case .failure(let error):
+                                                    print("error: \(error)")
+                                        }
+                                    }
+                                    return channel.eventLoop.makeSucceededFuture(())
+                                } catch {
+                                    return channel.eventLoop.makeFailedFuture(error)
+                                }
+                            } else {
+                                print("no tls first")
                             //Fixme(jrm): do not ignore error from addHandler future.
                             channel.pipeline.addHandler(self).whenComplete { result in
                                 switch result {
@@ -174,6 +202,7 @@ class ConnectionHandler: ChannelInboundHandler {
                                 }
                             }
                             return channel.eventLoop.makeSucceededFuture(())
+                            }
                         }.connectTimeout(.seconds(5))
                     guard let url = self.urls.first, let host = url.host, let port = url.port else {
                         throw NatsClientError("no url")
@@ -186,7 +215,15 @@ class ConnectionHandler: ChannelInboundHandler {
             // Wait for the first message after sending the connect request
         }
         self.serverInfo = info
-        // TODO(jrm): Add rest of auth here.
+        if (info.tlsRequired ?? false || self.withTls) && !self.tlsFirst {
+            print("tls no-first")
+            let tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+            let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+            // FIXME(jrm): Consider better way to pick hostname.
+            let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host()!)
+            try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
+        }
+        print("after tls setup")
 
         var initialConnect = ConnectInfo(
             verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
