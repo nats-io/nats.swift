@@ -4,11 +4,11 @@
 //
 
 // TODO(pp): For now we're using error implementation from old codebase, consider changing
-protocol NatsError: Error {
-    var description: String { get set }
+public protocol NatsError: Error {
+    var description: String { get }
 }
 
-struct NatsConnectionError: NatsError {
+struct NatsServerError: NatsError {
     var description: String
     var normalizedError: String {
         return description.trimWhitespacesAndApostrophes().lowercased()
@@ -18,21 +18,14 @@ struct NatsConnectionError: NatsError {
     }
 }
 
-struct NatsSubscribeError: NatsError {
+struct NatsParserError: NatsError {
     var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct NatsPublishError: NatsError {
-    var description: String
-    init(_ description: String) {
-        self.description = description
-    }
-}
-
-struct NatsTimeoutError: NatsError {
+struct NatsClientError: NatsError {
     var description: String
     init(_ description: String) {
         self.description = description

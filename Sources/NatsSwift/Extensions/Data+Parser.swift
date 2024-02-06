@@ -17,7 +17,9 @@ extension Data {
         return self.dropFirst(prefix.count)
     }
 
-    func split(separator: Data, maxSplits: Int = .max, omittingEmptySubsequences: Bool = true)
+    func split(
+        separator: Data, maxSplits: Int = .max, omittingEmptySubsequences: Bool = true
+    )
         -> [Data]
     {
         var chunks: [Data] = []
@@ -149,7 +151,7 @@ extension Data {
                             let headerParts = header.split(separator: ":")
                             if headerParts.count == 2 {
                                 headers.append(
-                                    try! HeaderName(String(headerParts[0])),
+                                    try HeaderName(String(headerParts[0])),
                                     HeaderValue(String(headerParts[1])))
                             } else {
                                 logger.error("Error parsing header: \(header)")

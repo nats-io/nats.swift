@@ -13,19 +13,7 @@ public struct HeaderValue: Equatable, CustomStringConvertible {
     }
 }
 
-// Errors for parsing HeaderValue and HeaderName
-public enum ParseHeaderValueError: Error, CustomStringConvertible {
-    case invalidCharacter
-
-    public var description: String {
-        switch self {
-        case .invalidCharacter:
-            return "Invalid character found in header value (value cannot contain '\\r' or '\\n')"
-        }
-    }
-}
-
-public enum ParseHeaderNameError: Error, CustomStringConvertible {
+public enum ParseHeaderNameError: NatsError {
     case invalidCharacter
 
     public var description: String {
