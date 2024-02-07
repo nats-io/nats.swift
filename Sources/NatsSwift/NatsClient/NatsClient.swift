@@ -59,7 +59,7 @@ extension Client {
         //TODO(jrm): handle response
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("empty connection handler")
+            throw NatsClientError("internal error: empty connection handler")
         }
         try await connectionHandler.connect()
     }
@@ -67,7 +67,7 @@ extension Client {
     public func close() async throws {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("empty connection handler")
+            throw NatsClientError("internal error: empty connection handler")
         }
         try await connectionHandler.close()
     }
@@ -77,7 +77,7 @@ extension Client {
     ) throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("empty connection handler")
+            throw NatsClientError("internal error: empty connection handler")
         }
         try connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
     }
@@ -85,7 +85,7 @@ extension Client {
     public func flush() async throws {
         logger.debug("flush")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("empty connection handler")
+            throw NatsClientError("internal error: empty connection handler")
         }
         connectionHandler.channel?.flush()
     }
@@ -93,7 +93,7 @@ extension Client {
     public func subscribe(to subject: String) async throws -> Subscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("empty connection handler")
+            throw NatsClientError("internal error: empty connection handler")
         }
         return try await connectionHandler.subscribe(subject)
 

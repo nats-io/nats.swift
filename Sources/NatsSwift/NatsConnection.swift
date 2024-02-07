@@ -230,7 +230,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.state = .connected
         self.fire(.connected)
         guard let channel = self.channel else {
-            throw NatsClientError("empty channel")
+            throw NatsClientError("internal error: empty channel")
         }
         // Schedule the task to send a PING periodically
         let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval * 1_000_000_000))
@@ -381,7 +381,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func write(operation: ClientOp) throws {
         guard let allocator = self.channel?.allocator else {
-            throw NatsClientError("no allocator")
+            throw NatsClientError("internal error: no allocator")
         }
         let payload = try operation.asBytes(using: allocator)
         try self.writeMessage(payload)
