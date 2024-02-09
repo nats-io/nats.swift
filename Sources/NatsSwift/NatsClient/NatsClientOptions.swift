@@ -15,6 +15,7 @@ public class ClientOptions {
     private var maxReconnects: Int = 60
     private var auth: Auth? = nil
     private var withTls: Bool = false
+    private var tlsFirst: Bool = false
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
@@ -79,6 +80,11 @@ public class ClientOptions {
         return self
     }
 
+    public func withTlsFirst() -> ClientOptions {
+        self.tlsFirst = true
+        return self
+    }
+
     public func rootCertificates(_ rootCertificate: URL) -> ClientOptions {
         self.rootCertificate = rootCertificate
         return self
@@ -99,7 +105,8 @@ public class ClientOptions {
             maxReconnects: maxReconnects,
             pingInterval: pingInterval,
             auth: auth,
-            withTls: withTls
+            withTls: withTls,
+            tlsFirst: tlsFirst
         )
 
         return client

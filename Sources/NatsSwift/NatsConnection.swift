@@ -27,7 +27,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let maxReconnects: Int?
     internal let pingInterval: TimeInterval
     internal let withTls: Bool
-    internal let tlsFirst: Bool = false
+    internal let tlsFirst: Bool
     internal var rootCertificate: URL?
     internal var clientCertificate: URL?
     internal var clientKey: URL?
@@ -139,7 +139,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
-        pingInterval: TimeInterval, auth: Auth?, withTls: Bool
+        pingInterval: TimeInterval, auth: Auth?, withTls: Bool, tlsFirst: Bool
     ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
@@ -151,6 +151,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.auth = auth
         self.pingInterval = pingInterval
         self.withTls = withTls
+        self.tlsFirst = tlsFirst
     }
 
     internal var group: MultiThreadedEventLoopGroup
@@ -172,11 +173,22 @@ class ConnectionHandler: ChannelInboundHandler {
                         )
                         .channelInitializer { channel in
                             if self.withTls && self.tlsFirst {
-                                let tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+                                var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
                                 do {
+                                    if let rootCertificate = self.rootCertificate {
+                                        tlsConfiguration.trustRoots = .file(rootCertificate.path)
+                                    }
+                                    if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
+                                     // Load the client certificate from the PEM file
+                                    let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map { NIOSSLCertificateSource.certificate($0) }
+                                    tlsConfiguration.certificateChain = certificate
+
+                                    // Load the private key from the file
+                                    let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
+                                    tlsConfiguration.privateKey = .privateKey(privateKey)}
                                     let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
                                     // FIXME(jrm): Consider better way to pick hostname.
-                                    let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host())
+                                    let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host()!)
                                     //Fixme(jrm): do not ignore error from addHandler future.
                                     channel.pipeline.addHandler(sslHandler).flatMap { _ in
                                         channel.pipeline.addHandler(self)
@@ -223,12 +235,12 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
                  // Load the client certificate from the PEM file
-        let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map { NIOSSLCertificateSource.certificate($0) }
-        tlsConfiguration.certificateChain = certificate
+            let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map { NIOSSLCertificateSource.certificate($0) }
+            tlsConfiguration.certificateChain = certificate
 
-        // Load the private key from the file
-        let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
-        tlsConfiguration.privateKey = .privateKey(privateKey)}
+            // Load the private key from the file
+            let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
+            tlsConfiguration.privateKey = .privateKey(privateKey)}
             let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
             // FIXME(jrm): Consider better way to pick hostname.
             let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host()!)
