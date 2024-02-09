@@ -15,6 +15,9 @@ public class ClientOptions {
     private var maxReconnects: Int = 60
     private var auth: Auth? = nil
     private var withTls: Bool = false
+    private var rootCertificate: URL? = nil
+    private var clientCertificate: URL? = nil
+    private var clientKey: URL? = nil
 
     public init() {}
 
@@ -73,6 +76,17 @@ public class ClientOptions {
 
     public func enforceTls() -> ClientOptions {
         self.withTls = true
+        return self
+    }
+
+    public func rootCertificates(_ rootCertificate: URL) -> ClientOptions {
+        self.rootCertificate = rootCertificate
+        return self
+    }
+
+    public func clientCertificate(_ clientCertificate: URL, _ clientKey: URL) -> ClientOptions {
+        self.clientCertificate = clientCertificate
+        self.clientKey = clientKey
         return self
     }
 
