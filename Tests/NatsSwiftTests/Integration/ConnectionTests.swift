@@ -20,8 +20,9 @@ class CoreNatsTests: XCTestCase {
         ("testUsernameAndPassword", testUsernameAndPassword),
         ("testTokenAuth", testTokenAuth),
         ("testCredentialsAuth", testCredentialsAuth),
-        ("tesTlsSWithDemoServer", tesTlsSWithDemoServer),
-        ("testMutualTls", testMutualTls)
+        ("testTlsWithDemoServer", testTlsWithDemoServer),
+        ("testMutualTls", testMutualTls),
+        ("testTlsFirst", testTlsFirst)
     ]
     var natsServer = NatsServer()
 
@@ -254,7 +255,7 @@ class CoreNatsTests: XCTestCase {
         print("message: \(message!.subject)")
     }
 
-    func tesTlsSWithDemoServer() async throws {
+    func testTlsWithDemoServer() async throws {
         logger.logLevel = .debug
 
         natsServer.start()
@@ -296,4 +297,34 @@ class CoreNatsTests: XCTestCase {
         _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
     }
+
+    func testTlsFirst() async throws {
+        logger.logLevel = .debug
+        let currentFile = URL(fileURLWithPath: #file)
+        // Navigate up to the Tests directory
+        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
+        // Construct the path to the resource
+        let resourceURL =
+            testsDir
+            .appendingPathComponent("Integration/Resources/tls_first.conf", isDirectory: false)
+        natsServer.start(port: 9090, cfg: resourceURL.path)
+        let certsURL = testsDir.appendingPathComponent(
+            "Integration/Resources/certs/rootCA.pem", isDirectory: false)
+        let client = ClientOptions()
+            .url(URL(string: "tls://localhost:9090")!)
+            .enforceTls()
+            .rootCertificates(certsURL)
+            .clientCertificate(
+                testsDir.appendingPathComponent("Integration/Resources/certs/client-cert.pem", isDirectory: false),
+                testsDir.appendingPathComponent("Integration/Resources/certs/client-key.pem", isDirectory: false)
+            )
+            .withTlsFirst()
+            .build()
+        try await client.connect()
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        try await client.flush()
+        _ = try await client.subscribe(to: "test")
+        XCTAssertNotNil(client, "Client should not be nil")
+    }
 }
+
