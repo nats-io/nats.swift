@@ -69,3 +69,4 @@ fastlane/screenshots
 fastlane/test_output
 /.swiftpm
 .DS_Store
+.vscode
