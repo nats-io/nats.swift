@@ -8,8 +8,8 @@ import Dispatch
 import Foundation
 import NIO
 import NIOFoundationCompat
-import NKeys
 import NIOSSL
+import NKeys
 
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
@@ -139,7 +139,9 @@ class ConnectionHandler: ChannelInboundHandler {
     }
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
-        pingInterval: TimeInterval, auth: Auth?, withTls: Bool, tlsFirst: Bool
+        pingInterval: TimeInterval, auth: Auth?, withTls: Bool, tlsFirst: Bool,
+        clientCertificate: URL?, clientKey: URL?,
+        rootCertificate: URL?
     ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
@@ -152,6 +154,9 @@ class ConnectionHandler: ChannelInboundHandler {
         self.pingInterval = pingInterval
         self.withTls = withTls
         self.tlsFirst = tlsFirst
+        self.clientCertificate = clientCertificate
+        self.clientKey = clientKey
+        self.rootCertificate = rootCertificate
     }
 
     internal var group: MultiThreadedEventLoopGroup
@@ -178,26 +183,34 @@ class ConnectionHandler: ChannelInboundHandler {
                                     if let rootCertificate = self.rootCertificate {
                                         tlsConfiguration.trustRoots = .file(rootCertificate.path)
                                     }
-                                    if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
-                                     // Load the client certificate from the PEM file
-                                    let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map { NIOSSLCertificateSource.certificate($0) }
-                                    tlsConfiguration.certificateChain = certificate
+                                    if let clientCertificate = self.clientCertificate,
+                                        let clientKey = self.clientKey
+                                    {
+                                        // Load the client certificate from the PEM file
+                                        let certificate = try NIOSSLCertificate.fromPEMFile(
+                                            clientCertificate.path
+                                        ).map { NIOSSLCertificateSource.certificate($0) }
+                                        tlsConfiguration.certificateChain = certificate
 
-                                    // Load the private key from the file
-                                    let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
-                                    tlsConfiguration.privateKey = .privateKey(privateKey)}
-                                    let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                                        // Load the private key from the file
+                                        let privateKey = try NIOSSLPrivateKey(
+                                            file: clientKey.path, format: .pem)
+                                        tlsConfiguration.privateKey = .privateKey(privateKey)
+                                    }
+                                    let sslContext = try NIOSSLContext(
+                                        configuration: tlsConfiguration)
                                     // FIXME(jrm): Consider better way to pick hostname.
-                                    let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host()!)
+                                    let sslHandler = try NIOSSLClientHandler(
+                                        context: sslContext, serverHostname: self.urls[0].host()!)
                                     //Fixme(jrm): do not ignore error from addHandler future.
                                     channel.pipeline.addHandler(sslHandler).flatMap { _ in
                                         channel.pipeline.addHandler(self)
                                     }.whenComplete { result in
                                         switch result {
-                                            case .success():
-                                                print("success")
-                                            case .failure(let error):
-                                                    print("error: \(error)")
+                                        case .success():
+                                            print("success")
+                                        case .failure(let error):
+                                            print("error: \(error)")
                                         }
                                     }
                                     return channel.eventLoop.makeSucceededFuture(())
@@ -205,16 +218,16 @@ class ConnectionHandler: ChannelInboundHandler {
                                     return channel.eventLoop.makeFailedFuture(error)
                                 }
                             } else {
-                            //Fixme(jrm): do not ignore error from addHandler future.
-                            channel.pipeline.addHandler(self).whenComplete { result in
-                                switch result {
-                                case .success():
+                                //Fixme(jrm): do not ignore error from addHandler future.
+                                channel.pipeline.addHandler(self).whenComplete { result in
+                                    switch result {
+                                    case .success():
                                         logger.debug("success")
-                                case .failure(let error):
+                                    case .failure(let error):
                                         logger.debug("error: \(error)")
+                                    }
                                 }
-                            }
-                            return channel.eventLoop.makeSucceededFuture(())
+                                return channel.eventLoop.makeSucceededFuture(())
                             }
                         }.connectTimeout(.seconds(5))
                     guard let url = self.urls.first, let host = url.host, let port = url.port else {
@@ -234,16 +247,20 @@ class ConnectionHandler: ChannelInboundHandler {
                 tlsConfiguration.trustRoots = .file(rootCertificate.path)
             }
             if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
-                 // Load the client certificate from the PEM file
-            let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map { NIOSSLCertificateSource.certificate($0) }
-            tlsConfiguration.certificateChain = certificate
+                // Load the client certificate from the PEM file
+                let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map {
+                    NIOSSLCertificateSource.certificate($0)
+                }
+                tlsConfiguration.certificateChain = certificate
 
-            // Load the private key from the file
-            let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
-            tlsConfiguration.privateKey = .privateKey(privateKey)}
+                // Load the private key from the file
+                let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
+                tlsConfiguration.privateKey = .privateKey(privateKey)
+            }
             let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
             // FIXME(jrm): Consider better way to pick hostname.
-            let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: self.urls[0].host()!)
+            let sslHandler = try NIOSSLClientHandler(
+                context: sslContext, serverHostname: self.urls[0].host()!)
             try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
         }
 
@@ -351,6 +368,17 @@ class ConnectionHandler: ChannelInboundHandler {
             self.fire(.error(natsErr))
         } else {
             logger.error("unexpected error: \(error)")
+        }
+        if let continuation = self.serverInfoContinuation {
+            self.serverInfoContinuation = nil
+            continuation.resume(throwing: error)
+            return
+        }
+
+        if let continuation = self.connectionEstablishedContinuation {
+            self.connectionEstablishedContinuation = nil
+            continuation.resume(throwing: error)
+            return
         }
         if self.state == .pending {
             handleDisconnect()

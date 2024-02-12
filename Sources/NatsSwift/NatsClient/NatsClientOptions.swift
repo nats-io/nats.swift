@@ -106,7 +106,10 @@ public class ClientOptions {
             pingInterval: pingInterval,
             auth: auth,
             withTls: withTls,
-            tlsFirst: tlsFirst
+            tlsFirst: tlsFirst,
+            clientCertificate: clientCertificate,
+            clientKey: clientKey,
+            rootCertificate: rootCertificate
         )
 
         return client
