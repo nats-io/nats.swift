@@ -22,7 +22,7 @@ class CoreNatsTests: XCTestCase {
         ("testCredentialsAuth", testCredentialsAuth),
         ("testTlsWithDemoServer", testTlsWithDemoServer),
         ("testMutualTls", testMutualTls),
-        ("testTlsFirst", testTlsFirst)
+        ("testTlsFirst", testTlsFirst),
     ]
     var natsServer = NatsServer()
 
@@ -287,8 +287,10 @@ class CoreNatsTests: XCTestCase {
             .enforceTls()
             .rootCertificates(certsURL)
             .clientCertificate(
-                testsDir.appendingPathComponent("Integration/Resources/certs/client-cert.pem", isDirectory: false),
-                testsDir.appendingPathComponent("Integration/Resources/certs/client-key.pem", isDirectory: false)
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-cert.pem", isDirectory: false),
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-key.pem", isDirectory: false)
             )
             .build()
         try await client.connect()
@@ -315,8 +317,10 @@ class CoreNatsTests: XCTestCase {
             .enforceTls()
             .rootCertificates(certsURL)
             .clientCertificate(
-                testsDir.appendingPathComponent("Integration/Resources/certs/client-cert.pem", isDirectory: false),
-                testsDir.appendingPathComponent("Integration/Resources/certs/client-key.pem", isDirectory: false)
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-cert.pem", isDirectory: false),
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-key.pem", isDirectory: false)
             )
             .withTlsFirst()
             .build()
@@ -327,4 +331,3 @@ class CoreNatsTests: XCTestCase {
         XCTAssertNotNil(client, "Client should not be nil")
     }
 }
-
