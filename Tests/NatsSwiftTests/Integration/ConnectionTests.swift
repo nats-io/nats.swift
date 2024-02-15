@@ -266,7 +266,7 @@ class CoreNatsTests: XCTestCase {
 
         try await client.connect()
         print("connected")
-        try client.publish("msg".data(using: .utf8)!, subject: "dupa")
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
     }
 
@@ -309,11 +309,11 @@ class CoreNatsTests: XCTestCase {
         let resourceURL =
             testsDir
             .appendingPathComponent("Integration/Resources/tls_first.conf", isDirectory: false)
-        natsServer.start(port: 9090, cfg: resourceURL.path)
+        natsServer.start(cfg: resourceURL.path)
         let certsURL = testsDir.appendingPathComponent(
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
         let client = ClientOptions()
-            .url(URL(string: "tls://localhost:9090")!)
+            .url(URL(string: natsServer.clientURL)!)
             .enforceTls()
             .rootCertificates(certsURL)
             .clientCertificate(
@@ -330,4 +330,36 @@ class CoreNatsTests: XCTestCase {
         _ = try await client.subscribe(to: "test")
         XCTAssertNotNil(client, "Client should not be nil")
     }
+
+    func testInvalidCertificate() async throws {
+        logger.logLevel = .debug
+        let currentFile = URL(fileURLWithPath: #file)
+        // Navigate up to the Tests directory
+        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
+        // Construct the path to the resource
+        let resourceURL =
+        testsDir
+            .appendingPathComponent("Integration/Resources/tls.conf", isDirectory: false)
+        natsServer.start(cfg: resourceURL.path)
+        let certsURL = testsDir.appendingPathComponent(
+            "Integration/Resources/certs/rootCA.pem", isDirectory: false)
+        let client = ClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .enforceTls()
+            .rootCertificates(certsURL)
+            .clientCertificate(
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-cert-invalid.pem", isDirectory: false),
+                testsDir.appendingPathComponent(
+                    "Integration/Resources/certs/client-key-invalid.pem", isDirectory: false)
+            )
+            .build()
+        do {
+            try await client.connect()
+        } catch {
+            return
+        }
+        XCTFail("Expected error from connect")
+    }
 }
+
