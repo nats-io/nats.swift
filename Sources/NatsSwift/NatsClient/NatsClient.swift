@@ -44,6 +44,9 @@ public struct Auth {
 }
 
 public class Client {
+    public var connectedUrl: URL? {
+        connectionHandler?.connectedUrl
+    }
     internal let allocator = ByteBufferAllocator()
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
