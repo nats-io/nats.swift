@@ -102,7 +102,6 @@ class ConnectionHandler: ChannelInboundHandler {
                 do {
                     try self.write(operation: .pong)
                 } catch {
-                    // TODO(pp): handle async error
                     logger.error("error sending pong: \(error)")
                     self.fire(.error(NatsClientError("error sending pong: \(error)")))
                     continue
@@ -123,7 +122,6 @@ class ConnectionHandler: ChannelInboundHandler {
                 } else {
                     self.fire(.error(err))
                 }
-            // TODO(pp): handle auth errors here
             case .message(let msg):
                 self.handleIncomingMessage(msg)
             case .hMessage(let msg):
