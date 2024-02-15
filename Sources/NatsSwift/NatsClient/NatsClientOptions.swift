@@ -75,7 +75,7 @@ public class ClientOptions {
         return self
     }
 
-    public func enforceTls() -> ClientOptions {
+    public func requireTls() -> ClientOptions {
         self.withTls = true
         return self
     }
@@ -105,7 +105,7 @@ public class ClientOptions {
             maxReconnects: maxReconnects,
             pingInterval: pingInterval,
             auth: auth,
-            withTls: withTls,
+            requireTls: withTls,
             tlsFirst: tlsFirst,
             clientCertificate: clientCertificate,
             clientKey: clientKey,

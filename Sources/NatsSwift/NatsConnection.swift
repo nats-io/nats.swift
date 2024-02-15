@@ -26,7 +26,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal let reconnectWait: UInt64
     internal let maxReconnects: Int?
     internal let pingInterval: TimeInterval
-    internal let withTls: Bool
+    internal let requireTls: Bool
     internal let tlsFirst: Bool
     internal var rootCertificate: URL?
     internal var clientCertificate: URL?
@@ -137,7 +137,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
-        pingInterval: TimeInterval, auth: Auth?, withTls: Bool, tlsFirst: Bool,
+        pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?
     ) {
@@ -150,7 +150,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.maxReconnects = maxReconnects
         self.auth = auth
         self.pingInterval = pingInterval
-        self.withTls = withTls
+        self.requireTls = requireTls
         self.tlsFirst = tlsFirst
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
@@ -175,7 +175,7 @@ class ConnectionHandler: ChannelInboundHandler {
                             value: 1
                         )
                         .channelInitializer { channel in
-                            if self.withTls && self.tlsFirst {
+                            if self.requireTls && self.tlsFirst {
                                 var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
                                 do {
                                     if let rootCertificate = self.rootCertificate {
@@ -239,7 +239,7 @@ class ConnectionHandler: ChannelInboundHandler {
             // Wait for the first message after sending the connect request
         }
         self.serverInfo = info
-        if (info.tlsRequired ?? false || self.withTls) && !self.tlsFirst {
+        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst {
             var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
             if let rootCertificate = self.rootCertificate {
                 tlsConfiguration.trustRoots = .file(rootCertificate.path)
