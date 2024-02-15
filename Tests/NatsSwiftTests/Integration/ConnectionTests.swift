@@ -361,5 +361,24 @@ class CoreNatsTests: XCTestCase {
         }
         XCTFail("Expected error from connect")
     }
+
+     func testLameDuckMode() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+
+        let expectation = XCTestExpectation(
+            description: "client was not notified of connection established event")
+        client.on(.lameDuckMode) { event in
+            XCTAssertEqual(event.kind(), NatsEventKind.lameDuckMode)
+            expectation.fulfill()
+        }
+        try await client.connect()
+
+        natsServer.setLameDuckMode()
+        await fulfillment(of: [expectation], timeout: 1.0)
+        try await client.close()
+    }
 }
 
