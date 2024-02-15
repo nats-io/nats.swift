@@ -261,7 +261,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         let client = ClientOptions()
             .url(URL(string: "tls://demo.nats.io:4222")!)
-            .enforceTls()
+            .requireTls()
             .build()
 
         try await client.connect()
@@ -284,7 +284,7 @@ class CoreNatsTests: XCTestCase {
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
         let client = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .enforceTls()
+            .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
                 testsDir.appendingPathComponent(
@@ -314,7 +314,7 @@ class CoreNatsTests: XCTestCase {
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
         let client = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .enforceTls()
+            .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
                 testsDir.appendingPathComponent(
@@ -345,7 +345,7 @@ class CoreNatsTests: XCTestCase {
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
         let client = ClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .enforceTls()
+            .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
                 testsDir.appendingPathComponent(
