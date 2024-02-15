@@ -204,8 +204,13 @@ struct ServerInfo: Codable, Equatable {
     let clientIp: String
     /// Whether the server supports headers.
     let headers: Bool
-    /// Whether server goes into lame duck mode.
-    let lameDuckMode: Bool?
+    /// Whether server goes into lame duck
+    private let _lameDuckMode: Bool?
+    var lameDuckMode: Bool {
+        get{
+            return _lameDuckMode ?? false
+        }
+    }
 
     private static let prefix = NatsOperation.info.rawValue.data(using: .utf8)!
 
@@ -225,7 +230,7 @@ struct ServerInfo: Codable, Equatable {
         case connectUrls = "connect_urls"
         case clientIp = "client_ip"
         case headers
-        case lameDuckMode = "ldm"
+        case _lameDuckMode = "ldm"
     }
 
     internal static func parse(data: Data) throws -> ServerInfo {

@@ -128,10 +128,10 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.handleIncomingHMessage(msg)
             case .info(let serverInfo):
                 logger.debug("info \(op)")
-                self.serverInfo = serverInfo
-                if let lameDuckMode = serverInfo.lameDuckMode, lameDuckMode {
-                    self.fire(.lameDuckMode)
-                }
+                    self.serverInfo = serverInfo
+                    if serverInfo.lameDuckMode {
+                        self.fire(.lameDuckMode)
+                    }
             default:
                 logger.debug("unknown operation type")
             }
