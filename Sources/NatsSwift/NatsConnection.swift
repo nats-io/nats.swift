@@ -128,7 +128,10 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.handleIncomingHMessage(msg)
             case .info(let serverInfo):
                 logger.debug("info \(op)")
-                self.serverInfo = serverInfo
+                    self.serverInfo = serverInfo
+                    if serverInfo.lameDuckMode {
+                        self.fire(.lameDuckMode)
+                    }
             default:
                 logger.debug("unknown operation type")
             }
@@ -539,14 +542,16 @@ public enum NatsEventKind: String {
     case connected = "connected"
     case disconnected = "disconnected"
     case closed = "closed"
+    case lameDuckMode = "lameDuckMode"
     case error = "error"
-    static let all = [connected, disconnected, closed, error]
+    static let all = [connected, disconnected, closed, lameDuckMode, error]
 }
 
 public enum NatsEvent {
     case connected
     case disconnected
     case closed
+    case lameDuckMode
     case error(NatsError)
 
     func kind() -> NatsEventKind {
@@ -557,6 +562,8 @@ public enum NatsEvent {
             return .disconnected
         case .closed:
             return .closed
+        case .lameDuckMode:
+            return .lameDuckMode
         case .error(_):
             return .error
         }

@@ -20,6 +20,7 @@ class NatsServer {
     private var process: Process?
     private var natsServerPort: Int?
     private var tlsEnabled = false
+    private var pidFile: URL?
 
     // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
     func start(port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line) {
@@ -28,8 +29,11 @@ class NatsServer {
         let process = Process()
         let pipe = Pipe()
 
+        let fileManager = FileManager.default
+        pidFile = fileManager.temporaryDirectory.appendingPathComponent("nats-server.pid")
+
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["nats-server", "-p", "\(port)"]
+        process.arguments = ["nats-server", "-p", "\(port)", "-P", pidFile!.path]
         if let cfg {
             process.arguments?.append(contentsOf: ["-c", cfg])
         }
@@ -75,14 +79,27 @@ class NatsServer {
         self.natsServerPort = serverPort
     }
 
-    func stop(file: StaticString = #file, line: UInt = #line) {
-        XCTAssertNotNil(self.process, "nats-server is not running", file: file, line: line)
+    func stop() {
+        if process == nil {
+            return
+        }
 
         self.process?.terminate()
         process?.waitUntilExit()
         process = nil
         natsServerPort = port
         tlsEnabled = false
+    }
+
+    func setLameDuckMode(file: StaticString = #file, line: UInt = #line) {
+        let process = Process()
+
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["nats-server", "--signal", "ldm=\(self.pidFile!.path)"]
+
+        XCTAssertNoThrow(
+            try process.run(), "error setting lame duck mode", file: file, line: line)
+        self.process = nil
     }
 
     private func extractPort(from string: String) -> Int? {
