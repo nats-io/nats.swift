@@ -13,6 +13,7 @@ public class ClientOptions {
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int?
+    private var initialReconnect = false
     private var noRandomize = false
     private var auth: Auth? = nil
     private var withTls = false
@@ -102,6 +103,11 @@ public class ClientOptions {
         return self
     }
 
+    public func retryOnfailedConnect() -> ClientOptions {
+        self.initialReconnect = true
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(
@@ -116,7 +122,8 @@ public class ClientOptions {
             tlsFirst: tlsFirst,
             clientCertificate: clientCertificate,
             clientKey: clientKey,
-            rootCertificate: rootCertificate
+            rootCertificate: rootCertificate,
+            retryOnFailedConnect: initialReconnect
         )
 
         return client

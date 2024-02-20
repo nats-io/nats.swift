@@ -96,6 +96,26 @@ class CoreNatsTests: XCTestCase {
         }
     }
 
+    func testRetryOnFailedConnect() async throws {
+        let client = ClientOptions()
+            .url(URL(string: "nats://localhost:4321")!)
+            .reconnectWait(1)
+            .retryOnfailedConnect()
+            .build()
+
+        let expectation = XCTestExpectation(
+            description: "client was not notified of connection established event")
+        client.on(.connected) { event in
+            expectation.fulfill()
+        }
+
+        try await client.connect()
+        natsServer.start(port: 4321)
+
+        await fulfillment(of: [expectation], timeout: 5.0)
+
+    }
+
     func testPublishWithReply() async throws {
         natsServer.start()
         logger.logLevel = .debug
