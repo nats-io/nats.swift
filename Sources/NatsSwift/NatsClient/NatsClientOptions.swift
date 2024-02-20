@@ -12,7 +12,7 @@ public class ClientOptions {
     private var urls: [URL] = []
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
-    private var maxReconnects: Int = 60
+    private var maxReconnects: Int?
     private var noRandomize = false
     private var auth: Auth? = nil
     private var withTls = false
