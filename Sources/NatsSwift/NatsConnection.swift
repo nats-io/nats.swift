@@ -15,6 +15,7 @@ class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
     let version = "0.0.1"
 
+    internal var connectedUrl: URL?
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
 
@@ -25,6 +26,7 @@ class ConnectionHandler: ChannelInboundHandler {
     // nanoseconds representation of TimeInterval
     internal let reconnectWait: UInt64
     internal let maxReconnects: Int?
+    internal let retainServersOrder: Bool
     internal let pingInterval: TimeInterval
     internal let requireTls: Bool
     internal let tlsFirst: Bool
@@ -41,6 +43,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var parseRemainder: Data?
     private var pingTask: RepeatedTask?
     private var outstandingPings = ManagedAtomic<UInt8>(0)
+    private var reconnectAttempts = 0
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         logger.debug("channel read")
@@ -128,18 +131,30 @@ class ConnectionHandler: ChannelInboundHandler {
                 self.handleIncomingHMessage(msg)
             case .info(let serverInfo):
                 logger.debug("info \(op)")
-                    self.serverInfo = serverInfo
-                    if serverInfo.lameDuckMode {
-                        self.fire(.lameDuckMode)
+                self.serverInfo = serverInfo
+                if serverInfo.lameDuckMode {
+                    self.fire(.lameDuckMode)
+                }
+                self.serverInfo = serverInfo
+                if let connectUrls = serverInfo.connectUrls {
+                    for connectUrl in connectUrls {
+                        guard let url = URL(string: connectUrl) else {
+                            break
+                        }
+                        if !self.urls.contains(url) {
+                            urls.append(url)
+                        }
                     }
+                }
             default:
-                logger.debug("unknown operation type")
+                logger.debug("unknown operation type: \(op)")
             }
         }
         inputBuffer.clear()
     }
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
+        retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?
@@ -151,6 +166,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.subscriptions = [UInt64: Subscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
+        self.retainServersOrder = retainServersOrder
         self.auth = auth
         self.pingInterval = pingInterval
         self.requireTls = requireTls
@@ -168,142 +184,200 @@ class ConnectionHandler: ChannelInboundHandler {
 
     // TODO(pp): add retryOnFailedConnect option
     func connect() async throws {
-        let info = try await withCheckedThrowingContinuation { continuation in
-            self.serverInfoContinuation = continuation
-            Task.detached {
-                do {
-                    let bootstrap = ClientBootstrap(group: self.group)
-                        .channelOption(
-                            ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
-                            value: 1
-                        )
-                        .channelInitializer { channel in
-                            if self.requireTls && self.tlsFirst {
-                                var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
-                                do {
-                                    if let rootCertificate = self.rootCertificate {
-                                        tlsConfiguration.trustRoots = .file(rootCertificate.path)
-                                    }
-                                    if let clientCertificate = self.clientCertificate,
-                                        let clientKey = self.clientKey
-                                    {
-                                        // Load the client certificate from the PEM file
-                                        let certificate = try NIOSSLCertificate.fromPEMFile(
-                                            clientCertificate.path
-                                        ).map { NIOSSLCertificateSource.certificate($0) }
-                                        tlsConfiguration.certificateChain = certificate
+        var servers = self.urls
+        if !self.retainServersOrder {
+            servers = self.urls.shuffled()
+        }
+        var lastErr: Error?
 
-                                        // Load the private key from the file
-                                        let privateKey = try NIOSSLPrivateKey(
-                                            file: clientKey.path, format: .pem)
-                                        tlsConfiguration.privateKey = .privateKey(privateKey)
-                                    }
-                                    let sslContext = try NIOSSLContext(
-                                        configuration: tlsConfiguration)
-                                    // FIXME(jrm): Consider better way to pick hostname.
-                                    let sslHandler = try NIOSSLClientHandler(
-                                        context: sslContext, serverHostname: self.urls[0].host()!)
-                                    //Fixme(jrm): do not ignore error from addHandler future.
-                                    channel.pipeline.addHandler(sslHandler).flatMap { _ in
-                                        channel.pipeline.addHandler(self)
-                                    }.whenComplete { result in
-                                        switch result {
-                                        case .success():
-                                            print("success")
-                                        case .failure(let error):
-                                            print("error: \(error)")
-                                        }
-                                    }
-                                    return channel.eventLoop.makeSucceededFuture(())
-                                } catch {
-                                    return channel.eventLoop.makeFailedFuture(error)
-                                }
-                            } else {
-                                //Fixme(jrm): do not ignore error from addHandler future.
-                                channel.pipeline.addHandler(self).whenComplete { result in
-                                    switch result {
-                                    case .success():
-                                        logger.debug("success")
-                                    case .failure(let error):
-                                        logger.debug("error: \(error)")
-                                    }
-                                }
-                                return channel.eventLoop.makeSucceededFuture(())
-                            }
-                        }.connectTimeout(.seconds(5))
-                    guard let url = self.urls.first, let host = url.host, let port = url.port else {
-                        throw NatsClientError("no url")
+        for s in servers {
+            if self.state == .disconnected {
+                if let maxReconnects {
+                    if reconnectAttempts >= maxReconnects {
+                        throw NatsClientError("could not reconnect; maxReconnects exceeded")
                     }
-                    self.channel = try await bootstrap.connect(host: host, port: port).get()
-                } catch {
-                    continuation.resume(throwing: error)
                 }
+                self.reconnectAttempts += 1
+                try await Task.sleep(nanoseconds: self.reconnectWait)
             }
-            // Wait for the first message after sending the connect request
-        }
-        self.serverInfo = info
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst {
-            var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
-            if let rootCertificate = self.rootCertificate {
-                tlsConfiguration.trustRoots = .file(rootCertificate.path)
-            }
-            if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
-                // Load the client certificate from the PEM file
-                let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map {
-                    NIOSSLCertificateSource.certificate($0)
-                }
-                tlsConfiguration.certificateChain = certificate
+            let info: ServerInfo
+            do {
+                info = try await withCheckedThrowingContinuation { continuation in
+                    self.serverInfoContinuation = continuation
+                    Task.detached {
+                        do {
+                            let bootstrap = ClientBootstrap(group: self.group)
+                                .channelOption(
+                                    ChannelOptions.socket(
+                                        SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
+                                    value: 1
+                                )
+                                .channelInitializer { channel in
+                                    if self.requireTls && self.tlsFirst {
+                                        var tlsConfiguration =
+                                            TLSConfiguration.makeClientConfiguration()
+                                        do {
+                                            if let rootCertificate = self.rootCertificate {
+                                                tlsConfiguration.trustRoots = .file(
+                                                    rootCertificate.path)
+                                            }
+                                            if let clientCertificate = self.clientCertificate,
+                                                let clientKey = self.clientKey
+                                            {
+                                                // Load the client certificate from the PEM file
+                                                let certificate = try NIOSSLCertificate.fromPEMFile(
+                                                    clientCertificate.path
+                                                ).map { NIOSSLCertificateSource.certificate($0) }
+                                                tlsConfiguration.certificateChain = certificate
 
-                // Load the private key from the file
-                let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
-                tlsConfiguration.privateKey = .privateKey(privateKey)
+                                                // Load the private key from the file
+                                                let privateKey = try NIOSSLPrivateKey(
+                                                    file: clientKey.path, format: .pem)
+                                                tlsConfiguration.privateKey = .privateKey(
+                                                    privateKey)
+                                            }
+                                            let sslContext = try NIOSSLContext(
+                                                configuration: tlsConfiguration)
+                                            // FIXME(jrm): Consider better way to pick hostname.
+                                            let sslHandler = try NIOSSLClientHandler(
+                                                context: sslContext, serverHostname: s.host()!)
+                                            //Fixme(jrm): do not ignore error from addHandler future.
+                                            channel.pipeline.addHandler(sslHandler).flatMap { _ in
+                                                channel.pipeline.addHandler(self)
+                                            }.whenComplete { result in
+                                                switch result {
+                                                case .success():
+                                                    print("success")
+                                                case .failure(let error):
+                                                    print("error: \(error)")
+                                                }
+                                            }
+                                            return channel.eventLoop.makeSucceededFuture(())
+                                        } catch {
+                                            return channel.eventLoop.makeFailedFuture(error)
+                                        }
+                                    } else {
+                                        //Fixme(jrm): do not ignore error from addHandler future.
+                                        channel.pipeline.addHandler(self).whenComplete { result in
+                                            switch result {
+                                            case .success():
+                                                logger.debug("success")
+                                            case .failure(let error):
+                                                logger.debug("error: \(error)")
+                                            }
+                                        }
+                                        return channel.eventLoop.makeSucceededFuture(())
+                                    }
+                                }.connectTimeout(.seconds(5))
+                            guard let host = s.host, let port = s.port else {
+                                throw NatsClientError("no url")
+                            }
+                            self.channel = try await bootstrap.connect(host: host, port: port).get()
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                    // Wait for the first message after sending the connect request
+                }
+            } catch {
+                logger.error("error connecting to \(s): \(error)")
+                lastErr = error
+                continue
             }
-            let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
-            // FIXME(jrm): Consider better way to pick hostname.
-            let sslHandler = try NIOSSLClientHandler(
-                context: sslContext, serverHostname: self.urls[0].host()!)
-            try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
-        }
-
-        var initialConnect = ConnectInfo(
-            verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
-            lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
-            user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
-            authToken: self.auth?.token ?? "", headers: true, noResponders: true)
-
-        if let auth = self.auth {
-            if let credentialsPath = auth.credentialsPath {
-                let credentials = try await URLSession.shared.data(from: credentialsPath).0
-                guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
-                    throw NatsClientError("failed to extract JWT from credentials file")
+            self.serverInfo = info
+            if let connectUrls = info.connectUrls {
+                for connectUrl in connectUrls {
+                    guard let url = URL(string: connectUrl) else {
+                        continue
+                    }
+                    if !self.urls.contains(url) {
+                        urls.append(url)
+                    }
                 }
-                guard let nkey = JwtUtils.parseDecoratedNKey(contents: credentials) else {
-                    throw NatsClientError("failed to extract NKEY from credentials file")
-                }
-                guard let nonce = self.serverInfo?.nonce else {
-                    throw NatsClientError("missing nonce")
-                }
-                let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
-                let nonceData = nonce.data(using: .utf8)!
-                let sig = try keypair.sign(input: nonceData)
-                let base64sig = sig.base64EncodedURLSafeNotPadded()
-                initialConnect.signature = base64sig
-                initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
             }
-        }
-        let connect = initialConnect
-        try await withCheckedThrowingContinuation { continuation in
-            self.connectionEstablishedContinuation = continuation
-            Task.detached {
+            if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst {
+                var tlsConfiguration = TLSConfiguration.makeClientConfiguration()
+                if let rootCertificate = self.rootCertificate {
+                    tlsConfiguration.trustRoots = .file(rootCertificate.path)
+                }
+                if let clientCertificate = self.clientCertificate, let clientKey = self.clientKey {
+                    // Load the client certificate from the PEM file
+                    let certificate = try NIOSSLCertificate.fromPEMFile(clientCertificate.path).map
+                    {
+                        NIOSSLCertificateSource.certificate($0)
+                    }
+                    tlsConfiguration.certificateChain = certificate
+
+                    // Load the private key from the file
+                    let privateKey = try NIOSSLPrivateKey(file: clientKey.path, format: .pem)
+                    tlsConfiguration.privateKey = .privateKey(privateKey)
+                }
+                let sslContext = try NIOSSLContext(configuration: tlsConfiguration)
+                // FIXME(jrm): Consider better way to pick hostname.
+                let sslHandler = try NIOSSLClientHandler(
+                    context: sslContext, serverHostname: s.host())
                 do {
-                    try self.write(operation: ClientOp.connect(connect))
-                    try self.write(operation: ClientOp.ping)
-                    self.channel?.flush()
+                    try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
                 } catch {
-                    continuation.resume(throwing: error)
+                    lastErr = error
+                    logger.error("error connecting to \(s): \(error)")
+                    continue
                 }
             }
+
+            var initialConnect = ConnectInfo(
+                verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
+                lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
+                user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
+                authToken: self.auth?.token ?? "", headers: true, noResponders: true)
+
+            if let auth = self.auth {
+                if let credentialsPath = auth.credentialsPath {
+                    let credentials = try await URLSession.shared.data(from: credentialsPath).0
+                    guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
+                        throw NatsClientError("failed to extract JWT from credentials file")
+                    }
+                    guard let nkey = JwtUtils.parseDecoratedNKey(contents: credentials) else {
+                        throw NatsClientError("failed to extract NKEY from credentials file")
+                    }
+                    guard let nonce = self.serverInfo?.nonce else {
+                        throw NatsClientError("missing nonce")
+                    }
+                    let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
+                    let nonceData = nonce.data(using: .utf8)!
+                    let sig = try keypair.sign(input: nonceData)
+                    let base64sig = sig.base64EncodedURLSafeNotPadded()
+                    initialConnect.signature = base64sig
+                    initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
+                }
+            }
+            let connect = initialConnect
+            do {
+                try await withCheckedThrowingContinuation { continuation in
+                    self.connectionEstablishedContinuation = continuation
+                    Task.detached {
+                        do {
+                            try self.write(operation: ClientOp.connect(connect))
+                            try self.write(operation: ClientOp.ping)
+                            self.channel?.flush()
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            } catch {
+                lastErr = error
+                logger.error("error connecting to \(s): \(error)")
+                continue
+            }
+            lastErr = nil
+            self.connectedUrl = s
+            break
         }
+        if let lastErr {
+            throw lastErr
+        }
+        self.reconnectAttempts = 0
         self.state = .connected
         self.fire(.connected)
         guard let channel = self.channel else {
@@ -317,6 +391,8 @@ class ConnectionHandler: ChannelInboundHandler {
             self?.sendPing()
         }
         logger.debug("connection established")
+        return
+
     }
 
     func close() async throws {
@@ -418,15 +494,12 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func handleReconnect() {
         Task {
-            var attempts = 0
-            while maxReconnects == nil || attempts < maxReconnects! {
+            while maxReconnects == nil || self.reconnectAttempts < maxReconnects! {
                 do {
                     try await self.connect()
                 } catch {
                     // TODO(pp): add option to set this to exponential backoff (with jitter)
                     logger.debug("could not reconnect: \(error)")
-                    try await Task.sleep(nanoseconds: self.reconnectWait)
-                    attempts += 1
                     continue
                 }
                 logger.debug("reconnected")

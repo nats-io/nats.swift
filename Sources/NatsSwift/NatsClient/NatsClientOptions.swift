@@ -12,10 +12,11 @@ public class ClientOptions {
     private var urls: [URL] = []
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
-    private var maxReconnects: Int = 60
+    private var maxReconnects: Int?
+    private var noRandomize = false
     private var auth: Auth? = nil
-    private var withTls: Bool = false
-    private var tlsFirst: Bool = false
+    private var withTls = false
+    private var tlsFirst = false
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
@@ -96,6 +97,11 @@ public class ClientOptions {
         return self
     }
 
+    public func retainServersOrder() -> ClientOptions {
+        self.noRandomize = true
+        return self
+    }
+
     public func build() -> Client {
         let client = Client()
         client.connectionHandler = ConnectionHandler(
@@ -103,6 +109,7 @@ public class ClientOptions {
             urls: urls,
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
+            retainServersOrder: noRandomize,
             pingInterval: pingInterval,
             auth: auth,
             requireTls: withTls,

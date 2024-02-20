@@ -51,6 +51,49 @@ class CoreNatsTests: XCTestCase {
         }
         await fulfillment(of: [expectation], timeout: 5.0)
         await sub.complete()
+        try await client.close()
+    }
+
+    func testConnectMultipleURLsOneIsValid() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = ClientOptions()
+            .urls([
+                URL(string: natsServer.clientURL)!, URL(string: "nats://localhost:4344")!,
+                URL(string: "nats://localhost:4343")!,
+            ])
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(to: "test")
+
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let msg = await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                expectation.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation], timeout: 5.0)
+        await sub.complete()
+        try await client.close()
+    }
+
+    func testConnectMultipleURLsRetainOrder() async throws {
+        natsServer.start()
+        let natsServer2 = NatsServer()
+        natsServer2.start()
+        logger.logLevel = .debug
+        for _ in 0..<10 {
+            let client = ClientOptions()
+                .urls([URL(string: natsServer2.clientURL)!, URL(string: natsServer.clientURL)!])
+                .retainServersOrder()
+                .build()
+            try await client.connect()
+            XCTAssertEqual(client.connectedUrl, URL(string: natsServer2.clientURL))
+            try await client.close()
+        }
     }
 
     func testPublishWithReply() async throws {
@@ -131,12 +174,17 @@ class CoreNatsTests: XCTestCase {
                 break
             }
         }
+        let expectation = XCTestExpectation(
+            description: "client was not notified of connection established event")
+        client.on(.connected) { event in
+            expectation.fulfill()
+        }
 
         // restart the server
         natsServer.stop()
         sleep(1)
         natsServer.start(port: port)
-        sleep(2)
+        await fulfillment(of: [expectation], timeout: 10.0)
 
         // publish more messages, sub should receive them
         Task {
@@ -338,7 +386,7 @@ class CoreNatsTests: XCTestCase {
         let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         // Construct the path to the resource
         let resourceURL =
-        testsDir
+            testsDir
             .appendingPathComponent("Integration/Resources/tls.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
         let certsURL = testsDir.appendingPathComponent(
@@ -381,4 +429,3 @@ class CoreNatsTests: XCTestCase {
         try await client.close()
     }
 }
-
