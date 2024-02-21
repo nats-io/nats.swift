@@ -30,3 +30,10 @@ struct NatsClientError: NatsError {
         self.description = description
     }
 }
+
+struct NatsConfigError: NatsError {
+    var description: String
+    init(_ description: String) {
+        self.description = description
+    }
+}
