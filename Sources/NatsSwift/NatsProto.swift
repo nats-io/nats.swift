@@ -207,9 +207,7 @@ struct ServerInfo: Codable, Equatable {
     /// Whether server goes into lame duck
     private let _lameDuckMode: Bool?
     var lameDuckMode: Bool {
-        get{
-            return _lameDuckMode ?? false
-        }
+        return _lameDuckMode ?? false
     }
 
     private static let prefix = NatsOperation.info.rawValue.data(using: .utf8)!
