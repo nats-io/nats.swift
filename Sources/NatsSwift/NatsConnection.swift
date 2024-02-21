@@ -23,6 +23,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var eventHandlerStore: [NatsEventKind: [NatsEventHandler]] = [:]
 
     // Connection options
+    internal var retryOnFailedConnect = false
     private var urls: [URL]
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
@@ -34,7 +35,6 @@ class ConnectionHandler: ChannelInboundHandler {
     private var rootCertificate: URL?
     private var clientCertificate: URL?
     private var clientKey: URL?
-    private var retryOnFailedConnect = false
 
     typealias InboundIn = ByteBuffer
     private var state: NatsState = .pending
@@ -200,16 +200,22 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         var lastErr: Error?
 
+        // if there are more reconnect attempts than the number of servers,
+        // we are after the initial connect, so sleep between servers
+        let shouldSleep = self.reconnectAttempts >= self.urls.count
+        print(self.reconnectAttempts)
         for s in servers {
-            if self.state == .disconnected {
-                if let maxReconnects {
-                    if reconnectAttempts >= maxReconnects {
-                        throw NatsClientError("could not reconnect; maxReconnects exceeded")
-                    }
+            if let maxReconnects {
+                if reconnectAttempts >= maxReconnects {
+                    throw NatsClientError("could not reconnect; maxReconnects exceeded")
                 }
-                self.reconnectAttempts += 1
+
+            }
+            self.reconnectAttempts += 1
+            if shouldSleep {
                 try await Task.sleep(nanoseconds: self.reconnectWait)
             }
+
             do {
                 try await connectToServer(s: s)
             } catch let error as NatsConfigError {
@@ -222,16 +228,11 @@ class ConnectionHandler: ChannelInboundHandler {
             lastErr = nil
             break
         }
-        self.reconnectAttempts = 0
         if let lastErr {
-            if self.retryOnFailedConnect {
-                // flip the flag so that future connect attempts by handleReconnect do throw
-                self.retryOnFailedConnect = false
-                handleReconnect()
-                return
-            }
+            self.state = .disconnected
             throw lastErr
         }
+        self.reconnectAttempts = 0
         self.state = .connected
         self.fire(.connected)
         guard let channel = self.channel else {

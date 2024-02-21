@@ -58,13 +58,15 @@ public class Client {
 
 extension Client {
     public func connect() async throws {
-        //TODO(jrm): reafactor for reconnection and review error handling.
-        //TODO(jrm): handle response
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        try await connectionHandler.connect()
+        if !connectionHandler.retryOnFailedConnect {
+            try await connectionHandler.connect()
+        } else {
+            connectionHandler.handleReconnect()
+        }
     }
 
     public func close() async throws {
