@@ -33,6 +33,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var rootCertificate: URL?
     internal var clientCertificate: URL?
     internal var clientKey: URL?
+    internal var retryOnFailedConnect = false
 
     typealias InboundIn = ByteBuffer
     internal var state: NatsState = .pending
@@ -157,7 +158,7 @@ class ConnectionHandler: ChannelInboundHandler {
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
-        rootCertificate: URL?
+        rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
@@ -174,6 +175,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
+        self.retryOnFailedConnect = retryOnFailedConnect
     }
 
     internal var group: MultiThreadedEventLoopGroup
@@ -374,10 +376,16 @@ class ConnectionHandler: ChannelInboundHandler {
             self.connectedUrl = s
             break
         }
+        self.reconnectAttempts = 0
         if let lastErr {
+            if self.retryOnFailedConnect {
+                // flip the flag so that future connect attempts by handleReconnect do throw
+                self.retryOnFailedConnect = false
+                handleReconnect()
+                return
+            }
             throw lastErr
         }
-        self.reconnectAttempts = 0
         self.state = .connected
         self.fire(.connected)
         guard let channel = self.channel else {
