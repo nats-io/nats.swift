@@ -103,4 +103,13 @@ extension Client {
         return try await connectionHandler.subscribe(subject)
 
     }
+    
+    public func ping() async throws -> Duration {
+        guard let connectionHandler = self.connectionHandler else {
+            throw NatsClientError("internal error: empty connection handler")
+        }
+        let ping = PingCommand.makeFrom(channel: connectionHandler.channel)
+        connectionHandler.sendPing(ping)
+        return try await ping.getRoundTripTime	()
+    }
 }
