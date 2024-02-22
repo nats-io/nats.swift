@@ -12,7 +12,7 @@ import XCTest
 class CoreNatsTests: XCTestCase {
 
     static var allTests = [
-        ("testPing", testPing),
+        ("testRtt", testRtt),
         ("testPublish", testPublish),
         ("testPublishWithReply", testPublishWithReply),
         ("testSubscribe", testSubscribe),
@@ -31,7 +31,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.stop()
     }
 
-    func testPing() async throws {
+    func testRtt() async throws {
         natsServer.start()
         logger.logLevel = .debug
         let client = ClientOptions()
@@ -39,7 +39,7 @@ class CoreNatsTests: XCTestCase {
             .build()
         try await client.connect()
         
-        let rtt: Duration = try await client.ping()
+        let rtt: Duration = try await client.rtt()
         XCTAssertGreaterThan(rtt, Duration.zero, "should have RTT")
         
         try await client.close()

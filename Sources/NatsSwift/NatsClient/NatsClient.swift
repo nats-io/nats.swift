@@ -104,7 +104,7 @@ extension Client {
 
     }
     
-    public func ping() async throws -> Duration {
+    public func rtt() async throws -> Duration {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
