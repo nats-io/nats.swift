@@ -129,6 +129,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 default:
                     continuation.resume()
                 }
+                continue
             }
 
             switch op {
@@ -336,7 +337,6 @@ class ConnectionHandler: ChannelInboundHandler {
             Task.detached {
                 do {
                     try self.write(operation: ClientOp.connect(connect))
-                    self.pingQueue.enqueue(RttCommand.makeFrom(channel: self.channel))
                     try self.write(operation: ClientOp.ping)
                     self.channel?.flush()
                 } catch {
