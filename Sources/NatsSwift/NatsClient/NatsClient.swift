@@ -108,7 +108,7 @@ extension Client {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        let ping = PingCommand.makeFrom(channel: connectionHandler.channel)
+        let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
         connectionHandler.sendPing(ping)
         return try await ping.getRoundTripTime	()
     }

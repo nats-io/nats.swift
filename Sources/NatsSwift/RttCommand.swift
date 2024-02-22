@@ -1,11 +1,11 @@
 import NIOCore
 
-internal class PingCommand {
+internal class RttCommand {
     let startTime = ContinuousClock().now
     let promise: EventLoopPromise<Duration>?
     
-    static func makeFrom(channel: Channel?) -> PingCommand {
-        PingCommand(promise: channel?.eventLoop.makePromise(of: Duration.self))
+    static func makeFrom(channel: Channel?) -> RttCommand {
+        RttCommand(promise: channel?.eventLoop.makePromise(of: Duration.self))
     }
     
     private init(promise: EventLoopPromise<Duration>?) {

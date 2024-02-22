@@ -52,7 +52,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
-    private let pingQueue = ConcurrentQueue<PingCommand>()
+    private let pingQueue = ConcurrentQueue<RttCommand>()
     
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
@@ -336,7 +336,7 @@ class ConnectionHandler: ChannelInboundHandler {
             Task.detached {
                 do {
                     try self.write(operation: ClientOp.connect(connect))
-                    self.pingQueue.enqueue(PingCommand.makeFrom(channel: self.channel))
+                    self.pingQueue.enqueue(RttCommand.makeFrom(channel: self.channel))
                     try self.write(operation: ClientOp.ping)
                     self.channel?.flush()
                 } catch {
@@ -417,7 +417,7 @@ class ConnectionHandler: ChannelInboundHandler {
         try await self.channel?.close().get()
     }
 
-    internal func sendPing(_ pingCommand: PingCommand? = nil) {
+    internal func sendPing(_ rttCommand: RttCommand? = nil) {
         let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         if pingsOut > 2 {
@@ -426,7 +426,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         let ping = ClientOp.ping
         do {
-            self.pingQueue.enqueue(pingCommand ?? PingCommand.makeFrom(channel: self.channel))
+            self.pingQueue.enqueue(rttCommand ?? RttCommand.makeFrom(channel: self.channel))
             try self.write(operation: ping)
             logger.debug("sent ping: \(pingsOut)")
         } catch {
