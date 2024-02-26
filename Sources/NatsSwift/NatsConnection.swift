@@ -52,6 +52,8 @@ class ConnectionHandler: ChannelInboundHandler {
     private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
+    private let pingQueue = ConcurrentQueue<RttCommand>()
+    
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
         retainServersOrder: Bool,
@@ -143,6 +145,7 @@ class ConnectionHandler: ChannelInboundHandler {
             case .pong:
                 logger.debug("pong")
                 self.outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
+                self.pingQueue.dequeue()?.setRoundTripTime()
             case .error(let err):
                 logger.debug("error \(err)")
 
@@ -414,7 +417,7 @@ class ConnectionHandler: ChannelInboundHandler {
         try await self.channel?.close().get()
     }
 
-    private func sendPing() {
+    internal func sendPing(_ rttCommand: RttCommand? = nil) {
         let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         if pingsOut > 2 {
@@ -423,6 +426,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         let ping = ClientOp.ping
         do {
+            self.pingQueue.enqueue(rttCommand ?? RttCommand.makeFrom(channel: self.channel))
             try self.write(operation: ping)
             logger.debug("sent ping: \(pingsOut)")
         } catch {
