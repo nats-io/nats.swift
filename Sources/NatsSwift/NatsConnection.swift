@@ -528,9 +528,17 @@ class ConnectionHandler: ChannelInboundHandler {
                 return
             }
             for (sid, sub) in self.subscriptions {
-                try write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
+                try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
             }
         }
+    }
+
+    func write(operation: ClientOp) async throws {
+        guard let allocator = self.channel?.allocator else {
+            throw NatsClientError("internal error: no allocator")
+        }
+        let payload = try operation.asBytes(using: allocator)
+        try await channel?.writeAndFlush(payload)
     }
 
     func write(operation: ClientOp) throws {
@@ -538,20 +546,13 @@ class ConnectionHandler: ChannelInboundHandler {
             throw NatsClientError("internal error: no allocator")
         }
         let payload = try operation.asBytes(using: allocator)
-        try self.writeMessage(payload)
+        _ = channel?.writeAndFlush(payload)
     }
-
-    func writeMessage(_ message: ByteBuffer) throws {
-        _ = channel?.write(message)
-        if channel?.isWritable ?? true {
-            channel?.flush()
-        }
-    }
-
+    
     func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
-        try write(operation: ClientOp.subscribe((sid, subject, nil)))
+        try await write(operation: ClientOp.subscribe((sid, subject, nil)))
         let sub = Subscription(subject: subject)
         self.subscriptions[sid] = sub
         return sub

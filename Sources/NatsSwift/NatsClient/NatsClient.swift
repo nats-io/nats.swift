@@ -79,20 +79,12 @@ extension Client {
 
     public func publish(
         _ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil
-    ) throws {
+    ) async throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        try connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
-    }
-
-    public func flush() async throws {
-        logger.debug("flush")
-        guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
-        }
-        connectionHandler.channel?.flush()
+        try await connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
     }
 
     public func subscribe(to subject: String) async throws -> Subscription {
@@ -101,7 +93,6 @@ extension Client {
             throw NatsClientError("internal error: empty connection handler")
         }
         return try await connectionHandler.subscribe(subject)
-
     }
     
     public func rtt() async throws -> Duration {
