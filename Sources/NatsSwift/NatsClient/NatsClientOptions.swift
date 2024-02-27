@@ -5,11 +5,13 @@
 
 import Dispatch
 import Foundation
+import Logging
 import NIO
 import NIOFoundationCompat
 
 public class ClientOptions {
     private var urls: [URL] = []
+    private var logerLevel: Logger.Level = .info
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int?
@@ -34,6 +36,11 @@ public class ClientOptions {
         return self
     }
 
+    public func logLevel(_ logerLevel: Logger.Level) -> ClientOptions {
+        self.logerLevel = logerLevel
+        return self
+    }
+    
     public func pingInterval(_ pingInterval: TimeInterval) -> ClientOptions {
         self.pingInterval = pingInterval
         return self
@@ -125,7 +132,9 @@ public class ClientOptions {
             rootCertificate: rootCertificate,
             retryOnFailedConnect: initialReconnect
         )
-
+        
+        logger.logLevel = self.logerLevel
+        
         return client
     }
 }

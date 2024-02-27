@@ -47,7 +47,7 @@ public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
 }
 
 // Represents a NATS header map in Swift.
-public struct HeaderMap: Equatable {
+public struct HeaderMap: Equatable, Sequence {
     private var inner: [HeaderName: [HeaderValue]]
 
     public init() {
@@ -78,6 +78,10 @@ public struct HeaderMap: Equatable {
         return inner[name] ?? []
     }
 
+    public func makeIterator() -> HeaderMapIterator {
+        return HeaderMapIterator(dictionary: inner)
+    }
+    
     //TODO(jrm): can we use unsafe methods here? Probably yes.
     func toBytes() -> [UInt8] {
         var bytes: [UInt8] = []
@@ -108,4 +112,68 @@ extension HeaderMap {
             }
         }
     }
+    
+    public subscript(name: String) -> String? {
+        get {
+            return get(safeEncoded(name: name))?.description
+        }
+        set {
+            if let value = newValue {
+                insert(safeEncoded(name: name), HeaderValue(value))
+            } else {
+                inner[safeEncoded(name: name)] = nil
+            }
+        }
+    }
+    
+    func safeEncoded(name: String) -> HeaderName {
+        let safeName = name.map { character -> String in
+            if character == ":" || character.asciiValue.map({ $0 < 33 || $0 > 126 }) ?? true {
+                // Encode the character manually, since it meets the criteria or is non-ASCII
+                let utf8 = String(character).utf8
+                return utf8.reduce("") { partialResult, byte in
+                    partialResult + String(format: "%%%02X", byte)
+                }
+            } else {
+                // Return the character as is, since it doesn't need encoding
+                return String(character)
+            }
+        }.joined()
+
+        return try! HeaderName(safeName)
+    }
 }
+
+public struct HeaderMapIterator: IteratorProtocol {
+    private let dictionary: [HeaderName: [HeaderValue]]
+    private var keyIterator: Dictionary<HeaderName, [HeaderValue]>.Iterator
+    private var currentKey: HeaderName?
+    private var currentValueIterator: Array<HeaderValue>.Iterator?
+    
+    init(dictionary: [HeaderName: [HeaderValue]]) {
+        self.dictionary = dictionary
+        self.keyIterator = dictionary.makeIterator()
+    }
+    
+    public mutating func next() -> (name: HeaderName, value: HeaderValue)? {
+        // If there is a current array iterator and it has a next value, return the current key and value
+        if let value = currentValueIterator?.next() {
+            return (currentKey!, value)
+        }
+        
+        // If the current array iterator is done or nil, move to the next key in the dictionary
+        if let nextKeyValPair = keyIterator.next() {
+            currentKey = nextKeyValPair.key
+            currentValueIterator = nextKeyValPair.value.makeIterator()
+            
+            // Try to get the next value for the new key
+            if let value = currentValueIterator?.next() {
+                return (currentKey!, value)
+            }
+        }
+        
+        // If no more keys or values, iteration is complete
+        return nil
+    }
+}
+
