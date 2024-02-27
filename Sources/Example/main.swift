@@ -3,110 +3,68 @@ import NatsSwift
 
 print("\n### Setup NATS Connection")
 
-let nats = ClientOptions()
-    .url(URL(string: "nats://localhost:4222")!)
-    .logLevel(.error)
-    .build()
+print("connecting with defaults...")
+let nats1 = NatsConnection()
+try await nats1.connect()
 
-do {
-    print("connecting...")
-    try await nats.connect()
-} catch {
-    print("Error: \(error)")
-    exit(1)
+print("connecting with options...")
+let options = NatsOptions(
+    urls: [URL(string: "nats://127.0.0.1:4222")!],
+    loggerLevel: .error)
+let nats = NatsConnection(options)
+
+nats.on(.connected) { event in
+    print("event: connected")
 }
+
+print("connecting...")
+try await nats.connect()
 
 print("\n### Publish / Subscribe")
-do {
-    print("subscribing...")
-    let sub = try await nats.subscribe(to: "foo.>")
 
-    let loop = Task {
-        print("starting message loop...")
-        
-        for try await msg in sub {
+print("subscribing...")
+let sub = try await nats.subscribe(to: "foo.>")
 
-            if msg.subject == "foo.done" {
-                break
-            }
-            
-            if let payload = msg.payload {
-                print("received \(msg.subject): \(String(data: payload, encoding: .utf8) ?? "")")
-            }
+let loop = Task {
+    print("starting message loop...")
+    
+    for try await msg in sub {
+
+        if msg.subject == "foo.done" {
+            break
         }
         
-        print("message loop done...")
-    }
-
-    print("publishing data...")
-    for i in 1...3 {
-        if let data = "data\(i)".data(using: .utf8) {
-            try await nats.publish(data, subject: "foo.\(i)")
+        if let payload = msg.payload {
+            print("received \(msg.subject): \(String(data: payload, encoding: .utf8) ?? "")")
+        }
+        
+        if let headers = msg.headers {
+            for (name, value) in headers {
+                print("  \(name): \(value)")
+            }
         }
     }
     
-    print("signal done...")
-    try await nats.publish(Data(), subject: "foo.done")
-    
-    try await loop.value
-    
-    print("done")
-    
-} catch {
-    print("Error: \(error)")
-    exit(1)
+    print("message loop done...")
 }
 
-print("\n### Publish / Subscribe with Headers")
-do {
-    print("subscribing...")
-    let sub = try await nats.subscribe(to: "foo.>")
-
-    let loop = Task {
-        print("starting message loop...")
-        
-        for try await msg in sub {
-
-            if msg.subject == "foo.done" {
-                break
-            }
-            
-            if let payload = msg.payload {
-                print("received \(msg.subject): \(String(data: payload, encoding: .utf8) ?? "")")
-            }
-            
-            if let headers = msg.headers {
-                for (name, value) in headers {
-                    print("  \(name): \(value)")
-                }
-            }
-        }
-        
-        print("message loop done...")
+print("publishing data...")
+for i in 1...3 {
+    var headers = HeaderMap()
+    headers["X-Type"] = "data"
+    headers["X-Index"] = "index-\(i)"
+    
+    if let data = "data\(i)".data(using: .utf8) {
+        try await nats.publish(data, to: "foo.\(i)", headers: headers)
     }
-
-    print("publishing data...")
-    for i in 1...3 {
-        
-        var headers = HeaderMap()
-        headers["X-Type"] = "data"
-        headers["X-Index"] = "index-\(i)"
-        
-        if let data = "data\(i)".data(using: .utf8) {
-            try await nats.publish(data, subject: "foo.\(i)", headers: headers)
-        }
-    }
-    
-    print("signal done...")
-    try await nats.publish(Data(), subject: "foo.done")
-    
-    try await loop.value
-    
-    print("done")
-    
-} catch {
-    print("Error: \(error)")
-    exit(1)
 }
+
+print("signalling done...")
+try await nats.publish(Data(), to: "foo.done")
+
+try await loop.value
+
+print("closing...")
+try await nats.close()
 
 print("bye")
