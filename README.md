@@ -95,7 +95,7 @@ let nats = NatsConnection(options)
 
 Once you've established a connection to a NATS server, the next step is to publish messages.
 Publishing messages to a subject allows any subscribed clients to receive these messages
-asynchronously. This example demonstrates how to publish a simple text message to a specific subject.
+asynchronously. This example shows how to publish a simple text message to a specific subject.
 
 ```swift
 let data = "message text".data(using: .utf8)!
@@ -104,8 +104,8 @@ try await nats.publish(data, to: "foo.msg")
 
 In more complex scenarios, you might want to include additional metadata with your messages in
 the form of headers. Headers allow you to pass key-value pairs along with your message, providing
-extra context or instructions for the subscriber. This example demonstrates how to publish a
-message with headers using the NATS Swift client.
+extra context or instructions for the subscriber. This example shows how to publish a
+message with headers:
 
 ```swift
 let data = "message text".data(using: .utf8)!
