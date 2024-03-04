@@ -37,5 +37,6 @@ let package = Package(
         .executableTarget(name: "Benchmark", dependencies: ["NatsSwift"]),
         .executableTarget(name: "BenchmarkPubSub", dependencies: ["NatsSwift"]),
         .executableTarget(name: "BenchmarkSub", dependencies: ["NatsSwift"]),
+        .executableTarget(name: "Example", dependencies: ["NatsSwift"]),
     ]
 )
