@@ -23,6 +23,9 @@ class CoreNatsTests: XCTestCase {
         ("testCredentialsAuth", testCredentialsAuth),
         ("testMutualTls", testMutualTls),
         ("testTlsFirst", testTlsFirst),
+        ("testInvalidCertificate", testInvalidCertificate),
+        ("testLameDuckMode", testLameDuckMode),
+        ("testRequest", testRequest),
     ]
     var natsServer = NatsServer()
 
@@ -38,13 +41,13 @@ class CoreNatsTests: XCTestCase {
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
-        
+
         let rtt: Duration = try await client.rtt()
         XCTAssertGreaterThan(rtt, Duration.zero, "should have RTT")
-        
+
         try await client.close()
     }
-    
+
     func testPublish() async throws {
         natsServer.start()
         logger.logLevel = .debug
@@ -446,5 +449,22 @@ class CoreNatsTests: XCTestCase {
         natsServer.setLameDuckMode()
         await fulfillment(of: [expectation], timeout: 1.0)
         try await client.close()
+    }
+
+    func testRequest() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+
+        Task {
+        let service = try await client.subscribe(to: "service")
+        for await message in service {
+            try client.publish("reply".data(using: .utf8)!, subject: message.replySubject!)
+        }
+
+        let response = try await client.request("request".data(using: .utf8)!, to: "service")
+        XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
+        }
     }
 }

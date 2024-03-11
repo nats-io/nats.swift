@@ -53,7 +53,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
-    
+
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
         retainServersOrder: Bool,
