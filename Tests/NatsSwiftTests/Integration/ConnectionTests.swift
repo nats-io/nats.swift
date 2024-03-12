@@ -432,7 +432,7 @@ class CoreNatsTests: XCTestCase {
         XCTFail("Expected error from connect")
     }
 
-     func testLameDuckMode() async throws {
+    func testLameDuckMode() async throws {
         natsServer.start()
         logger.logLevel = .debug
 
@@ -458,13 +458,13 @@ class CoreNatsTests: XCTestCase {
         let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
         Task {
-        let service = try await client.subscribe(to: "service")
-        for await message in service {
-            try client.publish("reply".data(using: .utf8)!, subject: message.replySubject!)
-        }
+            let service = try await client.subscribe(to: "service")
+            for await message in service {
+                try client.publish("reply".data(using: .utf8)!, subject: message.replySubject!)
+            }
 
-        let response = try await client.request("request".data(using: .utf8)!, to: "service")
-        XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
+            let response = try await client.request("request".data(using: .utf8)!, to: "service")
+            XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
         }
     }
 }

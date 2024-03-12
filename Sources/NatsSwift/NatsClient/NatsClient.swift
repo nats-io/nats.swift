@@ -88,23 +88,23 @@ extension Client {
     }
 
     public func request(
-       _ payload: Data, to: String, timeout: TimeInterval = 5, headers: HeaderMap? = nil
-    ) async throws  -> NatsMessage{
+        _ payload: Data, to: String, timeout: TimeInterval = 5, headers: HeaderMap? = nil
+    ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
         do {
             let inbox = "_INBOX.\(UUID().uuidString)"
-                let response = try await connectionHandler.subscribe(inbox)
-                try connectionHandler.write(operation: ClientOp.publish((to, inbox,  payload,  headers)))
-                connectionHandler.channel?.flush()
-                if let message = await response.makeAsyncIterator().next() {
-                    return message
-                } else {
-                    throw NatsClientError("response subscription closed")
+            let response = try await connectionHandler.subscribe(inbox)
+            try connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
+            connectionHandler.channel?.flush()
+            if let message = await response.makeAsyncIterator().next() {
+                return message
+            } else {
+                throw NatsClientError("response subscription closed")
 
-                }
+            }
         } catch {
             throw NatsClientError("failed to send request")
         }
@@ -133,6 +133,6 @@ extension Client {
         }
         let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
         connectionHandler.sendPing(ping)
-        return try await ping.getRoundTripTime	()
+        return try await ping.getRoundTripTime()
     }
 }
