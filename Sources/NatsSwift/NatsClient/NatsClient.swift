@@ -8,6 +8,7 @@ import Foundation
 import Logging
 import NIO
 import NIOFoundationCompat
+import Nuid
 
 var logger = Logger(label: "NatsSwift")
 
@@ -94,8 +95,7 @@ extension Client {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        do {
-            let inbox = "_INBOX.\(UUID().uuidString)"
+            let inbox = "_INBOX.\(Next())"
             let response = try await connectionHandler.subscribe(inbox)
             try connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
             connectionHandler.channel?.flush()
@@ -105,9 +105,6 @@ extension Client {
                 throw NatsClientError("response subscription closed")
 
             }
-        } catch {
-            throw NatsClientError("failed to send request")
-        }
     }
 
     public func flush() async throws {

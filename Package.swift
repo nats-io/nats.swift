@@ -15,6 +15,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.4.2"),
         .package(url: "https://github.com/nats-io/nkeys.swift.git", from: "0.1.1"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.0.0"),
+        .package(url: "https://github.com/Jarema/swift-nuid.git", from: "0.1.1"),
     ],
     targets: [
         .target(
@@ -25,6 +26,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NKeys", package: "nkeys.swift"),
+                .product(name: "Nuid", package: "swift-nuid"),
             ]),
         .testTarget(
             name: "NatsSwiftTests",
