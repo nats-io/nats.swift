@@ -457,15 +457,17 @@ class CoreNatsTests: XCTestCase {
 
         let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
-        print("client")
 
         let service = try await client.subscribe(to: "service")
         Task {
             for await msg in service {
-                try client.publish("reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
+                try client.publish(
+                    "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
             }
         }
         let response = try await client.request("request".data(using: .utf8)!, to: "service")
         XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
+
+        try await client.close()
     }
 }

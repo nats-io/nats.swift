@@ -95,16 +95,17 @@ extension Client {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-            let inbox = "_INBOX.\(Next())"
-            let response = try await connectionHandler.subscribe(inbox)
-            try connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
-            connectionHandler.channel?.flush()
-            if let message = await response.makeAsyncIterator().next() {
-                return message
-            } else {
-                throw NatsClientError("response subscription closed")
+        let inbox = "_INBOX.\(nextNuid())"
 
-            }
+        let response = try await connectionHandler.subscribe(inbox)
+        try connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
+        connectionHandler.channel?.flush()
+        if let message = await response.makeAsyncIterator().next() {
+            return message
+        } else {
+            throw NatsClientError("response subscription closed")
+
+        }
     }
 
     public func flush() async throws {
