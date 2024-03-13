@@ -284,7 +284,7 @@ enum ClientOp {
                 if let reply = reply {
                     buffer.writeString("\(reply) ")
                 }
-                buffer.writeString("0\r\n")
+                buffer.writeString("\r\n")
             }
 
         case .subscribe((let sid, let subject, let queue)):
