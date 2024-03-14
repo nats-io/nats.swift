@@ -130,7 +130,6 @@ extension Client {
             throw NatsClientError("internal error: empty connection handler")
         }
         return try await connectionHandler.subscribe(subject)
-
     }
 
     public func rtt() async throws -> Duration {

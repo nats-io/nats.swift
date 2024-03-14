@@ -18,23 +18,30 @@ public class Subscription: AsyncSequence {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
 
+    public let subject: String
+    internal var max: UInt64?
+    internal var delivered: UInt64 = 0
+    internal let sid: UInt64
+    
     private var buffer: [Element]
-    private let maxPending: UInt64
+    private let capacity: UInt64
     private var closed = false
     private var continuation: CheckedContinuation<Element?, Never>?
     private let lock = NSLock()
-    public let subject: String
+    private let conn: ConnectionHandler
 
-    private static let defaultMaxPending: UInt64 = 512 * 1024
+    private static let defaultSubCapacity: UInt64 = 512 * 1024
 
-    convenience init(subject: String) {
-        self.init(subject: subject, maxPending: Subscription.defaultMaxPending)
+    convenience init(sid: UInt64, subject: String, conn: ConnectionHandler) {
+        self.init(sid: sid, subject: subject, capacity: Subscription.defaultSubCapacity, conn: conn)
     }
 
-    init(subject: String, maxPending: UInt64) {
+    init(sid: UInt64, subject: String, capacity: UInt64, conn: ConnectionHandler) {
+        self.sid = sid
         self.subject = subject
-        self.maxPending = maxPending
+        self.capacity = capacity
         self.buffer = []
+        self.conn = conn
     }
 
     public func makeAsyncIterator() -> SubscriptionIterator {
@@ -47,17 +54,21 @@ public class Subscription: AsyncSequence {
                 // Immediately use the continuation if it exists
                 self.continuation = nil
                 continuation.resume(returning: message)
-            } else if buffer.count < maxPending {
+            } else if buffer.count < capacity {
                 // Only append to buffer if no continuation is available
+                // TODO(pp): Hadndle SlowConsumer as subscription event
                 buffer.append(message)
             }
         }
     }
 
-    func complete() async {
+    func complete() {
         lock.withLock {
             closed = true
-            continuation?.resume(returning: nil)
+            if let continuation {
+                continuation.resume(returning: nil)
+            }
+
         }
     }
 
@@ -75,13 +86,14 @@ public class Subscription: AsyncSequence {
     }
 
     private func nextMessage() async -> Element? {
-        await withCheckedContinuation { continuation in
+        let msg: Element? = await withCheckedContinuation { continuation in
             lock.withLock {
                 if closed {
                     continuation.resume(returning: nil)
                     return
                 }
 
+                delivered+=1
                 if let message = buffer.first {
                     buffer.removeFirst()
                     continuation.resume(returning: message)
@@ -90,5 +102,14 @@ public class Subscription: AsyncSequence {
                 }
             }
         }
+        if let max, delivered >= max {
+            conn.removeSub(sub: self)
+        }
+        return msg
+    }
+
+    public func unsubscribe(after: UInt64? = nil) async throws {
+        logger.info("unsubscribe from subject \(subject)")
+        return try await self.conn.unsubscribe(sub: self, max: after)
     }
 }

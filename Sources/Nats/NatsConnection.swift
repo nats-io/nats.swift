@@ -556,13 +556,28 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    func subscribe(_ subject: String) async throws -> Subscription {
+    internal func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         try write(operation: ClientOp.subscribe((sid, subject, nil)))
-        let sub = Subscription(subject: subject)
+        let sub = Subscription(sid: sid, subject: subject, conn: self)
         self.subscriptions[sid] = sub
         return sub
+    }
+
+    internal func unsubscribe(sub: Subscription, max: UInt64?) async throws {
+        if (max != nil && sub.delivered >= max!) || max == nil  {
+            try write(operation: ClientOp.unsubscribe((sid: sub.sid, max: nil)))
+            self.removeSub(sub: sub)
+        } else {
+            try write(operation: ClientOp.unsubscribe((sid: sub.sid, max: max)))
+            sub.max = max
+        }
+    }
+    
+    internal func removeSub(sub: Subscription) {
+        self.subscriptions.removeValue(forKey: sub.sid)
+        sub.complete()
     }
 }
 
