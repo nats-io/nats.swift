@@ -1,6 +1,6 @@
 //
 //  NatsClient.swift
-//  NatsSwift
+//  Nats
 //
 
 import Dispatch
@@ -10,7 +10,7 @@ import NIO
 import NIOFoundationCompat
 import Nuid
 
-var logger = Logger(label: "NatsSwift")
+var logger = Logger(label: "Nats")
 
 /// Client connection states
 public enum NatsState {

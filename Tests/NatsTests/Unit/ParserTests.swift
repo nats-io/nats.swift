@@ -1,11 +1,11 @@
 //
 //  ParserTests.swift
-//  NatsSwiftTests
+//  NatsTests
 //
 
 import XCTest
 
-@testable import NatsSwift
+@testable import Nats
 
 class ParserTests: XCTestCase {
 

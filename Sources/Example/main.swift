@@ -1,5 +1,5 @@
 import Foundation
-import NatsSwift
+import Nats
 
 print("\n### Setup NATS Connection")
 

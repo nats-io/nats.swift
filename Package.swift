@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "NatsSwift",
+    name: "nats-swift",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .library(name: "NatsSwift", targets: ["NatsSwift"])
+        .library(name: "Nats", targets: ["Nats"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
@@ -19,7 +19,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "NatsSwift",
+            name: "Nats",
             dependencies: [
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
@@ -29,16 +29,16 @@ let package = Package(
                 .product(name: "Nuid", package: "swift-nuid"),
             ]),
         .testTarget(
-            name: "NatsSwiftTests",
-            dependencies: ["NatsSwift"],
+            name: "NatsTests",
+            dependencies: ["Nats"],
             resources: [
                 .process("Integration/Resources")
             ]
         ),
 
-        .executableTarget(name: "Benchmark", dependencies: ["NatsSwift"]),
-        .executableTarget(name: "BenchmarkPubSub", dependencies: ["NatsSwift"]),
-        .executableTarget(name: "BenchmarkSub", dependencies: ["NatsSwift"]),
-        .executableTarget(name: "Example", dependencies: ["NatsSwift"]),
+        .executableTarget(name: "Benchmark", dependencies: ["Nats"]),
+        .executableTarget(name: "BenchmarkPubSub", dependencies: ["Nats"]),
+        .executableTarget(name: "BenchmarkSub", dependencies: ["Nats"]),
+        .executableTarget(name: "Example", dependencies: ["Nats"]),
     ]
 )

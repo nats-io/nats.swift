@@ -1,6 +1,6 @@
 //
 //  NatsClientOptions.swift
-//  NatsSwift
+//  Nats
 //
 
 import Dispatch

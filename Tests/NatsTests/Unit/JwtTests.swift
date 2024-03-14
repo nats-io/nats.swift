@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-@testable import NatsSwift
+@testable import Nats
 
 class JwtTests: XCTestCase {
 

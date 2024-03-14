@@ -1,6 +1,6 @@
 //
 //  NatsSubscription.swift
-//  NatsSwift
+//  Nats
 //
 
 import Foundation

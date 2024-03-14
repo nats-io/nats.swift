@@ -2,7 +2,8 @@ import Foundation
 import Logging
 import XCTest
 
-@testable import NatsSwift
+@testable import Nats
+
 
 class TestMessageWithHeadersTests: XCTestCase {
 
