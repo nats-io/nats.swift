@@ -1,6 +1,6 @@
 //
 //  NatsProto.swift
-//  NatsSwift
+//  Nats
 //
 
 import Foundation

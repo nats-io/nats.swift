@@ -1,6 +1,6 @@
 //
 //  Data+Parser.swift
-//  NatsSwift
+//  Nats
 //
 
 import Foundation

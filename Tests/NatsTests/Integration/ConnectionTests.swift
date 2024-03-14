@@ -1,13 +1,13 @@
 //
 //  NatsClientTests.swift
-//  NatsSwiftTests
+//  NatsTests
 //
 
 import Logging
 import NIO
 import XCTest
 
-@testable import NatsSwift
+@testable import Nats
 
 class CoreNatsTests: XCTestCase {
 

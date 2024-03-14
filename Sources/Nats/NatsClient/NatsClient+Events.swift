@@ -1,7 +1,7 @@
 //
 //  NatsClient+Events.swift
 //
-// NatsSwift
+// Nats
 //
 
 import Foundation

@@ -31,10 +31,10 @@ let package = Package(
         .executable(name: "YourApp", targets: ["YourApp"]),
     ],
     dependencies: [
-        .package(name: "NatsSwift", url: "https://github.com/nats-io/NatsSwift.git", from: "0.1")
+        .package(name: "Nats", url: "https://github.com/nats-io/nats.swift.git", from: "0.1")
     ],
     targets: [
-        .target(name: "YourApp", dependencies: ["NatsSwift"]),
+        .target(name: "YourApp", dependencies: ["Nats"]),
     ]
 )
 
@@ -50,7 +50,7 @@ Click on the third tab `Package Dependencies` and add the git url `https://githu
 Here is a quick start example to see everything at a glance:
 
 ```swift
-import NatsSwift
+import Nats
 
 // create the client
 let nats = ClientOptions().url(URL(string: "nats://localhost:4222")!).build()
@@ -126,11 +126,11 @@ for try await msg in subscription {
     if msg.subject == "foo.done" {
         break
     }
-    
+
     if let payload = msg.payload {
         print("received \(msg.subject): \(String(data: payload, encoding: .utf8) ?? "")")
     }
-    
+
     if let headers = msg.headers {
         if let headerValue = headers.get(try! HeaderName("X-Example")) {
             print("  header: X-Example: \(headerValue.description)")
@@ -167,4 +167,4 @@ nats.on(.connected) { event in
 
 ## Attribution
 
-This library is based on excellent work in https://github.com/aus-der-Technik/NatsSwift
+This library is based on excellent work in https://github.com/aus-der-Technik/SwiftyNats
