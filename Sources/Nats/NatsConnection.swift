@@ -189,7 +189,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private func handleIncomingMessage(_ message: MessageInbound) {
         let natsMsg = NatsMessage(
             payload: message.payload, subject: message.subject, replySubject: message.reply,
-            length: message.length, headers: nil, status: nil)
+            length: message.length, headers: nil, status: nil, description: nil)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
@@ -198,7 +198,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private func handleIncomingHMessage(_ message: HMessageInbound) {
         let natsMsg = NatsMessage(
             payload: message.payload, subject: message.subject, replySubject: message.reply,
-            length: message.length, headers: message.headers, status: nil)
+            length: message.length, headers: message.headers, status: message.status, description: message.description)
         if let sub = self.subscriptions[message.sid] {
             sub.receiveMessage(natsMsg)
         }
