@@ -34,6 +34,7 @@ class CoreNatsTests: XCTestCase {
         ("testInvalidCertificate", testInvalidCertificate),
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
+        ("testRequest_noResponders", testRequest_noResponders),
     ]
     var natsServer = NatsServer()
 
@@ -477,5 +478,22 @@ class CoreNatsTests: XCTestCase {
         XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
 
         try await client.close()
+    }
+
+    func testRequest_noResponders() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        do {
+            let _ = try await client.request("request".data(using: .utf8)!, to: "service")
+        } catch NatsRequestError.timeout {
+            try await client.close()
+            return
+        }
+
+        XCTFail("Expected no responders")
     }
 }

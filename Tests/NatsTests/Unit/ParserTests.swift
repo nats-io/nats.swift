@@ -101,49 +101,55 @@ class ParserTests: XCTestCase {
             TestCase(
                 name: "Message with headers only",
                 givenChunks: [
-                    "HMSG foo 1 30 30\r\nNATS/1.0\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\n\r\n",
+                    "HMSG foo 1 30 30\r\nNATS/1.0\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\n\r\n"
                 ],
                 expectedOps: [
                     .hMessage(
-                       HMessageInbound(
-                        subject: "foo", sid: 1, payload: nil, headers: hm, headersLength: 30, length: 30)
-                    ),
+                        HMessageInbound(
+                            subject: "foo", sid: 1, payload: nil, headers: hm, headersLength: 30,
+                            length: 30)
+                    )
                 ]
             ),
             TestCase(
                 name: "Message with headers and payload",
                 givenChunks: [
-                    "HMSG foo 1 30 35\r\nNATS/1.0\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\nhello\r\n",
+                    "HMSG foo 1 30 35\r\nNATS/1.0\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\nhello\r\n"
                 ],
                 expectedOps: [
                     .hMessage(
                         HMessageInbound(
-                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, headers: hm, headersLength: 30, length: 35)
-                    ),
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!,
+                            headers: hm, headersLength: 30, length: 35)
+                    )
                 ]
             ),
             TestCase(
                 name: "Message with status and no other headers",
                 givenChunks: [
-                    "HMSG foo 1 30 30\r\nNATS/1.0 503 no responders\r\n\r\n\r\n",
+                    "HMSG foo 1 30 30\r\nNATS/1.0 503 no responders\r\n\r\n\r\n"
                 ],
                 expectedOps: [
                     .hMessage(
                         HMessageInbound(
-                            subject: "foo", sid: 1, payload: nil, headers: HeaderMap(), headersLength: 30, length: 30, status: 503, description: "no responders")
-                    ),
+                            subject: "foo", sid: 1, payload: nil, headers: HeaderMap(),
+                            headersLength: 30, length: 30, status: 503, description: "no responders"
+                        )
+                    )
                 ]
             ),
             TestCase(
                 name: "Message with status, headers and payload",
                 givenChunks: [
-                    "HMSG foo 1 48 53\r\nNATS/1.0 503 no responders\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\nhello\r\n",
+                    "HMSG foo 1 48 53\r\nNATS/1.0 503 no responders\r\nh1:X\r\nh1:Y\r\nh2:Z\r\n\r\nhello\r\n"
                 ],
                 expectedOps: [
                     .hMessage(
                         HMessageInbound(
-                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!, headers: hm, headersLength: 48, length: 53, status: 503, description: "no responders")
-                    ),
+                            subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!,
+                            headers: hm, headersLength: 48, length: 53, status: 503,
+                            description: "no responders")
+                    )
                 ]
             ),
             TestCase(

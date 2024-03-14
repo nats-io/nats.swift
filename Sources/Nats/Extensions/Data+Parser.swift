@@ -155,16 +155,18 @@ extension Data {
                         let headersArray = headersString.split(separator: "\r\n")
                         let versionLine = headersArray[0]
                         guard versionLine.hasPrefix(Data.versionLinePrefix) else {
-                            throw NatsParserError("header version line does not begin with `NATS/1.0`")
+                            throw NatsParserError(
+                                "header version line does not begin with `NATS/1.0`")
                         }
-                        let versionLineSuffix = versionLine
+                        let versionLineSuffix =
+                            versionLine
                             .dropFirst(Data.versionLinePrefix.count)
                             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-
                         // handle inlines status and description
                         if versionLineSuffix.count > 0 {
-                            let statusAndDesc = versionLineSuffix.split(separator: " ", maxSplits: 1)
+                            let statusAndDesc = versionLineSuffix.split(
+                                separator: " ", maxSplits: 1)
                             guard let status = UInt16(statusAndDesc[0]) else {
                                 throw NatsParserError("could not parse status parameter")
                             }

@@ -17,7 +17,6 @@ import XCTest
 
 @testable import Nats
 
-
 class TestNatsEvents: XCTestCase {
 
     static var allTests = [
