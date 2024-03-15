@@ -61,6 +61,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
+    private var batchBuffer: BatchBuffer?
 
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
@@ -143,12 +144,13 @@ class ConnectionHandler: ChannelInboundHandler {
             switch op {
             case .ping:
                 logger.debug("ping")
-                do {
-                    try self.write(operation: .pong)
-                } catch {
-                    logger.error("error sending pong: \(error)")
-                    self.fire(.error(NatsClientError("error sending pong: \(error)")))
-                    continue
+                Task {
+                    do {
+                        try await self.write(operation: .pong)
+                    } catch {
+                        logger.error("error sending pong: \(error)")
+                        self.fire(.error(NatsClientError("error sending pong: \(error)")))
+                    }
                 }
             case .pong:
                 logger.debug("pong")
@@ -254,7 +256,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.pingTask = channel.eventLoop.scheduleRepeatedTask(
             initialDelay: pingInterval, delay: pingInterval
         ) { [weak self] task in
-            self?.sendPing()
+            Task { [weak self] in await self?.sendPing() }
         }
         logger.debug("connection established")
         return
@@ -270,6 +272,10 @@ class ConnectionHandler: ChannelInboundHandler {
                         throw NatsConfigError("no url")
                     }
                     self.channel = try await bootstrap.connect(host: host, port: port).get()
+                    guard let channel = self.channel else {
+                        throw NatsClientError("internal error: empty channel")
+                    }
+                    self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -344,8 +350,8 @@ class ConnectionHandler: ChannelInboundHandler {
             self.connectionEstablishedContinuation = continuation
             Task.detached {
                 do {
-                    try self.write(operation: ClientOp.connect(connect))
-                    try self.write(operation: ClientOp.ping)
+                    try await self.write(operation: ClientOp.connect(connect))
+                    try await self.write(operation: ClientOp.ping)
                     self.channel?.flush()
                 } catch {
                     continuation.resume(throwing: error)
@@ -425,7 +431,7 @@ class ConnectionHandler: ChannelInboundHandler {
         try await self.channel?.close().get()
     }
 
-    internal func sendPing(_ rttCommand: RttCommand? = nil) {
+    internal func sendPing(_ rttCommand: RttCommand? = nil) async {
         let pingsOut = self.outstandingPings.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         if pingsOut > 2 {
@@ -435,7 +441,7 @@ class ConnectionHandler: ChannelInboundHandler {
         let ping = ClientOp.ping
         do {
             self.pingQueue.enqueue(rttCommand ?? RttCommand.makeFrom(channel: self.channel))
-            try self.write(operation: ping)
+            try await self.write(operation: ping)
             logger.debug("sent ping: \(pingsOut)")
         } catch {
             logger.error("Unable to send ping: \(error)")
@@ -536,30 +542,30 @@ class ConnectionHandler: ChannelInboundHandler {
                 return
             }
             for (sid, sub) in self.subscriptions {
-                try write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
+                try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
             }
         }
     }
 
-    func write(operation: ClientOp) throws {
+    func write(operation: ClientOp) async throws {
         guard let allocator = self.channel?.allocator else {
             throw NatsClientError("internal error: no allocator")
         }
         let payload = try operation.asBytes(using: allocator)
-        try self.writeMessage(payload)
+        try await self.writeMessage(payload)
     }
 
-    func writeMessage(_ message: ByteBuffer) throws {
-        _ = channel?.write(message)
-        if channel?.isWritable ?? true {
-            channel?.flush()
+    func writeMessage(_ message: ByteBuffer) async throws {
+        guard let buffer = self.batchBuffer else {
+            throw NatsClientError("not connected")
         }
+        try await buffer.write(message.readableBytesView)
     }
 
     internal func subscribe(_ subject: String) async throws -> Subscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
-        try write(operation: ClientOp.subscribe((sid, subject, nil)))
+        try await write(operation: ClientOp.subscribe((sid, subject, nil)))
         let sub = Subscription(sid: sid, subject: subject, conn: self)
         self.subscriptions[sid] = sub
         return sub
@@ -569,12 +575,12 @@ class ConnectionHandler: ChannelInboundHandler {
         if let max, sub.delivered < max {
             // if max is set and the sub has not yet reached it, send unsub with max set
             // and do not remove the sub from connection
-            try write(operation: ClientOp.unsubscribe((sid: sub.sid, max: max)))
+            try await write(operation: ClientOp.unsubscribe((sid: sub.sid, max: max)))
             sub.max = max
         } else {
             // if max is not set or the subscription received at least as meny
             // messages as max, send unsub command without max and remove sub from connection
-            try write(operation: ClientOp.unsubscribe((sid: sub.sid, max: nil)))
+            try await write(operation: ClientOp.unsubscribe((sid: sub.sid, max: nil)))
             self.removeSub(sub: sub)
         }
     }

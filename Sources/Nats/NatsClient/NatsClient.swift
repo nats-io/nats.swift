@@ -88,12 +88,12 @@ extension Client {
 
     public func publish(
         _ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil
-    ) throws {
+    ) async throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        try connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
+        try await connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
     }
 
     public func request(
@@ -106,7 +106,7 @@ extension Client {
         let inbox = "_INBOX.\(nextNuid())"
 
         let response = try await connectionHandler.subscribe(inbox)
-        try connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
+        try await connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
         connectionHandler.channel?.flush()
         if let message = await response.makeAsyncIterator().next() {
             return message
@@ -137,7 +137,7 @@ extension Client {
             throw NatsClientError("internal error: empty connection handler")
         }
         let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
-        connectionHandler.sendPing(ping)
+        await connectionHandler.sendPing(ping)
         return try await ping.getRoundTripTime()
     }
 }

@@ -25,13 +25,13 @@ let data = "foo".data(using: .utf8)!
 // Warmup
 print("Warming up...")
 for _ in 0..<10_000 {
-    try! nats.publish(data, subject: "foo")
+    try! await nats.publish(data, subject: "foo")
 }
 print("Starting benchmark...")
 let now = DispatchTime.now()
 let numMsgs = 10_000_000
 for _ in 0..<numMsgs {
-    try! nats.publish(data, subject: "foo")
+    try! await nats.publish(data, subject: "x")
 }
 try! await nats.flush()
 let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds

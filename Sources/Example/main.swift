@@ -61,12 +61,12 @@ for i in 1...3 {
     headers.append(try! HeaderName("X-Example"), HeaderValue("example value"))
 
     if let data = "data\(i)".data(using: .utf8) {
-        try nats.publish(data, subject: "foo.\(i)", headers: headers)
+        try await nats.publish(data, subject: "foo.\(i)", headers: headers)
     }
 }
 
 print("signalling done...")
-try nats.publish(Data(), subject: "foo.done")
+try await nats.publish(Data(), subject: "foo.done")
 
 try await loop.value
 
