@@ -40,9 +40,8 @@ class BatchBuffer {
                     promise.futureResult.whenComplete { result in
                         switch result {
                         case .success:
-                            _ = self.lock.withLock {
-                                self.buffer.writeBytes(data)
-                            }
+                            // we should be in lock when completed here
+                            self.buffer.writeBytes(data)
                             self.flushWhenIdle()
                             continuation.resume()
                         case .failure(let error):
