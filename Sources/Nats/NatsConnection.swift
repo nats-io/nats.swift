@@ -216,7 +216,7 @@ class ConnectionHandler: ChannelInboundHandler {
         // if there are more reconnect attempts than the number of servers,
         // we are after the initial connect, so sleep between servers
         let shouldSleep = self.reconnectAttempts >= self.urls.count
-        print(self.reconnectAttempts)
+        logger.debug("reconnect attempts: \(self.reconnectAttempts)")
         for s in servers {
             if let maxReconnects {
                 if reconnectAttempts >= maxReconnects {
