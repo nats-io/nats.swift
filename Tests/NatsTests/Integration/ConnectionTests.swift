@@ -24,6 +24,8 @@ class CoreNatsTests: XCTestCase {
         ("testPublish", testPublish),
         ("testPublishWithReply", testPublishWithReply),
         ("testSubscribe", testSubscribe),
+        ("testUnsubscribe", testUnsubscribe),
+        ("testUnsubscribeAfter", testUnsubscribeAfter),
         ("testConnect", testConnect),
         ("testReconnect", testReconnect),
         ("testUsernameAndPassword", testUsernameAndPassword),
@@ -161,7 +163,6 @@ class CoreNatsTests: XCTestCase {
             }
         }
         await fulfillment(of: [expectation], timeout: 5.0)
-        await sub.complete()
     }
 
     func testSubscribe() async throws {
@@ -175,6 +176,45 @@ class CoreNatsTests: XCTestCase {
         let message = await iter.next()
         print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+    }
+
+    func testUnsubscribe() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+        let sub = try await client.subscribe(to: "test")
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        let iter = sub.makeAsyncIterator()
+        var message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
+        XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+
+        try client.publish("msg".data(using: .utf8)!, subject: "test")
+        try await sub.unsubscribe()
+
+        message = await iter.next()
+        XCTAssertNil(message)
+    }
+
+    func testUnsubscribeAfter() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+        let sub = try await client.subscribe(to: "test")
+        try await sub.unsubscribe(after: 3)
+        for _ in 0..<5 {
+            try client.publish("msg".data(using: .utf8)!, subject: "test")
+        }
+
+        var i = 0
+        for await msg in sub {
+            print(msg)
+            i+=1
+        }
+        XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
+        try await client.close()
     }
 
     func testConnect() async throws {
