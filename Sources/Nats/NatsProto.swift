@@ -79,7 +79,6 @@ enum ServerOp {
     }
 }
 
-// TODO(pp): add headers and HMSG parsing
 internal struct HMessageInbound: Equatable {
     private static let newline = UInt8(ascii: "\n")
     private static let space = UInt8(ascii: " ")
@@ -90,6 +89,8 @@ internal struct HMessageInbound: Equatable {
     var headers: HeaderMap
     var headersLength: Int
     var length: Int
+    var status: StatusCode?
+    var description: String?
 
     // Parse the operation syntax: HMSG <subject> <sid> [reply-to]
     internal static func parse(data: Data) throws -> HMessageInbound {
