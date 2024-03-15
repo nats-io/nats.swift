@@ -30,6 +30,10 @@ class BatchBuffer {
     }
     
     func write<Bytes: Sequence>(_ data: Bytes) async throws where Bytes.Element == UInt8 {
+        #if SWIFT_NATS_BATCH_BUFFER_DISABLED
+        let b = channel.allocator.buffer(bytes: data)
+        try await channel.writeAndFlush(b)
+        #else
         // Batch writes and if we have more than the batch size
         // already in the buffer await until buffer is flushed
         // to handle any back pressure
@@ -58,6 +62,7 @@ class BatchBuffer {
             
             flushWhenIdle()
         }
+        #endif
     }
     
     func clear() {
