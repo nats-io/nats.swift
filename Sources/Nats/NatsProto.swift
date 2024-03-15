@@ -89,7 +89,7 @@ internal struct HMessageInbound: Equatable {
     var headers: HeaderMap
     var headersLength: Int
     var length: Int
-    var status: UInt16?
+    var status: StatusCode?
     var description: String?
 
     // Parse the operation syntax: HMSG <subject> <sid> [reply-to]

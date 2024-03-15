@@ -489,7 +489,7 @@ class CoreNatsTests: XCTestCase {
 
         do {
             let _ = try await client.request("request".data(using: .utf8)!, to: "service")
-        } catch NatsRequestError.timeout {
+        } catch NatsRequestError.noResponders {
             try await client.close()
             return
         }

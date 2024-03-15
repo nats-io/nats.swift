@@ -19,6 +19,31 @@ public struct NatsMessage {
     public let replySubject: String?
     public let length: Int
     public let headers: HeaderMap?
-    public let status: UInt16?
+    public let status: StatusCode?
     public let description: String?
+}
+
+public struct StatusCode: Equatable {
+    public static let noResponders = StatusCode(503)
+
+    let value: UInt16
+
+    init?(_ value: UInt16) {
+        if !(100..<1000 ~= value) {
+            return nil
+        }
+
+        self.value = value
+    }
+
+    init?(_ value: any StringProtocol) {
+        guard let status = UInt16(value) else {
+            return nil
+        }
+        if !(100..<1000 ~= status) {
+            return nil
+        }
+        
+        self.value = status
+    }
 }

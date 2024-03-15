@@ -167,7 +167,7 @@ extension Data {
                         if versionLineSuffix.count > 0 {
                             let statusAndDesc = versionLineSuffix.split(
                                 separator: " ", maxSplits: 1)
-                            guard let status = UInt16(statusAndDesc[0]) else {
+                            guard let status = StatusCode(statusAndDesc[0]) else {
                                 throw NatsParserError("could not parse status parameter")
                             }
                             msg.status = status
