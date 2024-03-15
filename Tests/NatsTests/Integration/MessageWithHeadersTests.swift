@@ -17,7 +17,6 @@ import XCTest
 
 @testable import Nats
 
-
 class TestMessageWithHeadersTests: XCTestCase {
 
     static var allTests = [

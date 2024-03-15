@@ -109,10 +109,12 @@ extension Client {
         try await connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
         connectionHandler.channel?.flush()
         if let message = await response.makeAsyncIterator().next() {
+            if let status = message.status, status == StatusCode.noResponders {
+                throw NatsRequestError.noResponders
+            }
             return message
         } else {
             throw NatsClientError("response subscription closed")
-
         }
     }
 

@@ -45,3 +45,17 @@ struct NatsConfigError: NatsError {
         self.description = description
     }
 }
+
+public enum NatsRequestError: NatsError {
+    case noResponders
+    case timeout
+
+    public var description: String {
+        switch self {
+        case .noResponders:
+            return "no responders available for request"
+        case .timeout:
+            return "request timed out"
+        }
+    }
+}
