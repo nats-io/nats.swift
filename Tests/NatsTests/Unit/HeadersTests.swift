@@ -22,31 +22,31 @@ class HeadersTests: XCTestCase {
         ("testSubscript", testSubscript),
         ("testInsert", testInsert),
         ("testSerialize", testSerialize),
-        ("testValidHeaderName", testValidHeaderName),
-        ("testDollarHeaderName", testDollarHeaderName),
-        ("testInvalidHeaderName", testInvalidHeaderName),
-        ("testInvalidHeaderNameWithSpecialCharacters", testInvalidHeaderNameWithSpecialCharacters),
+        ("testValidNatsHeaderName", testValidNatsHeaderName),
+        ("testDollarNatsHeaderName", testDollarNatsHeaderName),
+        ("testInvalidNatsHeaderName", testInvalidNatsHeaderName),
+        ("testInvalidNatsHeaderNameWithSpecialCharacters", testInvalidNatsHeaderNameWithSpecialCharacters),
 
     ]
 
     func testAppend() {
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
-        XCTAssertEqual(hm.getAll(try! HeaderName("foo")), [HeaderValue("bar"), HeaderValue("baz")])
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        XCTAssertEqual(hm.getAll(try! NatsHeaderName("foo")), [NatsHeaderValue("bar"), NatsHeaderValue("baz")])
     }
 
     func testInsert() {
         var hm = NatsHeaderMap()
-        hm.insert(try! HeaderName("foo"), HeaderValue("bar"))
-        XCTAssertEqual(hm.getAll(try! HeaderName("foo")), [HeaderValue("bar")])
+        hm.insert(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        XCTAssertEqual(hm.getAll(try! NatsHeaderName("foo")), [NatsHeaderValue("bar")])
     }
 
     func testSerialize() {
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
-        hm.insert(try! HeaderName("bar"), HeaderValue("foo"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm.insert(try! NatsHeaderName("bar"), NatsHeaderValue("foo"))
 
         let expected = "NATS/1.0\r\nfoo:bar\r\nfoo:baz\r\nbar:foo\r\n\r\n"
         let byteArray: [UInt8] = Array(expected.utf8)
@@ -54,38 +54,38 @@ class HeadersTests: XCTestCase {
         XCTAssertEqual(hm.toBytes(), byteArray)
     }
 
-    func testValidHeaderName() {
-        XCTAssertNoThrow(try HeaderName("X-Custom-Header"))
+    func testValidNatsHeaderName() {
+        XCTAssertNoThrow(try NatsHeaderName("X-Custom-Header"))
     }
 
-    func testDollarHeaderName() {
-        XCTAssertNoThrow(try HeaderName("$Dollar"))
+    func testDollarNatsHeaderName() {
+        XCTAssertNoThrow(try NatsHeaderName("$Dollar"))
     }
 
-    func testInvalidHeaderName() {
-        XCTAssertThrowsError(try HeaderName("Invalid Header Name"))
+    func testInvalidNatsHeaderName() {
+        XCTAssertThrowsError(try NatsHeaderName("Invalid Header Name"))
     }
 
-    func testInvalidHeaderNameWithSpecialCharacters() {
-        XCTAssertThrowsError(try HeaderName("Invalid:Header:Name"))
+    func testInvalidNatsHeaderNameWithSpecialCharacters() {
+        XCTAssertThrowsError(try NatsHeaderName("Invalid:Header:Name"))
     }
 
     func testSubscript() {
         var hm = NatsHeaderMap()
 
         // Test setting a value
-        hm[try! HeaderName("foo")] = HeaderValue("bar")
-        XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("bar"))
+        hm[try! NatsHeaderName("foo")] = NatsHeaderValue("bar")
+        XCTAssertEqual(hm[try! NatsHeaderName("foo")], NatsHeaderValue("bar"))
 
         // Test updating existing value
-        hm[try! HeaderName("foo")] = HeaderValue("baz")
-        XCTAssertEqual(hm[try! HeaderName("foo")], HeaderValue("baz"))
+        hm[try! NatsHeaderName("foo")] = NatsHeaderValue("baz")
+        XCTAssertEqual(hm[try! NatsHeaderName("foo")], NatsHeaderValue("baz"))
 
         // Test retrieving non-existing value (should be nil or default)
-        XCTAssertNil(hm[try! HeaderName("non-existing")])
+        XCTAssertNil(hm[try! NatsHeaderName("non-existing")])
 
         // Test removal of a value
-        hm[try! HeaderName("foo")] = nil
-        XCTAssertNil(hm[try! HeaderName("foo")])
+        hm[try! NatsHeaderName("foo")] = nil
+        XCTAssertNil(hm[try! NatsHeaderName("foo")])
     }
 }

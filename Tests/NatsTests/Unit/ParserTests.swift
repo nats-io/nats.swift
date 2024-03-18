@@ -40,9 +40,9 @@ class ParserTests: XCTestCase {
             return "Test case: \(index)\n Input: \(name)"
         }
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("h1"), HeaderValue("X"))
-        hm.append(try! HeaderName("h1"), HeaderValue("Y"))
-        hm.append(try! HeaderName("h2"), HeaderValue("Z"))
+        hm.append(try! NatsHeaderName("h1"), NatsHeaderValue("X"))
+        hm.append(try! NatsHeaderName("h1"), NatsHeaderValue("Y"))
+        hm.append(try! NatsHeaderName("h2"), NatsHeaderValue("Z"))
 
         let testCases = [
             TestCase(

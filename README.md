@@ -104,7 +104,7 @@ message with headers:
 let data = "message text".data(using: .utf8)!
 
 var headers = NatsHeaderMap()
-headers.append(try! HeaderName("X-Example"), HeaderValue("example value"))
+headers.append(try! NatsHeaderName("X-Example"), NatsHeaderValue("example value"))
 
 try nats.publish(data, subject: "foo.msg.1", headers: headers)
 ```
@@ -132,7 +132,7 @@ for try await msg in subscription {
     }
 
     if let headers = msg.headers {
-        if let headerValue = headers.get(try! HeaderName("X-Example")) {
+        if let headerValue = headers.get(try! NatsHeaderName("X-Example")) {
             print("  header: X-Example: \(headerValue.description)")
         }
     }

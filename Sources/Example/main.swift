@@ -46,7 +46,7 @@ let loop = Task {
         }
 
         if let headers = msg.headers {
-            if let headerValue = headers.get(try! HeaderName("X-Example")) {
+            if let headerValue = headers.get(try! NatsHeaderName("X-Example")) {
                 print("  header: X-Example: \(headerValue.description)")
             }
         }
@@ -58,7 +58,7 @@ let loop = Task {
 print("publishing data...")
 for i in 1...3 {
     var headers = NatsHeaderMap()
-    headers.append(try! HeaderName("X-Example"), HeaderValue("example value"))
+    headers.append(try! NatsHeaderName("X-Example"), NatsHeaderValue("example value"))
 
     if let data = "data\(i)".data(using: .utf8) {
         try await nats.publish(data, subject: "foo.\(i)", headers: headers)
