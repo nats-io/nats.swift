@@ -43,7 +43,7 @@ public struct StatusCode: Equatable {
         if !(100..<1000 ~= status) {
             return nil
         }
-        
+
         self.value = status
     }
 }

@@ -22,7 +22,7 @@ public class Subscription: AsyncSequence {
     internal var max: UInt64?
     internal var delivered: UInt64 = 0
     internal let sid: UInt64
-    
+
     private var buffer: [Element]
     private let capacity: UInt64
     private var closed = false
@@ -93,7 +93,7 @@ public class Subscription: AsyncSequence {
                     return
                 }
 
-                delivered+=1
+                delivered += 1
                 if let message = buffer.first {
                     buffer.removeFirst()
                     continuation.resume(returning: message)
