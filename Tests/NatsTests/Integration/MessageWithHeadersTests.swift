@@ -44,7 +44,7 @@ class TestMessageWithHeadersTests: XCTestCase {
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
 
-        try client.publish("hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
+        try await client.publish("hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
 
         let iter = sub.makeAsyncIterator()
         let msg = await iter.next()

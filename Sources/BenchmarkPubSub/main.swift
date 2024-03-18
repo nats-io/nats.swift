@@ -23,7 +23,7 @@ let data = "foo".data(using: .utf8)!
 // Warmup
 print("Warming up...")
 for _ in 0..<10_000 {
-    try! nats.publish(data, subject: "foo")
+    try! await nats.publish(data, subject: "foo")
 }
 print("Starting benchmark...")
 let now = DispatchTime.now()
@@ -64,7 +64,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
         for i in 0..<numMsgs {
-            try nats.publish("\(i)".data(using: .utf8)!, subject: "foo", headers: hm)
+            try await nats.publish("\(i)".data(using: .utf8)!, subject: "foo", headers: hm)
             if i % 1000 == 0 {
                 print("published \(i) msgs")
             }
