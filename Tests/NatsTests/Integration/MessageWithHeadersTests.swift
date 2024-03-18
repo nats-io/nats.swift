@@ -40,9 +40,9 @@ class TestMessageWithHeadersTests: XCTestCase {
         let sub = try await client.subscribe(subject: "foo")
 
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
-        hm.insert(try! HeaderName("another"), HeaderValue("one"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm.insert(try! NatsHeaderName("another"), NatsHeaderValue("one"))
 
         try await client.publish(
             "hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)

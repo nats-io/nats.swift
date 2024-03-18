@@ -14,7 +14,7 @@
 import Foundation
 
 // Represents NATS header field value in Swift.
-public struct HeaderValue: Equatable, CustomStringConvertible {
+public struct NatsHeaderValue: Equatable, CustomStringConvertible {
     private var inner: String
 
     public init(_ value: String) {
@@ -26,7 +26,7 @@ public struct HeaderValue: Equatable, CustomStringConvertible {
     }
 }
 
-public enum ParseHeaderNameError: NatsError {
+public enum ParseNatsHeaderNameError: NatsError {
     case invalidCharacter
 
     public var description: String {
@@ -39,12 +39,12 @@ public enum ParseHeaderNameError: NatsError {
 }
 
 // Custom header representation in Swift
-public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
+public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
     private var inner: String
 
     public init(_ value: String) throws {
         if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
-            throw ParseHeaderNameError.invalidCharacter
+            throw ParseNatsHeaderNameError.invalidCharacter
         }
         self.inner = value
     }
@@ -54,14 +54,14 @@ public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
     }
 
     // Example of standard headers
-    public static let natsStream = try! HeaderName("Nats-Stream")
-    public static let natsSequence = try! HeaderName("Nats-Sequence")
+    public static let natsStream = try! NatsHeaderName("Nats-Stream")
+    public static let natsSequence = try! NatsHeaderName("Nats-Sequence")
     // Add other standard headers as needed...
 }
 
 // Represents a NATS header map in Swift.
 public struct NatsHeaderMap: Equatable {
-    private var inner: [HeaderName: [HeaderValue]]
+    private var inner: [NatsHeaderName: [NatsHeaderValue]]
 
     public init() {
         self.inner = [:]
@@ -71,11 +71,11 @@ public struct NatsHeaderMap: Equatable {
         return inner.isEmpty
     }
 
-    public mutating func insert(_ name: HeaderName, _ value: HeaderValue) {
+    public mutating func insert(_ name: NatsHeaderName, _ value: NatsHeaderValue) {
         self.inner[name] = [value]
     }
 
-    public mutating func append(_ name: HeaderName, _ value: HeaderValue) {
+    public mutating func append(_ name: NatsHeaderName, _ value: NatsHeaderValue) {
         if inner[name] != nil {
             inner[name]?.append(value)
         } else {
@@ -83,11 +83,11 @@ public struct NatsHeaderMap: Equatable {
         }
     }
 
-    public func get(_ name: HeaderName) -> HeaderValue? {
+    public func get(_ name: NatsHeaderName) -> NatsHeaderValue? {
         return inner[name]?.first
     }
 
-    public func getAll(_ name: HeaderName) -> [HeaderValue] {
+    public func getAll(_ name: NatsHeaderName) -> [NatsHeaderValue] {
         return inner[name] ?? []
     }
 
@@ -109,7 +109,7 @@ public struct NatsHeaderMap: Equatable {
 }
 
 extension NatsHeaderMap {
-    subscript(name: HeaderName) -> HeaderValue? {
+    subscript(name: NatsHeaderName) -> NatsHeaderValue? {
         get {
             return get(name)
         }

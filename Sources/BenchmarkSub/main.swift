@@ -27,8 +27,8 @@ var now = DispatchTime.now()
 let numMsgs = 1_000_000
 let sub = try await nats.subscribe(subject: "foo").makeAsyncIterator()
 var hm = NatsHeaderMap()
-hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-hm.append(try! HeaderName("foo"), HeaderValue("baz"))
+hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
 for i in 1...numMsgs {
     let msg = await sub.next()
     if i == 0 {

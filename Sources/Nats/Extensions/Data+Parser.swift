@@ -180,8 +180,8 @@ extension Data {
                             let headerParts = header.split(separator: ":")
                             if headerParts.count == 2 {
                                 headers.append(
-                                    try HeaderName(String(headerParts[0])),
-                                    HeaderValue(String(headerParts[1])))
+                                    try NatsHeaderName(String(headerParts[0])),
+                                    NatsHeaderValue(String(headerParts[1])))
                             } else {
                                 logger.error("Error parsing header: \(header)")
                             }

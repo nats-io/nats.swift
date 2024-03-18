@@ -32,9 +32,9 @@ let sub = try await nats.subscribe(subject: "foo")
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask {
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
-        hm.insert(try! HeaderName("another"), HeaderValue("one"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm.insert(try! NatsHeaderName("another"), NatsHeaderValue("one"))
         var i = 0
         for await msg in sub {
             let payload = msg.payload!
@@ -60,9 +60,9 @@ try await withThrowingTaskGroup(of: Void.self) { group in
 
     group.addTask {
         var hm = NatsHeaderMap()
-        hm.append(try! HeaderName("foo"), HeaderValue("bar"))
-        hm.append(try! HeaderName("foo"), HeaderValue("baz"))
-        hm.insert(try! HeaderName("another"), HeaderValue("one"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm.insert(try! NatsHeaderName("another"), NatsHeaderValue("one"))
         for i in 0..<numMsgs {
             try await nats.publish("\(i)".data(using: .utf8)!, subject: "foo", headers: hm)
             if i % 1000 == 0 {
