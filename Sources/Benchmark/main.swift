@@ -14,7 +14,7 @@
 import Foundation
 import Nats
 
-let nats = ClientOptions()
+let nats = NatsClientOptions()
     .url(URL(string: "nats://localhost:4222")!)
     .build()
 print("Connecting...")

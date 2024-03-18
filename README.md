@@ -53,7 +53,7 @@ Here is a quick start example to see everything at a glance:
 import Nats
 
 // create the client
-let nats = ClientOptions().url(URL(string: "nats://localhost:4222")!).build()
+let nats = NatsClientOptions().url(URL(string: "nats://localhost:4222")!).build()
 
 // connect to the server
 try await nats.connect()
@@ -77,7 +77,7 @@ This example demonstrates how to connect to a NATS server using the default sett
 running locally on the default port (4222). You can also customize your connection by specifying additional options:
 
 ```swift
-let nats = ClientOptions()
+let nats = NatsClientOptions()
     .url(URL(string: "nats://localhost:4222")!)
     .build()
 
@@ -103,7 +103,7 @@ message with headers:
 ```swift
 let data = "message text".data(using: .utf8)!
 
-var headers = HeaderMap()
+var headers = NatsHeaderMap()
 headers.append(try! HeaderName("X-Example"), HeaderValue("example value"))
 
 try nats.publish(data, subject: "foo.msg.1", headers: headers)
@@ -156,7 +156,7 @@ The default log level is `.info`. You can set it to see more or less verbose mes
  You can also monitor when your app connects, disconnects, or encounters an error using events:
 
 ```swift
-let nats = ClientOptions()
+let nats = NatsClientOptions()
     .url(URL(string: "nats://localhost:4222")!)
     .build()
 

@@ -14,7 +14,7 @@
 import Foundation
 import Nats
 
-let nats = ClientOptions().url(URL(string: "nats://localhost:4222")!).build()
+let nats = NatsClientOptions().url(URL(string: "nats://localhost:4222")!).build()
 print("Connecting...")
 try! await nats.connect()
 print("Connected!")
@@ -26,7 +26,7 @@ print("Waiting for first message...")
 var now = DispatchTime.now()
 let numMsgs = 1_000_000
 let sub = try await nats.subscribe(to: "foo").makeAsyncIterator()
-var hm = HeaderMap()
+var hm = NatsHeaderMap()
 hm.append(try! HeaderName("foo"), HeaderValue("bar"))
 hm.append(try! HeaderName("foo"), HeaderValue("baz"))
 for i in 1...numMsgs {

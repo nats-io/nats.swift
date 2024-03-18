@@ -16,7 +16,7 @@ import Nats
 
 print("\n### Setup NATS Connection")
 
-let nats = ClientOptions()
+let nats = NatsClientOptions()
     .url(URL(string: "nats://localhost:4222")!)
     .build()
 
@@ -57,7 +57,7 @@ let loop = Task {
 
 print("publishing data...")
 for i in 1...3 {
-    var headers = HeaderMap()
+    var headers = NatsHeaderMap()
     headers.append(try! HeaderName("X-Example"), HeaderValue("example value"))
 
     if let data = "data\(i)".data(using: .utf8) {
