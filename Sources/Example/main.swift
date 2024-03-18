@@ -30,7 +30,7 @@ try await nats.connect()
 print("\n### Publish / Subscribe")
 
 print("subscribing...")
-let sub = try await nats.subscribe(to: "foo.>")
+let sub = try await nats.subscribe(subject: "foo.>")
 
 let loop = Task {
     print("starting message loop...")
