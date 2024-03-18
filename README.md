@@ -2,9 +2,7 @@
 
 [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Faus-der-Technik%2Fswifty-nats%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/aus-der-Technik/swifty-nats) [![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Faus-der-Technik%2Fswifty-nats%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/aus-der-Technik/swifty-nats)
 
-# NATS Swift Client _(Preview)_
-
-**This version is currently in preview and is not recommended for production use.**
+# NATS Swift Client
 
 Welcome to the [Swift](https://www.swift.org) Client for [NATS](https://nats.io),
 your gateway to asynchronous messaging in Swift applications. This client library
