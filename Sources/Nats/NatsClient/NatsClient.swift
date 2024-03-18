@@ -93,11 +93,12 @@ extension Client {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
-        try await connectionHandler.write(operation: ClientOp.publish((subject, reply, payload, headers)))
+        try await connectionHandler.write(
+            operation: ClientOp.publish((subject, reply, payload, headers)))
     }
 
     public func request(
-        _ payload: Data, to: String, timeout: TimeInterval = 5, headers: HeaderMap? = nil
+        _ payload: Data, to: String, headers: HeaderMap? = nil, timeout: TimeInterval = 5
     ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {
@@ -106,16 +107,39 @@ extension Client {
         let inbox = "_INBOX.\(nextNuid())"
 
         let response = try await connectionHandler.subscribe(inbox)
-        try await connectionHandler.write(operation: ClientOp.publish((to, inbox, payload, headers)))
-        connectionHandler.channel?.flush()
-        if let message = await response.makeAsyncIterator().next() {
-            if let status = message.status, status == StatusCode.noResponders {
-                throw NatsRequestError.noResponders
-            }
-            return message
-        } else {
-            throw NatsClientError("response subscription closed")
-        }
+        try await response.unsubscribe(after: 1)
+        try await connectionHandler.write(
+            operation: ClientOp.publish((to, inbox, payload, headers)))
+
+        return try await withThrowingTaskGroup(
+            of: NatsMessage?.self,
+            body: { group in
+                group.addTask {
+                    return await response.makeAsyncIterator().next()
+                }
+
+                // task for the timeout
+                group.addTask {
+                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                    return nil
+                }
+
+                for try await result in group {
+                    // if the result is not empty, return it (or throw status error)
+                    if let msg = result {
+                        if let status = msg.status, status == StatusCode.noResponders {
+                            throw NatsRequestError.noResponders
+                        }
+                        return msg
+                    } else {
+                        // if result is empty, time out
+                        throw NatsRequestError.timeout
+                    }
+                }
+
+                // this should not be reachable
+                throw NatsClientError("internal error; error waiting for response")
+            })
     }
 
     public func flush() async throws {

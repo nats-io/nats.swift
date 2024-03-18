@@ -37,6 +37,7 @@ class CoreNatsTests: XCTestCase {
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
+        ("testRequest_timeout", testRequest_timeout),
     ]
     var natsServer = NatsServer()
 
@@ -212,7 +213,7 @@ class CoreNatsTests: XCTestCase {
         var i = 0
         for await msg in sub {
             print(msg)
-            i+=1
+            i += 1
         }
         XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
         try await client.close()
@@ -535,5 +536,32 @@ class CoreNatsTests: XCTestCase {
         }
 
         XCTFail("Expected no responders")
+    }
+
+    func testRequest_timeout() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+
+        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let service = try await client.subscribe(to: "service")
+        Task {
+            for await msg in service {
+                sleep(2)
+                try await client.publish(
+                    "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
+            }
+        }
+        do {
+            let _ = try await client.request(
+                "request".data(using: .utf8)!, to: "service", timeout: 1)
+        } catch NatsRequestError.timeout {
+            try await service.unsubscribe()
+            try await client.close()
+            return
+        }
+
+        XCTFail("Expected timeout")
     }
 }

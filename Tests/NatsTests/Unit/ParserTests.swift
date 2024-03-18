@@ -133,7 +133,8 @@ class ParserTests: XCTestCase {
                     .hMessage(
                         HMessageInbound(
                             subject: "foo", sid: 1, payload: nil, headers: HeaderMap(),
-                            headersLength: 30, length: 30, status: StatusCode.noResponders, description: "no responders"
+                            headersLength: 30, length: 30, status: StatusCode.noResponders,
+                            description: "no responders"
                         )
                     )
                 ]
@@ -147,7 +148,8 @@ class ParserTests: XCTestCase {
                     .hMessage(
                         HMessageInbound(
                             subject: "foo", sid: 1, payload: "hello".data(using: .utf8)!,
-                            headers: hm, headersLength: 48, length: 53, status: StatusCode.noResponders,
+                            headers: hm, headersLength: 48, length: 53,
+                            status: StatusCode.noResponders,
                             description: "no responders")
                     )
                 ]
