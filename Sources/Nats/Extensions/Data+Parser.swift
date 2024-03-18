@@ -141,7 +141,7 @@ extension Data {
                     if msg.length > msg.headersLength {
                         payload = Data()
                     }
-                    var headers = HeaderMap()
+                    var headers = NatsHeaderMap()
 
                     // if the whole msg length (including training crlf) is longer
                     // than the remaining chunk, break and return the remainder

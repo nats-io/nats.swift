@@ -30,20 +30,20 @@ class HeadersTests: XCTestCase {
     ]
 
     func testAppend() {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         XCTAssertEqual(hm.getAll(try! HeaderName("foo")), [HeaderValue("bar"), HeaderValue("baz")])
     }
 
     func testInsert() {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.insert(try! HeaderName("foo"), HeaderValue("bar"))
         XCTAssertEqual(hm.getAll(try! HeaderName("foo")), [HeaderValue("bar")])
     }
 
     func testSerialize() {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("bar"), HeaderValue("foo"))
@@ -71,7 +71,7 @@ class HeadersTests: XCTestCase {
     }
 
     func testSubscript() {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
 
         // Test setting a value
         hm[try! HeaderName("foo")] = HeaderValue("bar")

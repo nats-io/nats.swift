@@ -16,7 +16,7 @@ import Foundation
 import NIO
 import NIOFoundationCompat
 
-public class ClientOptions {
+public class NatsClientOptions {
     private var urls: [URL] = []
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
@@ -32,32 +32,32 @@ public class ClientOptions {
 
     public init() {}
 
-    public func urls(_ urls: [URL]) -> ClientOptions {
+    public func urls(_ urls: [URL]) -> NatsClientOptions {
         self.urls = urls
         return self
     }
 
-    public func url(_ url: URL) -> ClientOptions {
+    public func url(_ url: URL) -> NatsClientOptions {
         self.urls = [url]
         return self
     }
 
-    public func pingInterval(_ pingInterval: TimeInterval) -> ClientOptions {
+    public func pingInterval(_ pingInterval: TimeInterval) -> NatsClientOptions {
         self.pingInterval = pingInterval
         return self
     }
 
-    public func reconnectWait(_ reconnectWait: TimeInterval) -> ClientOptions {
+    public func reconnectWait(_ reconnectWait: TimeInterval) -> NatsClientOptions {
         self.reconnectWait = reconnectWait
         return self
     }
 
-    public func maxReconnects(_ maxReconnects: Int) -> ClientOptions {
+    public func maxReconnects(_ maxReconnects: Int) -> NatsClientOptions {
         self.maxReconnects = maxReconnects
         return self
     }
 
-    public func usernameAndPassword(_ username: String, _ password: String) -> ClientOptions {
+    public func usernameAndPassword(_ username: String, _ password: String) -> NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth(user: username, password: password)
         } else {
@@ -67,7 +67,7 @@ public class ClientOptions {
         return self
     }
 
-    public func token(_ token: String) -> ClientOptions {
+    public func token(_ token: String) -> NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth(token: token)
         } else {
@@ -76,7 +76,7 @@ public class ClientOptions {
         return self
     }
 
-    public func credentialsFile(_ credentials: URL) -> ClientOptions {
+    public func credentialsFile(_ credentials: URL) -> NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth.fromCredentials(credentials)
         } else {
@@ -85,39 +85,39 @@ public class ClientOptions {
         return self
     }
 
-    public func requireTls() -> ClientOptions {
+    public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
     }
 
-    public func withTlsFirst() -> ClientOptions {
+    public func withTlsFirst() -> NatsClientOptions {
         self.tlsFirst = true
         return self
     }
 
-    public func rootCertificates(_ rootCertificate: URL) -> ClientOptions {
+    public func rootCertificates(_ rootCertificate: URL) -> NatsClientOptions {
         self.rootCertificate = rootCertificate
         return self
     }
 
-    public func clientCertificate(_ clientCertificate: URL, _ clientKey: URL) -> ClientOptions {
+    public func clientCertificate(_ clientCertificate: URL, _ clientKey: URL) -> NatsClientOptions {
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
         return self
     }
 
-    public func retainServersOrder() -> ClientOptions {
+    public func retainServersOrder() -> NatsClientOptions {
         self.noRandomize = true
         return self
     }
 
-    public func retryOnfailedConnect() -> ClientOptions {
+    public func retryOnfailedConnect() -> NatsClientOptions {
         self.initialReconnect = true
         return self
     }
 
-    public func build() -> Client {
-        let client = Client()
+    public func build() -> NatsClient {
+        let client = NatsClient()
         client.connectionHandler = ConnectionHandler(
             inputBuffer: client.buffer,
             urls: urls,

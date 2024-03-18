@@ -49,7 +49,7 @@ class CoreNatsTests: XCTestCase {
     func testRtt() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
@@ -63,7 +63,7 @@ class CoreNatsTests: XCTestCase {
     func testPublish() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
@@ -86,7 +86,7 @@ class CoreNatsTests: XCTestCase {
     func testConnectMultipleURLsOneIsValid() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .urls([
                 URL(string: natsServer.clientURL)!, URL(string: "nats://localhost:4344")!,
                 URL(string: "nats://localhost:4343")!,
@@ -115,7 +115,7 @@ class CoreNatsTests: XCTestCase {
         natsServer2.start()
         logger.logLevel = .debug
         for _ in 0..<10 {
-            let client = ClientOptions()
+            let client = NatsClientOptions()
                 .urls([URL(string: natsServer2.clientURL)!, URL(string: natsServer.clientURL)!])
                 .retainServersOrder()
                 .build()
@@ -126,7 +126,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testRetryOnFailedConnect() async throws {
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: "nats://localhost:4321")!)
             .reconnectWait(1)
             .retryOnfailedConnect()
@@ -148,7 +148,7 @@ class CoreNatsTests: XCTestCase {
     func testPublishWithReply() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
@@ -170,7 +170,7 @@ class CoreNatsTests: XCTestCase {
     func testSubscribe() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(to: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
@@ -183,7 +183,7 @@ class CoreNatsTests: XCTestCase {
     func testUnsubscribe() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(to: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
@@ -202,7 +202,7 @@ class CoreNatsTests: XCTestCase {
     func testUnsubscribeAfter() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(to: "test")
         try await sub.unsubscribe(after: 3)
@@ -222,7 +222,7 @@ class CoreNatsTests: XCTestCase {
     func testConnect() async throws {
         natsServer.start()
         logger.logLevel = .debug
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
@@ -234,7 +234,7 @@ class CoreNatsTests: XCTestCase {
         let port = natsServer.port!
         logger.logLevel = .debug
 
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .reconnectWait(1)
             .build()
@@ -302,7 +302,7 @@ class CoreNatsTests: XCTestCase {
             testsDir
             .appendingPathComponent("Integration/Resources/creds.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .usernameAndPassword("derek", "s3cr3t")
             .maxReconnects(5)
@@ -314,7 +314,7 @@ class CoreNatsTests: XCTestCase {
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
-        let badCertsClient = ClientOptions()
+        let badCertsClient = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .usernameAndPassword("derek", "badpassword")
             .maxReconnects(5)
@@ -339,7 +339,7 @@ class CoreNatsTests: XCTestCase {
             testsDir
             .appendingPathComponent("Integration/Resources/token.conf", isDirectory: false)
         natsServer.start(cfg: resourceURL.path)
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .token("s3cr3t")
             .maxReconnects(5)
@@ -351,7 +351,7 @@ class CoreNatsTests: XCTestCase {
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
-        let badCertsClient = ClientOptions()
+        let badCertsClient = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .token("badtoken")
             .maxReconnects(5)
@@ -380,7 +380,7 @@ class CoreNatsTests: XCTestCase {
         let credsURL = testsDir.appendingPathComponent(
             "Integration/Resources/TestUser.creds", isDirectory: false)
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).credentialsFile(
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).credentialsFile(
             credsURL
         ).build()
         try await client.connect()
@@ -402,7 +402,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start(cfg: resourceURL.path)
         let certsURL = testsDir.appendingPathComponent(
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
@@ -432,7 +432,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start(cfg: resourceURL.path)
         let certsURL = testsDir.appendingPathComponent(
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
@@ -463,7 +463,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start(cfg: resourceURL.path)
         let certsURL = testsDir.appendingPathComponent(
             "Integration/Resources/certs/rootCA.pem", isDirectory: false)
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
@@ -486,7 +486,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
         let expectation = XCTestExpectation(
             description: "client was not notified of connection established event")
@@ -505,7 +505,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
         let service = try await client.subscribe(to: "service")
@@ -525,7 +525,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
         do {

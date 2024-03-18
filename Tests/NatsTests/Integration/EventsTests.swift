@@ -36,7 +36,7 @@ class TestNatsEvents: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
         let expectation = XCTestExpectation(
             description: "client was not notified of connection established event")
@@ -54,7 +54,7 @@ class TestNatsEvents: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
         let expectation = XCTestExpectation(
             description: "client was not notified of connection closed event")
@@ -73,7 +73,7 @@ class TestNatsEvents: XCTestCase {
         let port = natsServer.port!
         logger.logLevel = .debug
 
-        let client = ClientOptions()
+        let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .reconnectWait(1)
             .build()

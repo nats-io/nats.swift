@@ -60,7 +60,7 @@ public struct HeaderName: Equatable, Hashable, CustomStringConvertible {
 }
 
 // Represents a NATS header map in Swift.
-public struct HeaderMap: Equatable {
+public struct NatsHeaderMap: Equatable {
     private var inner: [HeaderName: [HeaderValue]]
 
     public init() {
@@ -108,7 +108,7 @@ public struct HeaderMap: Equatable {
     }
 }
 
-extension HeaderMap {
+extension NatsHeaderMap {
     subscript(name: HeaderName) -> HeaderValue? {
         get {
             return get(name)

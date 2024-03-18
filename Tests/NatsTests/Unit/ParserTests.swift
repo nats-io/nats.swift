@@ -39,7 +39,7 @@ class ParserTests: XCTestCase {
         let fail: ((Int, String) -> String) = { index, name in
             return "Test case: \(index)\n Input: \(name)"
         }
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.append(try! HeaderName("h1"), HeaderValue("X"))
         hm.append(try! HeaderName("h1"), HeaderValue("Y"))
         hm.append(try! HeaderName("h2"), HeaderValue("Z"))
@@ -132,7 +132,7 @@ class ParserTests: XCTestCase {
                 expectedOps: [
                     .hMessage(
                         HMessageInbound(
-                            subject: "foo", sid: 1, payload: nil, headers: HeaderMap(),
+                            subject: "foo", sid: 1, payload: nil, headers: NatsHeaderMap(),
                             headersLength: 30, length: 30, status: StatusCode.noResponders,
                             description: "no responders"
                         )

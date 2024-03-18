@@ -20,7 +20,7 @@ import Nuid
 
 var logger = Logger(label: "Nats")
 
-/// Client connection states
+/// NatsClient connection states
 public enum NatsState {
     case pending
     case connected
@@ -52,7 +52,7 @@ public struct Auth {
     }
 }
 
-public class Client {
+public class NatsClient {
     public var connectedUrl: URL? {
         connectionHandler?.connectedUrl
     }
@@ -65,7 +65,7 @@ public class Client {
     }
 }
 
-extension Client {
+extension NatsClient {
     public func connect() async throws {
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
@@ -87,7 +87,7 @@ extension Client {
     }
 
     public func publish(
-        _ payload: Data, subject: String, reply: String? = nil, headers: HeaderMap? = nil
+        _ payload: Data, subject: String, reply: String? = nil, headers: NatsHeaderMap? = nil
     ) async throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
@@ -98,7 +98,7 @@ extension Client {
     }
 
     public func request(
-        _ payload: Data, to: String, headers: HeaderMap? = nil, timeout: TimeInterval = 5
+        _ payload: Data, to: String, headers: NatsHeaderMap? = nil, timeout: TimeInterval = 5
     ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {

@@ -13,7 +13,7 @@
 
 import Foundation
 
-extension Client {
+extension NatsClient {
     @discardableResult
     public func on(_ events: [NatsEventKind], _ handler: @escaping (NatsEvent) -> Void) -> String {
         guard let connectionHandler = self.connectionHandler else {

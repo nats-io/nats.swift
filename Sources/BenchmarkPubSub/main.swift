@@ -14,7 +14,7 @@
 import Foundation
 import Nats
 
-let nats = ClientOptions().urls([URL(string: "nats://localhost:4222")!]).build()
+let nats = NatsClientOptions().urls([URL(string: "nats://localhost:4222")!]).build()
 print("Connecting...")
 try! await nats.connect()
 print("Connected!")
@@ -31,7 +31,7 @@ let numMsgs = 1_000_000
 let sub = try await nats.subscribe(to: "foo")
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
@@ -59,7 +59,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
     }
 
     group.addTask {
-        var hm = HeaderMap()
+        var hm = NatsHeaderMap()
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
         hm.append(try! HeaderName("foo"), HeaderValue("baz"))
         hm.insert(try! HeaderName("another"), HeaderValue("one"))
