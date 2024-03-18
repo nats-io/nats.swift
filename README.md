@@ -57,10 +57,10 @@ let nats = NatsClientOptions().url(URL(string: "nats://localhost:4222")!).build(
 try await nats.connect()
 
 // subscribe to a subject
-let subscription = try await nats.subscribe(to: "events.>")
+let subscription = try await nats.subscribe(subject: "events.>")
 
 // publish a message
-try nats.publish("my event".data(using: .utf8)!, subject: "events.example")
+try await nats.publish("my event".data(using: .utf8)!, subject: "events.example")
 
 // receive published messages
 for await msg in subscriptions {
@@ -90,7 +90,7 @@ asynchronously. This example shows how to publish a simple text message to a spe
 
 ```swift
 let data = "message text".data(using: .utf8)!
-try nats.publish(data, subject: "foo.msg")
+try await nats.publish(data, subject: "foo.msg")
 ```
 
 In more complex scenarios, you might want to include additional metadata with your messages in
@@ -104,7 +104,7 @@ let data = "message text".data(using: .utf8)!
 var headers = NatsHeaderMap()
 headers.append(try! NatsHeaderName("X-Example"), NatsHeaderValue("example value"))
 
-try nats.publish(data, subject: "foo.msg.1", headers: headers)
+try await nats.publish(data, subject: "foo.msg.1", headers: headers)
 ```
 
 ### Subscribing to Subjects
@@ -117,7 +117,7 @@ incoming messages as they are received.
 
 
 ```swift
-let subscription = try await nats.subscribe(to: "foo.>")
+let subscription = try await nats.subscribe(subject: "foo.>")
 
 for try await msg in subscription {
 
