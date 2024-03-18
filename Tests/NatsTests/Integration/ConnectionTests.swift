@@ -79,7 +79,7 @@ class CoreNatsTests: XCTestCase {
             }
         }
         await fulfillment(of: [expectation], timeout: 5.0)
-        await sub.complete()
+        sub.complete()
         try await client.close()
     }
 
@@ -105,7 +105,7 @@ class CoreNatsTests: XCTestCase {
             }
         }
         await fulfillment(of: [expectation], timeout: 5.0)
-        await sub.complete()
+        sub.complete()
         try await client.close()
     }
 
