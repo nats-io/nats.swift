@@ -67,7 +67,7 @@ class CoreNatsTests: XCTestCase {
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
 
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
@@ -93,7 +93,7 @@ class CoreNatsTests: XCTestCase {
             ])
             .build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
 
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
@@ -152,7 +152,7 @@ class CoreNatsTests: XCTestCase {
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
 
         try await client.publish("msg".data(using: .utf8)!, subject: "test", reply: "reply")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
@@ -172,7 +172,7 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
@@ -185,7 +185,7 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         var message = await iter.next()
@@ -204,7 +204,7 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
-        let sub = try await client.subscribe(to: "test")
+        let sub = try await client.subscribe(subject: "test")
         try await sub.unsubscribe(after: 3)
         for _ in 0..<5 {
             try await client.publish("msg".data(using: .utf8)!, subject: "test")
@@ -245,7 +245,7 @@ class CoreNatsTests: XCTestCase {
         let payload = "hello".data(using: .utf8)!
 
         var messagesReceived = 0
-        let sub = try! await client.subscribe(to: "foo")
+        let sub = try! await client.subscribe(subject: "foo")
 
         // publish some messages
         Task {
@@ -310,7 +310,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        _ = try await client.subscribe(to: "test")
+        _ = try await client.subscribe(subject: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
@@ -347,7 +347,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        _ = try await client.subscribe(to: "test")
+        _ = try await client.subscribe(subject: "test")
         XCTAssertNotNil(client, "Client should not be nil")
 
         // Test if client with bad credentials throws an error
@@ -384,7 +384,7 @@ class CoreNatsTests: XCTestCase {
             credsURL
         ).build()
         try await client.connect()
-        let subscribe = try await client.subscribe(to: "foo").makeAsyncIterator()
+        let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
         let message = await subscribe.next()
         print("message: \(message!.subject)")
@@ -416,7 +416,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        _ = try await client.subscribe(to: "test")
+        _ = try await client.subscribe(subject: "test")
         XCTAssertNotNil(client, "Client should not be nil")
     }
 
@@ -447,7 +447,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         try await client.flush()
-        _ = try await client.subscribe(to: "test")
+        _ = try await client.subscribe(subject: "test")
         XCTAssertNotNil(client, "Client should not be nil")
     }
 
@@ -508,14 +508,14 @@ class CoreNatsTests: XCTestCase {
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
-        let service = try await client.subscribe(to: "service")
+        let service = try await client.subscribe(subject: "service")
         Task {
             for await msg in service {
                 try await client.publish(
                     "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
             }
         }
-        let response = try await client.request("request".data(using: .utf8)!, to: "service")
+        let response = try await client.request("request".data(using: .utf8)!, subject: "service")
         XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
 
         try await client.close()
@@ -529,7 +529,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         do {
-            let _ = try await client.request("request".data(using: .utf8)!, to: "service")
+            let _ = try await client.request("request".data(using: .utf8)!, subject: "service")
         } catch NatsRequestError.noResponders {
             try await client.close()
             return
@@ -542,10 +542,10 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         logger.logLevel = .debug
 
-        let client = ClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
-        let service = try await client.subscribe(to: "service")
+        let service = try await client.subscribe(subject: "service")
         Task {
             for await msg in service {
                 sleep(2)
@@ -555,7 +555,7 @@ class CoreNatsTests: XCTestCase {
         }
         do {
             let _ = try await client.request(
-                "request".data(using: .utf8)!, to: "service", timeout: 1)
+                "request".data(using: .utf8)!, subject: "service", timeout: 1)
         } catch NatsRequestError.timeout {
             try await service.unsubscribe()
             try await client.close()

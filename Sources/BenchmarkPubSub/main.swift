@@ -28,7 +28,7 @@ for _ in 0..<10_000 {
 print("Starting benchmark...")
 let now = DispatchTime.now()
 let numMsgs = 1_000_000
-let sub = try await nats.subscribe(to: "foo")
+let sub = try await nats.subscribe(subject: "foo")
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask {
         var hm = NatsHeaderMap()

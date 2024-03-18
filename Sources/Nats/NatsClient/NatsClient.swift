@@ -98,7 +98,7 @@ extension NatsClient {
     }
 
     public func request(
-        _ payload: Data, to: String, headers: NatsHeaderMap? = nil, timeout: TimeInterval = 5
+        _ payload: Data, subject: String, headers: NatsHeaderMap? = nil, timeout: TimeInterval = 5
     ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {
@@ -109,7 +109,7 @@ extension NatsClient {
         let response = try await connectionHandler.subscribe(inbox)
         try await response.unsubscribe(after: 1)
         try await connectionHandler.write(
-            operation: ClientOp.publish((to, inbox, payload, headers)))
+            operation: ClientOp.publish((subject, inbox, payload, headers)))
 
         return try await withThrowingTaskGroup(
             of: NatsMessage?.self,
@@ -150,7 +150,7 @@ extension NatsClient {
         connectionHandler.channel?.flush()
     }
 
-    public func subscribe(to subject: String) async throws -> Subscription {
+    public func subscribe(subject: String) async throws -> Subscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")

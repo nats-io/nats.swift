@@ -37,7 +37,7 @@ class TestMessageWithHeadersTests: XCTestCase {
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
-        let sub = try await client.subscribe(to: "foo")
+        let sub = try await client.subscribe(subject: "foo")
 
         var hm = NatsHeaderMap()
         hm.append(try! HeaderName("foo"), HeaderValue("bar"))
