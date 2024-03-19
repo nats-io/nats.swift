@@ -1,5 +1,12 @@
 ![NATS Swift Client](./Resources/Logo@256.png)
 
+[![License Apache 2](https://img.shields.io/badge/License-Apache2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fnats-io%2Fnats.swift%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/nats-io/nats.swift)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2Fnats-io%2Fnats.swift%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/nats-io/nats.swift)
+
+
+
+
 # NATS Swift Client
 
 Welcome to the [Swift](https://www.swift.org) Client for [NATS](https://nats.io),
