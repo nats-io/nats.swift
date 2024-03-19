@@ -5,7 +5,8 @@ import PackageDescription
 let package = Package(
     name: "nats-swift",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v13),
+        .iOS(.v16)
     ],
     products: [
         .library(name: "Nats", targets: ["Nats"])
