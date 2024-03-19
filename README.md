@@ -14,6 +14,13 @@ your gateway to asynchronous messaging in Swift applications. This client librar
 is designed to provide Swift developers with a seamless interface to NATS
 messaging, enabling swift and efficient communication across distributed systems.
 
+## Features
+
+Currently, the client supports **Core NATS** with auth, TLS, lame duck mode and more.
+
+JetStream, KV, Object Store, Service API are on the roadmap.
+
+
 ## Support
 
 Join the [#swift](https://natsio.slack.com/channels/swift) channel on nats.io Slack.
