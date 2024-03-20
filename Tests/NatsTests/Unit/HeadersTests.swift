@@ -48,10 +48,10 @@ class HeadersTests: XCTestCase {
         hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
         hm.insert(try! NatsHeaderName("bar"), NatsHeaderValue("foo"))
 
-        let expected = "NATS/1.0\r\nfoo:bar\r\nfoo:baz\r\nbar:foo\r\n\r\n"
-        let byteArray: [UInt8] = Array(expected.utf8)
+        let expected = ["NATS/1.0\r\nfoo:bar\r\nfoo:baz\r\nbar:foo\r\n\r\n",
+                        "NATS/1.0\r\nbar:foo\r\nfoo:bar\r\nfoo:baz\r\n\r\n"]
 
-        XCTAssertEqual(hm.toBytes(), byteArray)
+        XCTAssertTrue(expected.contains(String(bytes: hm.toBytes(), encoding: .utf8)!))
     }
 
     func testValidNatsHeaderName() {
