@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [ main, release/*, feature/* ]
+  pull_request:
+    branches: [ main, release/* ]
+
+jobs:
+  macos:
+    runs-on: macos-13
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+    - name: Install nats-server
+      run: curl --fail https://binaries.nats.dev/nats-io/nats-server/v2@latest | PREFIX='/usr/local/bin' sh
+    - name: Check nats-server version
+      run: nats-server -v
+    - name: List schemes
+      run: xcodebuild -list
+    - name: Build
+      run: xcodebuild build -scheme Nats -destination 'platform=macOS,arch=x86_64'
+    - name: Test
+      run: swift test
+  ios:
+    runs-on: macos-13
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+    - name: Build
+      run: xcodebuild build -scheme Nats -destination generic/platform=ios
+  check-linter:
+    runs-on: macos-13
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+    - name: Install swift-format
+      run: brew install swift-format
+    - name: Run check
+      run: swift-format lint --configuration .swift-format -r --strict Sources Tests
