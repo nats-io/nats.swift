@@ -368,7 +368,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
-        let _ = await subscribe.next()
+        _ = await subscribe.next()
     }
 
     func testMutualTls() async throws {
@@ -513,7 +513,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         do {
-            let _ = try await client.request("request".data(using: .utf8)!, subject: "service")
+            _ = try await client.request("request".data(using: .utf8)!, subject: "service")
         } catch NatsRequestError.noResponders {
             try await client.close()
             return
@@ -538,7 +538,7 @@ class CoreNatsTests: XCTestCase {
             }
         }
         do {
-            let _ = try await client.request(
+            _ = try await client.request(
                 "request".data(using: .utf8)!, subject: "service", timeout: 1)
         } catch NatsRequestError.timeout {
             try await service.unsubscribe()
