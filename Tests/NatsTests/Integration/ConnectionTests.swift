@@ -377,8 +377,10 @@ class CoreNatsTests: XCTestCase {
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
-        let cfgFile = try createConfigFileFromTemplate(templateURL: bundle.url(forResource: "tls", withExtension: "conf")!, args: [serverCert, serverKey, rootCA])
-        natsServer.start(cfg:cfgFile.relativePath)
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
 
         let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
         let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
@@ -406,8 +408,10 @@ class CoreNatsTests: XCTestCase {
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
-        let cfgFile = try createConfigFileFromTemplate(templateURL: bundle.url(forResource: "tls_first", withExtension: "conf")!, args: [serverCert, serverKey, rootCA])
-        natsServer.start(cfg:cfgFile.relativePath)
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls_first", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
 
         let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
         let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
@@ -436,8 +440,10 @@ class CoreNatsTests: XCTestCase {
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
-        let cfgFile = try createConfigFileFromTemplate(templateURL: bundle.url(forResource: "tls", withExtension: "conf")!, args: [serverCert, serverKey, rootCA])
-        natsServer.start(cfg:cfgFile.relativePath)
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
 
         let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
         let invalidCert = bundle.url(forResource: "client-cert-invalid", withExtension: "pem")!
@@ -548,7 +554,8 @@ class CoreNatsTests: XCTestCase {
         let config = String(format: templateContent, arguments: args.map { $0 as CVarArg })
 
         let tempDirectoryURL = FileManager.default.temporaryDirectory
-        let tempFileURL = tempDirectoryURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("conf")
+        let tempFileURL = tempDirectoryURL.appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("conf")
 
         // Write the filled content to the temp file
         try config.write(to: tempFileURL, atomically: true, encoding: .utf8)

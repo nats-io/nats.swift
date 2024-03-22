@@ -113,7 +113,8 @@ internal struct HMessageInbound: Equatable {
             let headersLength = Int(String(decoding: lengthHeaders, as: UTF8.self)) ?? 0
             let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
             return HMessageInbound(
-                subject: subject, sid: sid, reply: replySubject, payload: nil, headers: NatsHeaderMap(),
+                subject: subject, sid: sid, reply: replySubject, payload: nil,
+                headers: NatsHeaderMap(),
                 headersLength: headersLength, length: length)
         }
 
