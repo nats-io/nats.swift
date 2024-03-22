@@ -102,10 +102,14 @@ class BatchBuffer {
                     self.isWriteInProgress = false
                     switch result {
                     case .success:
-                        self.waitingPromises.forEach { $0.succeed(()) }
+                        for promise in self.waitingPromises {
+                            promise.succeed(())
+                        }
                         self.waitingPromises.removeAll()
                     case .failure(let error):
-                        self.waitingPromises.forEach { $0.fail(error) }
+                        for promise in self.waitingPromises {
+                            promise.fail(error)
+                        }
                         self.waitingPromises.removeAll()
                     }
 

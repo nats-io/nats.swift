@@ -294,14 +294,9 @@ class CoreNatsTests: XCTestCase {
 
     func testUsernameAndPassword() async throws {
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/creds.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "creds", withExtension: "conf")!.relativePath)
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .usernameAndPassword("derek", "s3cr3t")
@@ -331,14 +326,9 @@ class CoreNatsTests: XCTestCase {
 
     func testTokenAuth() async throws {
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/token.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "token", withExtension: "conf")!.relativePath)
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .token("s3cr3t")
@@ -367,50 +357,42 @@ class CoreNatsTests: XCTestCase {
 
     func testCredentialsAuth() async throws {
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/jwt.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
-        print("server started with file: \(resourceURL.path)")
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "jwt", withExtension: "conf")!.relativePath)
 
-        let credsURL = testsDir.appendingPathComponent(
-            "Integration/Resources/TestUser.creds", isDirectory: false)
+        let creds = bundle.url(forResource: "TestUser", withExtension: "creds")!
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).credentialsFile(
-            credsURL
+            creds
         ).build()
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
-        let message = await subscribe.next()
-        print("message: \(message!.subject)")
+        _ = await subscribe.next()
     }
 
     func testMutualTls() async throws {
+        let bundle = Bundle.module
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/tls.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
-        let certsURL = testsDir.appendingPathComponent(
-            "Integration/Resources/certs/rootCA.pem", isDirectory: false)
+        let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
+        let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
+        let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
+        let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
+        let clientKey = bundle.url(forResource: "client-key", withExtension: "pem")!
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-cert.pem", isDirectory: false),
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-key.pem", isDirectory: false)
+                clientCert,
+                clientKey
             )
             .build()
         try await client.connect()
@@ -421,26 +403,27 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testTlsFirst() async throws {
+        let bundle = Bundle.module
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/tls_first.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
-        let certsURL = testsDir.appendingPathComponent(
-            "Integration/Resources/certs/rootCA.pem", isDirectory: false)
+        let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
+        let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
+        let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls_first", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
+        let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
+        let clientKey = bundle.url(forResource: "client-key", withExtension: "pem")!
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-cert.pem", isDirectory: false),
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-key.pem", isDirectory: false)
+                clientCert,
+                clientKey
             )
             .withTlsFirst()
             .build()
@@ -452,26 +435,27 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testInvalidCertificate() async throws {
+        let bundle = Bundle.module
         logger.logLevel = .debug
-        let currentFile = URL(fileURLWithPath: #file)
-        // Navigate up to the Tests directory
-        let testsDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
-        // Construct the path to the resource
-        let resourceURL =
-            testsDir
-            .appendingPathComponent("Integration/Resources/tls.conf", isDirectory: false)
-        natsServer.start(cfg: resourceURL.path)
-        let certsURL = testsDir.appendingPathComponent(
-            "Integration/Resources/certs/rootCA.pem", isDirectory: false)
+        let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
+        let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
+        let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "tls", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
+        let invalidCert = bundle.url(forResource: "client-cert-invalid", withExtension: "pem")!
+        let invalidKey = bundle.url(forResource: "client-key-invalid", withExtension: "pem")!
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .requireTls()
             .rootCertificates(certsURL)
             .clientCertificate(
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-cert-invalid.pem", isDirectory: false),
-                testsDir.appendingPathComponent(
-                    "Integration/Resources/certs/client-key-invalid.pem", isDirectory: false)
+                invalidCert,
+                invalidKey
             )
             .build()
         do {
@@ -529,7 +513,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         do {
-            let _ = try await client.request("request".data(using: .utf8)!, subject: "service")
+            _ = try await client.request("request".data(using: .utf8)!, subject: "service")
         } catch NatsRequestError.noResponders {
             try await client.close()
             return
@@ -554,7 +538,7 @@ class CoreNatsTests: XCTestCase {
             }
         }
         do {
-            let _ = try await client.request(
+            _ = try await client.request(
                 "request".data(using: .utf8)!, subject: "service", timeout: 1)
         } catch NatsRequestError.timeout {
             try await service.unsubscribe()
@@ -564,4 +548,20 @@ class CoreNatsTests: XCTestCase {
 
         XCTFail("Expected timeout")
     }
+
+    func createConfigFileFromTemplate(templateURL: URL, args: [String]) throws -> URL {
+        let templateContent = try String(contentsOf: templateURL, encoding: .utf8)
+        let config = String(format: templateContent, arguments: args.map { $0 as CVarArg })
+
+        let tempDirectoryURL = FileManager.default.temporaryDirectory
+        let tempFileURL = tempDirectoryURL.appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("conf")
+
+        // Write the filled content to the temp file
+        try config.write(to: tempFileURL, atomically: true, encoding: .utf8)
+
+        // Return the URL of the newly created temp file
+        return tempFileURL
+    }
+
 }

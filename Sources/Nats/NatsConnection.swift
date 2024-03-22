@@ -598,10 +598,9 @@ extension ConnectionHandler {
         let eventKind = event.kind()
         guard let handlerStore = self.eventHandlerStore[eventKind] else { return }
 
-        handlerStore.forEach {
-            $0.handler(event)
+        for handler in handlerStore {
+            handler.handler(event)
         }
-
     }
 
     internal func addListeners(
