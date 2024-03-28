@@ -11,27 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Foundation
 import NIOCore
 
 internal class RttCommand {
-    let startTime = ContinuousClock().now
-    let promise: EventLoopPromise<Duration>?
+    let startTime = DispatchTime.now()
+    let promise: EventLoopPromise<TimeInterval>?
 
     static func makeFrom(channel: Channel?) -> RttCommand {
-        RttCommand(promise: channel?.eventLoop.makePromise(of: Duration.self))
+        RttCommand(promise: channel?.eventLoop.makePromise(of: TimeInterval.self))
     }
 
-    private init(promise: EventLoopPromise<Duration>?) {
+    private init(promise: EventLoopPromise<TimeInterval>?) {
         self.promise = promise
     }
 
     func setRoundTripTime() {
-        let now: ContinuousClock.Instant = ContinuousClock().now
-        let rtt: Duration = now - startTime
+        let now = DispatchTime.now()
+        let nanoTime = now.uptimeNanoseconds - startTime.uptimeNanoseconds
+        let rtt = TimeInterval(nanoTime) / 1_000_000_000  // Convert nanos to seconds
         promise?.succeed(rtt)
     }
 
-    func getRoundTripTime() async throws -> Duration {
-        try await promise?.futureResult.get() ?? Duration.zero
+    func getRoundTripTime() async throws -> TimeInterval {
+        try await promise?.futureResult.get() ?? 0
     }
 }

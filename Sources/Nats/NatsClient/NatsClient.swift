@@ -158,7 +158,7 @@ extension NatsClient {
         return try await connectionHandler.subscribe(subject)
     }
 
-    public func rtt() async throws -> Duration {
+    public func rtt() async throws -> TimeInterval {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
         }
