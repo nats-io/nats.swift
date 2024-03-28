@@ -61,7 +61,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
-    private var batchBuffer: BatchBuffer?
+    private(set) var batchBuffer: BatchBuffer?
 
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
@@ -72,7 +72,7 @@ class ConnectionHandler: ChannelInboundHandler {
     ) {
         self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        self.group = .singleton
         self.inputBuffer = allocator.buffer(capacity: 1024)
         self.subscriptions = [UInt64: Subscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
@@ -256,8 +256,8 @@ class ConnectionHandler: ChannelInboundHandler {
         let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval * 1_000_000_000))
         self.pingTask = channel.eventLoop.scheduleRepeatedTask(
             initialDelay: pingInterval, delay: pingInterval
-        ) { [weak self] task in
-            Task { [weak self] in await self?.sendPing() }
+        ) { _ in
+            Task { await self.sendPing() }
         }
         logger.debug("connection established")
         return
@@ -424,7 +424,6 @@ class ConnectionHandler: ChannelInboundHandler {
         self.state = .closed
         try await disconnect()
         self.fire(.closed)
-        try await self.group.shutdownGracefully()
     }
 
     func disconnect() async throws {
@@ -552,15 +551,11 @@ class ConnectionHandler: ChannelInboundHandler {
         guard let allocator = self.channel?.allocator else {
             throw NatsClientError("internal error: no allocator")
         }
-        let payload = try operation.asBytes(using: allocator)
-        try await self.writeMessage(payload)
-    }
 
-    func writeMessage(_ message: ByteBuffer) async throws {
         guard let buffer = self.batchBuffer else {
             throw NatsClientError("not connected")
         }
-        try await buffer.write(message.readableBytesView)
+        try await buffer.writeMessage(operation)
     }
 
     internal func subscribe(_ subject: String) async throws -> Subscription {

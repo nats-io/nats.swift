@@ -60,6 +60,20 @@ public class NatsClient {
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
 
+    internal var batchBuffer: BatchBuffer? {
+        self.connectionHandler?.batchBuffer
+    }
+
+    public var writeStallsForBufferSpace: Int {
+        self.batchBuffer!.writeStallsForBufferSpace
+    }
+    public var writeStallCurrentlyWriting: Int {
+        self.batchBuffer!.writeStallCurrentlyWriting
+    }
+    public var totalFlushes: Int {
+        self.batchBuffer!.totalFlushes
+    }
+
     internal init() {
         self.buffer = allocator.buffer(capacity: 1024)
     }

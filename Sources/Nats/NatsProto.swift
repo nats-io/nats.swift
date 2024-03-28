@@ -14,22 +14,24 @@
 import Foundation
 import NIO
 
-internal enum NatsOperation: String {
-    case connect = "CONNECT"
-    case subscribe = "SUB"
-    case unsubscribe = "UNSUB"
-    case publish = "PUB"
-    case hpublish = "HPUB"
-    case message = "MSG"
-    case hmessage = "HMSG"
-    case info = "INFO"
-    case ok = "+OK"
-    case error = "-ERR"
-    case ping = "PING"
-    case pong = "PONG"
+internal struct NatsOperation: RawRepresentable, Hashable {
+    let rawValue: String
 
-    var rawBytes: [UInt8] {
-        return Array(self.rawValue.utf8)
+    static let connect = NatsOperation(rawValue: "CONNECT")
+    static let subscribe = NatsOperation(rawValue: "SUB")
+    static let unsubscribe = NatsOperation(rawValue: "UNSUB")
+    static let publish = NatsOperation(rawValue: "PUB")
+    static let hpublish = NatsOperation(rawValue: "HPUB")
+    static let message = NatsOperation(rawValue: "MSG")
+    static let hmessage = NatsOperation(rawValue: "HMSG")
+    static let info = NatsOperation(rawValue: "INFO")
+    static let ok = NatsOperation(rawValue: "+OK")
+    static let error = NatsOperation(rawValue: "-ERR")
+    static let ping = NatsOperation(rawValue: "PING")
+    static let pong = NatsOperation(rawValue: "PONG")
+
+    var rawBytes: String.UTF8View {
+        self.rawValue.utf8
     }
 
     static func allOperations() -> [NatsOperation] {
@@ -54,7 +56,9 @@ enum ServerOp {
             throw NatsParserError(
                 "unable to parse inbound message: \(String(data: msg, encoding: .utf8)!)")
         }
-        let msgType = msg.getMessageType()
+        guard let msgType = msg.getMessageType() else {
+            throw NatsParserError("unknown server op: \(String(data: msg, encoding: .utf8)!)")
+        }
         switch msgType {
         case .message:
             return try message(MessageInbound.parse(data: msg))
@@ -247,6 +251,78 @@ struct ServerInfo: Codable, Equatable {
     }
 }
 
+extension ByteBuffer {
+    mutating func writeClientOp(_ op: ClientOp) {
+        switch op {
+        case .publish((let subject, let reply, let payload, let headers)):
+            if let payload = payload {
+                self.reserveCapacity(
+                    minimumWritableBytes: payload.count + subject.utf8.count
+                        + NatsOperation.publish.rawValue.count + 12)
+                if headers != nil {
+                    self.writeBytes(NatsOperation.hpublish.rawBytes)
+                } else {
+                    self.writeBytes(NatsOperation.publish.rawBytes)
+                }
+                self.writeString(" ")
+                self.writeString(subject)
+                self.writeString(" ")
+                if let reply = reply {
+                    self.writeString("\(reply) ")
+                }
+                if let headers = headers {
+                    let headers = headers.toBytes()
+                    let totalLen = headers.count + payload.count
+                    let headersLen = headers.count
+                    self.writeString("\(headersLen) \(totalLen)\r\n")
+                    self.writeData(headers)
+                } else {
+                    self.writeString("\(payload.count)\r\n")
+                }
+                self.writeData(payload)
+                self.writeString("\r\n")
+            } else {
+                self.reserveCapacity(
+                    minimumWritableBytes: subject.utf8.count + NatsOperation.publish.rawValue.count
+                        + 12)
+                self.writeBytes(NatsOperation.publish.rawBytes)
+                self.writeString(" ")
+                self.writeString(subject)
+                if let reply = reply {
+                    self.writeString("\(reply) ")
+                }
+                self.writeString("\r\n")
+            }
+
+        case .subscribe((let sid, let subject, let queue)):
+            if let queue {
+                self.writeString(
+                    "\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n")
+            } else {
+                self.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(sid)\r\n")
+            }
+
+        case .unsubscribe((let sid, let max)):
+            if let max {
+                self.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid) \(max)\r\n")
+            } else {
+                self.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid)\r\n")
+            }
+        case .connect(let info):
+            // This encode can't actually fail
+            let json = try! JSONEncoder().encode(info)
+            self.reserveCapacity(minimumWritableBytes: json.count + 5)
+            self.writeString("\(NatsOperation.connect.rawValue) ")
+            self.writeData(json)
+            self.writeString("\r\n")
+        case .ping:
+            self.writeString("\(NatsOperation.ping.rawValue)\r\n")
+        case .pong:
+            self.writeString("\(NatsOperation.pong.rawValue)\r\n")
+        }
+    }
+}
+
 enum ClientOp {
     case publish((subject: String, reply: String?, payload: Data?, headers: NatsHeaderMap?))
     case subscribe((sid: UInt64, subject: String, queue: String?))
@@ -254,81 +330,6 @@ enum ClientOp {
     case connect(ConnectInfo)
     case ping
     case pong
-
-    internal func asBytes(using allocator: ByteBufferAllocator) throws -> ByteBuffer {
-        var buffer: ByteBuffer
-        switch self {
-        case .publish((let subject, let reply, let payload, let headers)):
-            if let payload = payload {
-                buffer = allocator.buffer(
-                    capacity: payload.count + subject.utf8.count
-                        + NatsOperation.publish.rawValue.count + 12)
-                if headers != nil {
-                    buffer.writeData(NatsOperation.hpublish.rawBytes)
-                } else {
-                    buffer.writeData(NatsOperation.publish.rawBytes)
-                }
-                buffer.writeString(" ")
-                buffer.writeString(subject)
-                buffer.writeString(" ")
-                if let reply = reply {
-                    buffer.writeString("\(reply) ")
-                }
-                if let headers = headers {
-                    let headers = headers.toBytes()
-                    let totalLen = headers.count + payload.count
-                    let headersLen = headers.count
-                    buffer.writeString("\(headersLen) \(totalLen)\r\n")
-                    buffer.writeData(headers)
-                } else {
-                    buffer.writeString("\(payload.count)\r\n")
-                }
-                buffer.writeData(payload)
-                buffer.writeString("\r\n")
-            } else {
-                buffer = allocator.buffer(
-                    capacity: subject.utf8.count + NatsOperation.publish.rawValue.count + 12)
-                buffer.writeData(NatsOperation.publish.rawBytes)
-                buffer.writeString(" ")
-                buffer.writeString(subject)
-                if let reply = reply {
-                    buffer.writeString("\(reply) ")
-                }
-                buffer.writeString("\r\n")
-            }
-
-        case .subscribe((let sid, let subject, let queue)):
-            buffer = allocator.buffer(capacity: 0)
-            if let queue {
-                buffer.writeString(
-                    "\(NatsOperation.subscribe.rawValue) \(subject) \(queue) \(sid)\r\n")
-            } else {
-                buffer.writeString("\(NatsOperation.subscribe.rawValue) \(subject) \(sid)\r\n")
-            }
-
-        case .unsubscribe((let sid, let max)):
-            buffer = allocator.buffer(capacity: 0)
-            if let max {
-                buffer.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid) \(max)\r\n")
-            } else {
-                buffer.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid)\r\n")
-            }
-        case .connect(let info):
-            let json = try JSONEncoder().encode(info)
-            buffer = allocator.buffer(capacity: json.count + 5)
-            buffer.writeString("\(NatsOperation.connect.rawValue) ")
-            buffer.writeData(json)
-            buffer.writeString("\r\n")
-            return buffer
-        case .ping:
-            buffer = allocator.buffer(capacity: 8)
-            buffer.writeString("\(NatsOperation.ping.rawValue)\r\n")
-        case .pong:
-            buffer = allocator.buffer(capacity: 8)
-            buffer.writeString("\(NatsOperation.pong.rawValue)\r\n")
-        }
-        return buffer
-    }
 }
 
 /// Info to construct a CONNECT message.

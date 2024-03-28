@@ -12,6 +12,7 @@
 // limitations under the License.
 
 import Foundation
+import NIOCore
 import Nats
 
 let nats = NatsClientOptions()
@@ -38,3 +39,6 @@ let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
 let msgsPerSec: Double = Double(numMsgs) / (Double(elapsed) / 1_000_000_000)
 print("Elapsed: \(elapsed / 1_000_000)ms")
 print("\(msgsPerSec) msgs/s")
+print("Write stalls for buffer space: \(nats.writeStallsForBufferSpace)")
+print("Write stalls for currently writing: \(nats.writeStallCurrentlyWriting)")
+print("Total flushes: \(nats.totalFlushes)")

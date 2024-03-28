@@ -38,7 +38,7 @@ let package = Package(
         ),
 
         .executableTarget(name: "bench", dependencies: ["Nats"]),
-        .executableTarget(name: "Benchmark", dependencies: ["Nats"]),
+        .executableTarget(name: "Benchmark", dependencies: ["Nats", .product(name: "NIOCore", package: "swift-nio")]),
         .executableTarget(name: "BenchmarkPubSub", dependencies: ["Nats"]),
         .executableTarget(name: "BenchmarkSub", dependencies: ["Nats"]),
         .executableTarget(name: "Example", dependencies: ["Nats"]),
