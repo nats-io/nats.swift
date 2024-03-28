@@ -54,8 +54,8 @@ class CoreNatsTests: XCTestCase {
             .build()
         try await client.connect()
 
-        let rtt: Duration = try await client.rtt()
-        XCTAssertGreaterThan(rtt, Duration.zero, "should have RTT")
+        let rtt: TimeInterval = try await client.rtt()
+        XCTAssertGreaterThan(rtt, 0, "should have RTT")
 
         try await client.close()
     }

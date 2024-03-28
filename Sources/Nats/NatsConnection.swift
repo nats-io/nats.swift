@@ -288,7 +288,7 @@ class ConnectionHandler: ChannelInboundHandler {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
-                context: sslContext, serverHostname: s.host())
+                context: sslContext, serverHostname: s.host)
             try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
         }
 
@@ -375,7 +375,7 @@ class ConnectionHandler: ChannelInboundHandler {
                         let sslContext = try NIOSSLContext(
                             configuration: tlsConfig)
                         let sslHandler = try NIOSSLClientHandler(
-                            context: sslContext, serverHostname: server.host()!)
+                            context: sslContext, serverHostname: server.host!)
                         //Fixme(jrm): do not ignore error from addHandler future.
                         channel.pipeline.addHandler(sslHandler).flatMap { _ in
                             channel.pipeline.addHandler(self)
