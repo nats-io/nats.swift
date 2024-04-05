@@ -30,7 +30,7 @@ for _ in 0..<10_000 {
 }
 print("Starting benchmark...")
 let now = DispatchTime.now()
-let numMsgs = 10_000_000
+let numMsgs = 100_000
 for _ in 0..<numMsgs {
     try! await nats.publish(data, subject: "foo")
 }
@@ -39,6 +39,3 @@ let elapsed = DispatchTime.now().uptimeNanoseconds - now.uptimeNanoseconds
 let msgsPerSec: Double = Double(numMsgs) / (Double(elapsed) / 1_000_000_000)
 print("Elapsed: \(elapsed / 1_000_000)ms")
 print("\(msgsPerSec) msgs/s")
-print("Write stalls for buffer space: \(nats.writeStallsForBufferSpace)")
-print("Write stalls for currently writing: \(nats.writeStallCurrentlyWriting)")
-print("Total flushes: \(nats.totalFlushes)")

@@ -548,10 +548,6 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func write(operation: ClientOp) async throws {
-        guard let allocator = self.channel?.allocator else {
-            throw NatsClientError("internal error: no allocator")
-        }
-
         guard let buffer = self.batchBuffer else {
             throw NatsClientError("not connected")
         }

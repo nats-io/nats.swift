@@ -17,63 +17,30 @@ import NIOConcurrencyHelpers
 
 extension BatchBuffer {
     struct State {
-        enum Index {
-            case first
-            case second
-        }
-
-        private var firstBuffer: ByteBuffer
-        private var secondBuffer: ByteBuffer
-        var index: Index = .first
+        private var buffer: ByteBuffer
+        private var allocator: ByteBufferAllocator
         var waitingPromises: [(ClientOp, UnsafeContinuation<Void, Error>)] = []
         var isWriteInProgress: Bool = false
-        var writeStallsForBufferSpace = 0
-        var writeStallCurrentlyWriting = 0
-        var totalFlushes = 0
 
-        internal init(firstBuffer: ByteBuffer, secondBuffer: ByteBuffer) {
-            self.firstBuffer = firstBuffer
-            self.secondBuffer = secondBuffer
+        internal init(allocator: ByteBufferAllocator, batchSize: Int = 16 * 1024) {
+            self.allocator = allocator
+            self.buffer = allocator.buffer(capacity: batchSize)
         }
 
         var readableBytes: Int {
-            switch index {
-            case .first:
-                return self.firstBuffer.readableBytes
-            case .second:
-                return self.secondBuffer.readableBytes
-            }
-        }
-
-        mutating func clear() {
-            self.firstBuffer.clear()
-            self.secondBuffer.clear()
+            return self.buffer.readableBytes
         }
 
         mutating func getWriteBuffer() -> ByteBuffer {
-            switch index {
-                case .first:
-                    index = .second
-                    self.secondBuffer.moveReaderIndex(to: 0)
-                    self.secondBuffer.moveWriterIndex(to: 0)
-                    let buffer = self.firstBuffer
-                    return buffer
-                case .second:
-                    index = .first
-                    self.firstBuffer.moveReaderIndex(to: 0)
-                    self.firstBuffer.moveWriterIndex(to: 0)
-                    let buffer = self.secondBuffer
-                    return buffer
-            }
+            var writeBuffer = allocator.buffer(capacity: buffer.readableBytes)
+            writeBuffer.writeBytes(buffer.readableBytesView)
+            buffer.clear()
+
+            return writeBuffer
         }
 
         mutating func writeMessage(_ message: ClientOp) {
-            switch index {
-            case .first:
-                self.firstBuffer.writeClientOp(message)
-            case .second:
-                self.secondBuffer.writeClientOp(message)
-            }
+            self.buffer.writeClientOp(message)
         }
     }
 }
@@ -82,29 +49,12 @@ internal class BatchBuffer {
     private let batchSize: Int
     private let channel: Channel
     private let state: NIOLockedValueBox<State>
-    var writeStallsForBufferSpace: Int {
-        self.state.withLockedValue {
-            $0.writeStallsForBufferSpace
-        }
-    }
-    var writeStallCurrentlyWriting: Int {
-        self.state.withLockedValue {
-            $0.writeStallCurrentlyWriting
-        }
-    }
-    var totalFlushes: Int {
-        self.state.withLockedValue {
-            $0.totalFlushes
-        }
-    }
 
     init(channel: Channel, batchSize: Int = 16 * 1024) {
         self.batchSize = batchSize
         self.channel = channel
         self.state = .init(
-            State(
-                firstBuffer: channel.allocator.buffer(capacity: batchSize),
-                secondBuffer: channel.allocator.buffer(capacity: batchSize))
+            State(allocator: channel.allocator)
         )
     }
 
@@ -123,7 +73,6 @@ internal class BatchBuffer {
             try await withUnsafeThrowingContinuation { continuation in
                 self.state.withLockedValue { state in
                     guard state.readableBytes < self.batchSize else {
-                        state.writeStallsForBufferSpace &+= 1
                         state.waitingPromises.append((message, continuation))
                         return
                     }
@@ -137,20 +86,12 @@ internal class BatchBuffer {
         #endif
     }
 
-    func clear() {
-        self.state.withLockedValue {
-            $0.clear()
-        }
-    }
-
     private func flushWhenIdle(state: inout State) {
         // The idea is to keep writing to the buffer while a writeAndFlush() is
         // in progress, so we can batch as many messages as possible.
         guard !state.isWriteInProgress else {
-            state.writeStallCurrentlyWriting &+= 1
             return
         }
-        state.totalFlushes &+= 1
         // We need a separate write buffer so we can free the message buffer for more
         // messages to be collected.
         let writeBuffer = state.getWriteBuffer()
