@@ -52,14 +52,18 @@ extension BatchBuffer {
 
         mutating func getWriteBuffer() -> ByteBuffer {
             switch index {
-            case .first:
-                index = .second
-                self.secondBuffer.clear()
-                return self.firstBuffer
-            case .second:
-                index = .first
-                self.firstBuffer.clear()
-                return self.secondBuffer
+                case .first:
+                    index = .second
+                    self.secondBuffer.moveReaderIndex(to: 0)
+                    self.secondBuffer.moveWriterIndex(to: 0)
+                    let buffer = self.firstBuffer
+                    return buffer
+                case .second:
+                    index = .first
+                    self.firstBuffer.moveReaderIndex(to: 0)
+                    self.firstBuffer.moveWriterIndex(to: 0)
+                    let buffer = self.secondBuffer
+                    return buffer
             }
         }
 
