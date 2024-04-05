@@ -12,7 +12,6 @@
 // limitations under the License.
 
 import Foundation
-import NIOCore
 import Nats
 
 let nats = NatsClientOptions()
@@ -30,7 +29,7 @@ for _ in 0..<10_000 {
 }
 print("Starting benchmark...")
 let now = DispatchTime.now()
-let numMsgs = 100_000
+let numMsgs = 1_000_000
 for _ in 0..<numMsgs {
     try! await nats.publish(data, subject: "foo")
 }

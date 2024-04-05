@@ -60,10 +60,6 @@ public class NatsClient {
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
 
-    internal var batchBuffer: BatchBuffer? {
-        self.connectionHandler?.batchBuffer
-    }
-
     internal init() {
         self.buffer = allocator.buffer(capacity: 1024)
     }

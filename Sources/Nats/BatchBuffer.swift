@@ -109,7 +109,9 @@ internal class BatchBuffer {
                     }
                     state.waitingPromises.removeAll()
                 case .failure(let error):
-                    state.waitingPromises.forEach { $0.1.resume(throwing: error) }
+                    for promise in state.waitingPromises {
+                        promise.1.resume(throwing: error)
+                    }
                     state.waitingPromises.removeAll()
                 }
 
