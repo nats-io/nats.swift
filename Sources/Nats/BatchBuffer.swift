@@ -59,10 +59,6 @@ internal class BatchBuffer {
     }
 
     func writeMessage(_ message: ClientOp) async throws {
-        try await self.write(message)
-    }
-
-    private func write(_ message: ClientOp) async throws {
         #if SWIFT_NATS_BATCH_BUFFER_DISABLED
             let b = channel.allocator.buffer(bytes: data)
             try await channel.writeAndFlush(b)
