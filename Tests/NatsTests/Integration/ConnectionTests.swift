@@ -35,6 +35,7 @@ class CoreNatsTests: XCTestCase {
         ("testTlsFirst", testTlsFirst),
         ("testInvalidCertificate", testInvalidCertificate),
         ("testWebsocket", testWebsocket),
+        ("testWebsocketTLS", testWebsocketTLS),
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
