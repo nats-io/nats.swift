@@ -17,7 +17,7 @@ import Nats
 print("\n### Setup NATS Connection")
 
 let nats = NatsClientOptions()
-    .url(URL(string: "tls://localhost:4222")!)
+    .url(URL(string: "nats://localhost:4222")!)
     .build()
 
 nats.on(.connected) { event in
