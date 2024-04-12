@@ -471,7 +471,7 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "ws", withExtension: "conf")!.relativePath)
-        
+
         let client = NatsClientOptions().url(URL(string: natsServer.clientWebsocketURL)!).build()
 
         try await client.connect()
@@ -481,10 +481,10 @@ class CoreNatsTests: XCTestCase {
         let message = await iter.next()
         print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
-        
+
         try await client.close()
     }
-    
+
     func testLameDuckMode() async throws {
         natsServer.start()
         logger.logLevel = .debug

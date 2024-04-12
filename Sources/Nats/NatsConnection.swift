@@ -16,10 +16,10 @@ import Dispatch
 import Foundation
 import NIO
 import NIOFoundationCompat
-import NIOSSL
-import NKeys
 import NIOHTTP1
+import NIOSSL
 import NIOWebSocket
+import NKeys
 
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
@@ -395,13 +395,15 @@ class ConnectionHandler: ChannelInboundHandler {
                     }
                 } else {
                     //Fixme(jrm): do not ignore error from addHandler future.
-                    
+
                     if server.scheme == "ws" || server.scheme == "wss" {
                         let host = server.host ?? "localhost"
                         let port = server.port ?? 80
-                        let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(host: "\(host):\(port)")
-                        let httpUpgradeRequestHandlerBox = NIOLoopBound(httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
-                        
+                        let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
+                            host: "\(host):\(port)")
+                        let httpUpgradeRequestHandlerBox = NIOLoopBound(
+                            httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
+
                         let websocketUpgrader = NIOWebSocketClientUpgrader(
                             maxFrameSize: 8 * 1024 * 1024,
                             automaticErrorHandling: true,
@@ -412,27 +414,29 @@ class ConnectionHandler: ChannelInboundHandler {
                                     maxAccumulatedFrameSize: Int.max
                                 )
                                 return channel.pipeline.addHandler(wsh).flatMap {
-                                    channel.pipeline.addHandler(WebSocketByteBufferCodec()).flatMap {
+                                    channel.pipeline.addHandler(WebSocketByteBufferCodec()).flatMap
+                                    {
                                         channel.pipeline.addHandler(self)
                                     }
                                 }
                             }
                         )
-                        
+
                         let config: NIOHTTPClientUpgradeConfiguration = (
                             upgraders: [websocketUpgrader],
                             completionHandler: { context in
                                 //upgradePromise.succeed(())
-                                channel.pipeline.removeHandler(httpUpgradeRequestHandlerBox.value, promise: nil)
+                                channel.pipeline.removeHandler(
+                                    httpUpgradeRequestHandlerBox.value, promise: nil)
                             }
                         )
-                        
+
                         channel.pipeline.addHTTPClientHandlers(
                             leftOverBytesStrategy: .forwardBytes,
                             withClientUpgrade: config
                         ).flatMap {
                             channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
-                       }.whenComplete { result in
+                        }.whenComplete { result in
                             switch result {
                             case .success():
                                 logger.debug("success")
@@ -723,10 +727,10 @@ final class WebSocketByteBufferCodec: ChannelDuplexHandler {
     typealias InboundOut = ByteBuffer
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = WebSocketFrame
-    
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let frame = unwrapInboundIn(data)
-        
+
         switch frame.opcode {
         case .binary:
             context.fireChannelRead(wrapInboundOut(frame.data))
@@ -757,7 +761,7 @@ final class WebSocketByteBufferCodec: ChannelDuplexHandler {
             break
         }
     }
-    
+
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let buffer = unwrapOutboundIn(data)
         let frame = WebSocketFrame(
@@ -768,7 +772,7 @@ final class WebSocketByteBufferCodec: ChannelDuplexHandler {
         )
         context.write(wrapOutboundOut(frame), promise: promise)
     }
-    
+
     public func send(
         _ data: ByteBuffer,
         context: ChannelHandlerContext,
@@ -784,7 +788,7 @@ final class WebSocketByteBufferCodec: ChannelDuplexHandler {
         )
         context.writeAndFlush(wrapOutboundOut(frame), promise: promise)
     }
-    
+
     func makeMaskKey() -> WebSocketMaskingKey? {
         /// See https://github.com/apple/swift/issues/66099
         var generator = SystemRandomNumberGenerator()
@@ -798,13 +802,13 @@ final class HTTPUpgradeRequestHandler: ChannelInboundHandler, RemovableChannelHa
 
     let host: String
     let headers = HTTPHeaders()
-//    let upgradePromise: EventLoopPromise<Void>
+    //    let upgradePromise: EventLoopPromise<Void>
 
     private var requestSent = false
 
     init(host: String) {
         self.host = host
-//        self.upgradePromise = upgradePromise
+        //        self.upgradePromise = upgradePromise
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -850,7 +854,7 @@ final class HTTPUpgradeRequestHandler: ChannelInboundHandler, RemovableChannelHa
         switch clientResponse {
         case .head(_):
             //let error = WebSocketClient.Error.invalidResponseStatus(responseHead)
-//            self.upgradePromise.fail(NatsClientError("ws error"))
+            //            self.upgradePromise.fail(NatsClientError("ws error"))
             preconditionFailure("ws error")
         case .body: break
         case .end:

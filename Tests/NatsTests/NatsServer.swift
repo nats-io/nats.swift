@@ -24,7 +24,7 @@ class NatsServer {
             preconditionFailure("port was not found")
         }
     }
-    
+
     var clientWebsocketURL: String {
         let scheme = tlsEnabled ? "wss://" : "ws://"
         if let natsWebsocketPort {
@@ -69,28 +69,28 @@ class NatsServer {
             let data = fileHandle.availableData
             guard data.count > 0 else { return }
             outputBuffer.append(data)
-            
+
             guard let output = String(data: outputBuffer, encoding: .utf8) else { return }
-            
+
             let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
             let completedLines = lines.dropLast()
-            
+
             for lineSequence in completedLines {
                 let line = String(lineSequence)
                 lineCount += 1
 
                 let errorLine = self.extracErrorMessage(from: line)
-                
+
                 if let port = self.extractPort(from: line, for: "client connections") {
                     self.natsServerPort = port
                 }
-                
+
                 if let port = self.extractPort(from: line, for: "websocket clients") {
                     self.natsWebsocketPort = port
                 }
-                
+
                 let ready = line.contains("Server is ready")
-                
+
                 if !self.tlsEnabled && self.isTLS(from: line) {
                     self.tlsEnabled = true
                 }
@@ -102,7 +102,7 @@ class NatsServer {
                     return
                 }
             }
-            
+
             if output.hasSuffix("\n") {
                 outputBuffer.removeAll()
             } else {
