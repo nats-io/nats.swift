@@ -270,7 +270,7 @@ class ConnectionHandler: ChannelInboundHandler {
             self.serverInfoContinuation = continuation
             Task.detached {
                 do {
-                    let bootstrap = try self.bootstrapConnection(to: s)
+                    let (bootstrap, upgradePromise) = try self.bootstrapConnection(to: s)
                     guard let host = s.host, let port = s.port else {
                         throw NatsConfigError("no url")
                     }
@@ -278,6 +278,9 @@ class ConnectionHandler: ChannelInboundHandler {
                     guard let channel = self.channel else {
                         throw NatsClientError("internal error: empty channel")
                     }
+
+                    try await upgradePromise.futureResult.get()
+
                     self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
                     continuation.resume(throwing: error)
@@ -286,7 +289,7 @@ class ConnectionHandler: ChannelInboundHandler {
             // Wait for the first message after sending the connect request
         }
         self.serverInfo = info
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst {
+        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
@@ -363,7 +366,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    private func bootstrapConnection(to server: URL) throws -> ClientBootstrap {
+    private func bootstrapConnection(to server: URL) throws -> (ClientBootstrap, EventLoopPromise<Void>) {
         let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: self.group)
             .channelOption(
@@ -373,6 +376,7 @@ class ConnectionHandler: ChannelInboundHandler {
             )
             .channelInitializer { channel in
                 if self.requireTls && self.tlsFirst {
+                    upgradePromise.succeed(())
                     do {
                         let tlsConfig = try self.makeTLSConfig()
                         let sslContext = try NIOSSLContext(
@@ -395,8 +399,6 @@ class ConnectionHandler: ChannelInboundHandler {
                         return channel.eventLoop.makeFailedFuture(error)
                     }
                 } else {
-                    //Fixme(jrm): do not ignore error from addHandler future.
-
                     if server.scheme == "ws" || server.scheme == "wss" {
                         let host = server.host ?? "localhost"
                         let port = server.port ?? 80
@@ -433,47 +435,37 @@ class ConnectionHandler: ChannelInboundHandler {
                         )
 
                         if server.scheme == "wss" {
-                            print(">>> WSS")
                             do {
                                 let tlsConfig = try self.makeTLSConfig()
                                 let sslContext = try NIOSSLContext(
                                     configuration: tlsConfig)
                                 let sslHandler = try NIOSSLClientHandler(
                                     context: sslContext, serverHostname: server.host!)
-                                channel.pipeline.addHandler(sslHandler).flatMap { _ in
-                                    channel.pipeline.addHTTPClientHandlers(
-                                        leftOverBytesStrategy: .forwardBytes,
-                                        withClientUpgrade: config
-                                    ).flatMap { _ in
-                                        channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
-                                    }
-                                }.whenComplete { result in
-                                    switch result {
-                                    case .success():
-                                        logger.debug("success")
-                                    case .failure(let error):
-                                        logger.debug("error: \(error)")
-                                    }
-                                }
+                                // The sync methods here are safe because we're on the channel event loop
+                                // due to the promise originating on the event loop of the channel.
+                                try channel.pipeline.syncOperations.addHandler(sslHandler)
                             } catch {
                                 return channel.eventLoop.makeFailedFuture(error)
                             }
-                        } else {
-                            channel.pipeline.addHTTPClientHandlers(
-                                leftOverBytesStrategy: .forwardBytes,
-                                withClientUpgrade: config
-                            ).flatMap { _ in
-                                channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
-                            }.whenComplete { result in
-                                switch result {
-                                case .success():
-                                    logger.debug("success")
-                                case .failure(let error):
-                                    logger.debug("error: \(error)")
-                                }
+                        }
+
+                        //Fixme(jrm): do not ignore error from addHandler future.
+                        channel.pipeline.addHTTPClientHandlers(
+                            leftOverBytesStrategy: .forwardBytes,
+                            withClientUpgrade: config
+                        ).flatMap {
+                            channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
+                        }.whenComplete { result in
+                            switch result {
+                            case .success():
+                                logger.debug("success")
+                            case .failure(let error):
+                                logger.debug("error: \(error)")
                             }
                         }
                     } else {
+                        upgradePromise.succeed(())
+                        //Fixme(jrm): do not ignore error from addHandler future.
                         channel.pipeline.addHandler(self).whenComplete { result in
                             switch result {
                             case .success():
@@ -486,7 +478,7 @@ class ConnectionHandler: ChannelInboundHandler {
                     return channel.eventLoop.makeSucceededFuture(())
                 }
             }.connectTimeout(.seconds(5))
-        return bootstrap
+        return (bootstrap, upgradePromise)
     }
 
     private func updateServersList(info: ServerInfo) {

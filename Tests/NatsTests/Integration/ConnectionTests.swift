@@ -494,14 +494,19 @@ class CoreNatsTests: XCTestCase {
         let cfgFile = try createConfigFileFromTemplate(
             templateURL: bundle.url(forResource: "wss", withExtension: "conf")!,
             args: [serverCert, serverKey, rootCA])
-
         natsServer.start(cfg: cfgFile.relativePath)
         
         let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
-        
+        let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
+        let clientKey = bundle.url(forResource: "client-key", withExtension: "pem")!
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientWebsocketURL)!)
             .rootCertificates(certsURL)
+            .clientCertificate(
+                clientCert,
+                clientKey
+            )
             .build()
 
         try await client.connect()
