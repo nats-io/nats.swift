@@ -21,12 +21,22 @@ class NatsServer {
         if let natsServerPort {
             return "\(scheme)localhost:\(natsServerPort)"
         } else {
-            return ""
+            preconditionFailure("port was not found")
+        }
+    }
+    
+    var clientWebsocketURL: String {
+        let scheme = tlsEnabled ? "wss://" : "ws://"
+        if let natsWebsocketPort {
+            return "\(scheme)localhost:\(natsWebsocketPort)"
+        } else {
+            preconditionFailure("port was not found")
         }
     }
 
     private var process: Process?
     private var natsServerPort: Int?
+    private var natsWebsocketPort: Int?
     private var tlsEnabled = false
     private var pidFile: URL?
 
@@ -52,23 +62,52 @@ class NatsServer {
         let semaphore = DispatchSemaphore(value: 0)
         var lineCount = 0
         let maxLines = 100
-        var serverPort: Int?
         var serverError: String?
+        var outputBuffer = Data()
 
         outputHandle.readabilityHandler = { fileHandle in
             let data = fileHandle.availableData
-            if let line = String(data: data, encoding: .utf8) {
+            guard data.count > 0 else { return }
+            outputBuffer.append(data)
+            
+            guard let output = String(data: outputBuffer, encoding: .utf8) else { return }
+            
+            let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+            let completedLines = lines.dropLast()
+            
+            for lineSequence in completedLines {
+                let line = String(lineSequence)
                 lineCount += 1
 
-                serverError = self.extracErrorMessage(from: line)
-                serverPort = self.extractPort(from: line)
+                let errorLine = self.extracErrorMessage(from: line)
+                
+                if let port = self.extractPort(from: line, for: "client connections") {
+                    self.natsServerPort = port
+                }
+                
+                if let port = self.extractPort(from: line, for: "websocket clients") {
+                    self.natsWebsocketPort = port
+                }
+                
+                let ready = line.contains("Server is ready")
+                
                 if !self.tlsEnabled && self.isTLS(from: line) {
                     self.tlsEnabled = true
                 }
-                if serverPort != nil || serverError != nil || lineCount >= maxLines {
-                    serverError = serverError
+
+                if ready || errorLine != nil || lineCount >= maxLines {
+                    serverError = errorLine
                     semaphore.signal()
                     outputHandle.readabilityHandler = nil
+                    return
+                }
+            }
+            
+            if output.hasSuffix("\n") {
+                outputBuffer.removeAll()
+            } else {
+                if let lastLine = lines.last, let incompleteLine = lastLine.data(using: .utf8) {
+                    outputBuffer = incompleteLine
                 }
             }
         }
@@ -84,7 +123,6 @@ class NatsServer {
             serverError, "error starting nats-server: \(serverError!)", file: file, line: line)
 
         self.process = process
-        self.natsServerPort = serverPort
     }
 
     func stop() {
@@ -110,8 +148,10 @@ class NatsServer {
         self.process = nil
     }
 
-    private func extractPort(from string: String) -> Int? {
-        let pattern = "Listening for client connections on [^:]+:(\\d+)"
+    private func extractPort(from string: String, for phrase: String) -> Int? {
+        // Listening for websocket clients on
+        // Listening for client connections on
+        let pattern = "Listening for \(phrase) on .*?:(\\d+)$"
 
         let regex = try! NSRegularExpression(pattern: pattern)
         let nsrange = NSRange(string.startIndex..<string.endIndex, in: string)
