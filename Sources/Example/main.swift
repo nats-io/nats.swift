@@ -16,8 +16,10 @@ import Nats
 
 print("\n### Setup NATS Connection")
 
+let certsURL = URL(fileURLWithPath: "/Users/mtmk/src/natsbench/server-confs/ws/ca-cert.pem")
 let nats = NatsClientOptions()
-    .url(URL(string: "nats://localhost:4222")!)
+    .url(URL(string: "wss://localhost:8443")!)
+    .rootCertificates(certsURL)
     .build()
 
 nats.on(.connected) { event in

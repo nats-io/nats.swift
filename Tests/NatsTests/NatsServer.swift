@@ -21,7 +21,7 @@ class NatsServer {
         if let natsServerPort {
             return "\(scheme)localhost:\(natsServerPort)"
         } else {
-            preconditionFailure("port was not found")
+            return ""
         }
     }
 
@@ -30,7 +30,7 @@ class NatsServer {
         if let natsWebsocketPort {
             return "\(scheme)localhost:\(natsWebsocketPort)"
         } else {
-            preconditionFailure("port was not found")
+            return ""
         }
     }
 
@@ -77,6 +77,7 @@ class NatsServer {
 
             for lineSequence in completedLines {
                 let line = String(lineSequence)
+                print("nats-server: \(line)")
                 lineCount += 1
 
                 let errorLine = self.extracErrorMessage(from: line)
@@ -182,7 +183,7 @@ class NatsServer {
     }
 
     private func isTLS(from logLine: String) -> Bool {
-        return logLine.contains("TLS required for client connections")
+        return logLine.contains("TLS required for client connections") || logLine.contains("websocket clients on wss://")
     }
 
     deinit {

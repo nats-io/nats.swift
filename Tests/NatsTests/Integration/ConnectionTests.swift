@@ -485,6 +485,36 @@ class CoreNatsTests: XCTestCase {
         try await client.close()
     }
 
+    func testWebsocketTLS() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
+        let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
+        let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "wss", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+
+        natsServer.start(cfg: cfgFile.relativePath)
+        
+        let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientWebsocketURL)!)
+            .rootCertificates(certsURL)
+            .build()
+
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let iter = sub.makeAsyncIterator()
+        let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
+        XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+
+        try await client.close()
+    }
+    
     func testLameDuckMode() async throws {
         natsServer.start()
         logger.logLevel = .debug
