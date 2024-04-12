@@ -183,7 +183,8 @@ class NatsServer {
     }
 
     private func isTLS(from logLine: String) -> Bool {
-        return logLine.contains("TLS required for client connections") || logLine.contains("websocket clients on wss://")
+        return logLine.contains("TLS required for client connections")
+            || logLine.contains("websocket clients on wss://")
     }
 
     deinit {

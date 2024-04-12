@@ -366,7 +366,9 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    private func bootstrapConnection(to server: URL) throws -> (ClientBootstrap, EventLoopPromise<Void>) {
+    private func bootstrapConnection(
+        to server: URL
+    ) throws -> (ClientBootstrap, EventLoopPromise<Void>) {
         let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: self.group)
             .channelOption(
@@ -406,7 +408,7 @@ class ConnectionHandler: ChannelInboundHandler {
                             host: "\(host):\(port)", upgradePromise: upgradePromise)
                         let httpUpgradeRequestHandlerBox = NIOLoopBound(
                             httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
-                        
+
                         let websocketUpgrader = NIOWebSocketClientUpgrader(
                             maxFrameSize: 8 * 1024 * 1024,
                             automaticErrorHandling: true,

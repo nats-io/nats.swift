@@ -16,12 +16,8 @@ import Nats
 
 print("\n### Setup NATS Connection")
 
-let certsURL = URL(fileURLWithPath: "/Users/mtmk/src/natsbench/server-confs/ws/ca-cert.pem")
 let nats = NatsClientOptions()
-    .url(URL(string: "wss://localhost:8444")!)
-//    .url(URL(string: "tls://localhost:4222")!)
-//    .requireTls()
-    .rootCertificates(certsURL)
+    .url(URL(string: "tls://localhost:4222")!)
     .build()
 
 nats.on(.connected) { event in

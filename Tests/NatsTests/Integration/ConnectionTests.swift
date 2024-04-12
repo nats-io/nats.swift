@@ -495,7 +495,7 @@ class CoreNatsTests: XCTestCase {
             templateURL: bundle.url(forResource: "wss", withExtension: "conf")!,
             args: [serverCert, serverKey, rootCA])
         natsServer.start(cfg: cfgFile.relativePath)
-        
+
         let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
         let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
         let clientKey = bundle.url(forResource: "client-key", withExtension: "pem")!
@@ -519,7 +519,7 @@ class CoreNatsTests: XCTestCase {
 
         try await client.close()
     }
-    
+
     func testLameDuckMode() async throws {
         natsServer.start()
         logger.logLevel = .debug
