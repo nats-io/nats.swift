@@ -34,6 +34,8 @@ class CoreNatsTests: XCTestCase {
         ("testMutualTls", testMutualTls),
         ("testTlsFirst", testTlsFirst),
         ("testInvalidCertificate", testInvalidCertificate),
+        ("testWebsocket", testWebsocket),
+        ("testWebsocketTLS", testWebsocketTLS),
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
@@ -464,6 +466,59 @@ class CoreNatsTests: XCTestCase {
             return
         }
         XCTFail("Expected error from connect")
+    }
+
+    func testWebsocket() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "ws", withExtension: "conf")!.relativePath)
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientWebsocketURL)!).build()
+
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let iter = sub.makeAsyncIterator()
+        let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
+        XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+
+        try await client.close()
+    }
+
+    func testWebsocketTLS() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
+        let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
+        let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "wss", withExtension: "conf")!,
+            args: [serverCert, serverKey, rootCA])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let certsURL = bundle.url(forResource: "rootCA", withExtension: "pem")!
+        let clientCert = bundle.url(forResource: "client-cert", withExtension: "pem")!
+        let clientKey = bundle.url(forResource: "client-key", withExtension: "pem")!
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientWebsocketURL)!)
+            .rootCertificates(certsURL)
+            .clientCertificate(
+                clientCert,
+                clientKey
+            )
+            .build()
+
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let iter = sub.makeAsyncIterator()
+        let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
+        XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
+
+        try await client.close()
     }
 
     func testLameDuckMode() async throws {

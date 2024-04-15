@@ -16,7 +16,9 @@ import Dispatch
 import Foundation
 import NIO
 import NIOFoundationCompat
+import NIOHTTP1
 import NIOSSL
+import NIOWebSocket
 import NKeys
 
 class ConnectionHandler: ChannelInboundHandler {
@@ -268,7 +270,7 @@ class ConnectionHandler: ChannelInboundHandler {
             self.serverInfoContinuation = continuation
             Task.detached {
                 do {
-                    let bootstrap = try self.bootstrapConnection(to: s)
+                    let (bootstrap, upgradePromise) = try self.bootstrapConnection(to: s)
                     guard let host = s.host, let port = s.port else {
                         throw NatsConfigError("no url")
                     }
@@ -276,6 +278,9 @@ class ConnectionHandler: ChannelInboundHandler {
                     guard let channel = self.channel else {
                         throw NatsClientError("internal error: empty channel")
                     }
+
+                    try await upgradePromise.futureResult.get()
+
                     self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
                     continuation.resume(throwing: error)
@@ -284,7 +289,7 @@ class ConnectionHandler: ChannelInboundHandler {
             // Wait for the first message after sending the connect request
         }
         self.serverInfo = info
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst {
+        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
@@ -361,7 +366,10 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    private func bootstrapConnection(to server: URL) throws -> ClientBootstrap {
+    private func bootstrapConnection(
+        to server: URL
+    ) throws -> (ClientBootstrap, EventLoopPromise<Void>) {
+        let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: self.group)
             .channelOption(
                 ChannelOptions.socket(
@@ -370,6 +378,7 @@ class ConnectionHandler: ChannelInboundHandler {
             )
             .channelInitializer { channel in
                 if self.requireTls && self.tlsFirst {
+                    upgradePromise.succeed(())
                     do {
                         let tlsConfig = try self.makeTLSConfig()
                         let sslContext = try NIOSSLContext(
@@ -392,19 +401,86 @@ class ConnectionHandler: ChannelInboundHandler {
                         return channel.eventLoop.makeFailedFuture(error)
                     }
                 } else {
-                    //Fixme(jrm): do not ignore error from addHandler future.
-                    channel.pipeline.addHandler(self).whenComplete { result in
-                        switch result {
-                        case .success():
-                            logger.debug("success")
-                        case .failure(let error):
-                            logger.debug("error: \(error)")
+                    if server.scheme == "ws" || server.scheme == "wss" {
+                        let host = server.host ?? "localhost"
+                        let port = server.port ?? 80
+                        let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
+                            host: "\(host):\(port)", upgradePromise: upgradePromise)
+                        let httpUpgradeRequestHandlerBox = NIOLoopBound(
+                            httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
+
+                        let websocketUpgrader = NIOWebSocketClientUpgrader(
+                            maxFrameSize: 8 * 1024 * 1024,
+                            automaticErrorHandling: true,
+                            upgradePipelineHandler: { channel, _ in
+                                let wsh = NIOWebSocketFrameAggregator(
+                                    minNonFinalFragmentSize: 0,
+                                    maxAccumulatedFrameCount: Int.max,
+                                    maxAccumulatedFrameSize: Int.max
+                                )
+                                return channel.pipeline.addHandler(wsh).flatMap {
+                                    channel.pipeline.addHandler(WebSocketByteBufferCodec()).flatMap
+                                    {
+                                        channel.pipeline.addHandler(self)
+                                    }
+                                }
+                            }
+                        )
+
+                        let config: NIOHTTPClientUpgradeConfiguration = (
+                            upgraders: [websocketUpgrader],
+                            completionHandler: { context in
+                                upgradePromise.succeed(())
+                                channel.pipeline.removeHandler(
+                                    httpUpgradeRequestHandlerBox.value, promise: nil)
+                            }
+                        )
+
+                        if server.scheme == "wss" {
+                            do {
+                                let tlsConfig = try self.makeTLSConfig()
+                                let sslContext = try NIOSSLContext(
+                                    configuration: tlsConfig)
+                                let sslHandler = try NIOSSLClientHandler(
+                                    context: sslContext, serverHostname: server.host!)
+                                // The sync methods here are safe because we're on the channel event loop
+                                // due to the promise originating on the event loop of the channel.
+                                try channel.pipeline.syncOperations.addHandler(sslHandler)
+                            } catch {
+                                return channel.eventLoop.makeFailedFuture(error)
+                            }
+                        }
+
+                        //Fixme(jrm): do not ignore error from addHandler future.
+                        channel.pipeline.addHTTPClientHandlers(
+                            leftOverBytesStrategy: .forwardBytes,
+                            withClientUpgrade: config
+                        ).flatMap {
+                            channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
+                        }.whenComplete { result in
+                            switch result {
+                            case .success():
+                                logger.debug("success")
+                            case .failure(let error):
+                                logger.debug("error: \(error)")
+                            }
+                        }
+                    } else {
+                        upgradePromise.succeed(())
+                        //Fixme(jrm): do not ignore error from addHandler future.
+                        channel.pipeline.addHandler(self).whenComplete { result in
+                            switch result {
+                            case .success():
+                                logger.debug("success")
+                            case .failure(let error):
+                                logger.debug("error: \(error)")
+                            }
                         }
                     }
                     return channel.eventLoop.makeSucceededFuture(())
                 }
             }.connectTimeout(.seconds(5))
-        return bootstrap
+        return (bootstrap, upgradePromise)
     }
 
     private func updateServersList(info: ServerInfo) {
