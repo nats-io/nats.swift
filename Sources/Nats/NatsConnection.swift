@@ -50,12 +50,12 @@ class ConnectionHandler: ChannelInboundHandler {
     private let stateLock = NSLock()
     private var _state: NatsState = .pending
     internal var state: NatsState {
-        get{
+        get {
             stateLock.lock()
             defer { stateLock.unlock() }
             return _state
         }
-        set{
+        set {
             stateLock.lock()
             defer { stateLock.unlock() }
             _state = newValue
@@ -527,10 +527,10 @@ class ConnectionHandler: ChannelInboundHandler {
         if self.state == .connected {
             self.state = .suspended
             try await disconnect()
-            self.fire(.disconnected)
         } else {
             self.state = .suspended
         }
+        self.fire(.suspended)
     }
 
     func resume() async throws {
@@ -773,6 +773,7 @@ public enum NatsEventKind: String {
 public enum NatsEvent {
     case connected
     case disconnected
+    case suspended
     case closed
     case lameDuckMode
     case error(NatsError)
@@ -783,6 +784,8 @@ public enum NatsEvent {
             return .connected
         case .disconnected:
             return .disconnected
+        case .suspended:
+            return .suspended
         case .closed:
             return .closed
         case .lameDuckMode:

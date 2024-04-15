@@ -109,17 +109,17 @@ class CoreNatsTests: XCTestCase {
         }
         await fulfillment(of: [expectation], timeout: 5.0)
         let reconnectExpectation = XCTestExpectation(description: "Should reconnect in 5 seconds")
-        let disconnectExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
-        client.on([.disconnected, .connected]) { event in
-            if event.kind() == .disconnected {
-                disconnectExpectation.fulfill()
+        let suspendedExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
+        client.on([.suspended, .connected]) { event in
+            if event.kind() == .suspended {
+                suspendedExpectation.fulfill()
             }
             if event.kind() == .connected {
                 reconnectExpectation.fulfill()
             }
         }
         try await client.suspend()
-        await fulfillment(of: [disconnectExpectation], timeout: 5.0)
+        await fulfillment(of: [suspendedExpectation], timeout: 5.0)
         try await client.resume()
         await fulfillment(of: [reconnectExpectation], timeout: 5.0)
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
@@ -154,17 +154,17 @@ class CoreNatsTests: XCTestCase {
         }
         await fulfillment(of: [expectation], timeout: 5.0)
         let reconnectExpectation = XCTestExpectation(description: "Should reconnect in 5 seconds")
-        let disconnectExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
-        client.on([.disconnected, .connected]) { event in
-            if event.kind() == .disconnected {
-                disconnectExpectation.fulfill()
+        let suspendedExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
+        client.on([.suspended, .connected]) { event in
+            if event.kind() == .suspended {
+                suspendedExpectation.fulfill()
             }
             if event.kind() == .connected {
                 reconnectExpectation.fulfill()
             }
         }
         try await client.reconnect()
-        await fulfillment(of: [disconnectExpectation], timeout: 5.0)
+        await fulfillment(of: [suspendedExpectation], timeout: 5.0)
         await fulfillment(of: [reconnectExpectation], timeout: 5.0)
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
