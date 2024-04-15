@@ -380,7 +380,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
-            .Nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
+            .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
             .build()
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
