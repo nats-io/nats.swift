@@ -353,10 +353,11 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         if let nkey = self.auth?.nkeyPath {
             let nkeyData = try await URLSession.shared.data(from: nkey).0
+
             guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
                 throw NatsConfigError("failed to read NKEY file")
             }
-            let keypair = try KeyPair(seed: nkeyContent)
+            let keypair = try KeyPair(seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines))
             guard let nonce = self.serverInfo?.nonce else {
                 throw NatsConfigError("missing nonce")
             }

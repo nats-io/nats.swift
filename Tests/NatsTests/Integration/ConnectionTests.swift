@@ -378,6 +378,7 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
@@ -386,7 +387,21 @@ class CoreNatsTests: XCTestCase {
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
         _ = await subscribe.next()
+    }
 
+    func testNkeyAuthFile() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .nkeyFile(bundle.url(forResource: "nkey", withExtension: "")!)
+            .build()
+        try await client.connect()
+        let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
+        try await client.publish("data".data(using: .utf8)!, subject: "foo")
+        _ = await subscribe.next()
     }
 
     func testMutualTls() async throws {
