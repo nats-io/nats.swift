@@ -33,6 +33,8 @@ public struct Auth {
     var password: String?
     var token: String?
     var credentialsPath: URL?
+    var nkeyPath: URL?
+    var nkey: String?
 
     init() {
 
@@ -50,6 +52,16 @@ public struct Auth {
         auth.credentialsPath = credentials
         return auth
     }
+    static func fromNkey(_ nkey: URL) -> Auth {
+        var auth = Auth()
+        auth.nkeyPath = nkey
+        return auth
+    }
+    static func fromNkey(_ nkey: String) -> Auth {
+        var auth = Auth()
+        auth.nkey = nkey
+        return auth
+     }
 }
 
 public class NatsClient {

@@ -351,6 +351,31 @@ class ConnectionHandler: ChannelInboundHandler {
             initialConnect.signature = base64sig
             initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
         }
+        if let nkey = self.auth?.nkeyPath {
+            let nkeyData = try await URLSession.shared.data(from: nkey).0
+            guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
+                throw NatsConfigError("failed to read NKEY file")
+            }
+            let keypair = try KeyPair(seed: nkeyContent)
+            guard let nonce = self.serverInfo?.nonce else {
+                throw NatsConfigError("missing nonce")
+            }
+            let sig = try keypair.sign(input: nonce.data(using: .utf8)!)
+            let base64sig = sig.base64EncodedURLSafeNotPadded()
+            initialConnect.signature = base64sig
+            initialConnect.nkey = keypair.publicKeyEncoded
+        }
+        if let nkey = self.auth?.nkey {
+            let keypair = try KeyPair(seed: nkey)
+            guard let nonce = self.serverInfo?.nonce else {
+                throw NatsConfigError("missing nonce")
+            }
+            let nonceData = nonce.data(using: .utf8)!
+            let sig = try keypair.sign(input: nonceData)
+            let base64sig = sig.base64EncodedURLSafeNotPadded()
+            initialConnect.signature = base64sig
+            initialConnect.nkey = keypair.publicKeyEncoded
+        }
         let connect = initialConnect
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
