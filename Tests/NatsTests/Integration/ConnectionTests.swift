@@ -22,6 +22,11 @@ class CoreNatsTests: XCTestCase {
     static var allTests = [
         ("testRtt", testRtt),
         ("testPublish", testPublish),
+        ("testSuspendAndResume", testSuspendAndResume),
+        ("testForceReconnect", testForceReconnect),
+        ("testConnectMultipleURLsOneIsValid", testConnectMultipleURLsOneIsValid),
+        ("testConnectMultipleURLsRetainOrder", testConnectMultipleURLsRetainOrder),
+        ("testRetryOnFailedConnect", testRetryOnFailedConnect),
         ("testPublishWithReply", testPublishWithReply),
         ("testSubscribe", testSubscribe),
         ("testUnsubscribe", testUnsubscribe),
@@ -81,7 +86,95 @@ class CoreNatsTests: XCTestCase {
             }
         }
         await fulfillment(of: [expectation], timeout: 5.0)
-        sub.complete()
+        try await client.close()
+    }
+
+    func testSuspendAndResume() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let msg = await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                expectation.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation], timeout: 5.0)
+        let reconnectExpectation = XCTestExpectation(description: "Should reconnect in 5 seconds")
+        let disconnectExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
+        client.on([.disconnected, .connected]) { event in
+            if event.kind() == .disconnected {
+                disconnectExpectation.fulfill()
+            }
+            if event.kind() == .connected {
+                reconnectExpectation.fulfill()
+            }
+        }
+        try await client.suspend()
+        await fulfillment(of: [disconnectExpectation], timeout: 5.0)
+        try await client.resume()
+        await fulfillment(of: [reconnectExpectation], timeout: 5.0)
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        Task {
+            if let msg = await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                expectation1.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation1], timeout: 5.0)
+        try await client.close()
+    }
+
+    func testForceReconnect() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let msg = await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                expectation.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation], timeout: 5.0)
+        let reconnectExpectation = XCTestExpectation(description: "Should reconnect in 5 seconds")
+        let disconnectExpectation = XCTestExpectation(description: "Should disconnect in 5 seconds")
+        client.on([.disconnected, .connected]) { event in
+            if event.kind() == .disconnected {
+                disconnectExpectation.fulfill()
+            }
+            if event.kind() == .connected {
+                reconnectExpectation.fulfill()
+            }
+        }
+        try await client.reconnect()
+        await fulfillment(of: [disconnectExpectation], timeout: 5.0)
+        await fulfillment(of: [reconnectExpectation], timeout: 5.0)
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
+        Task {
+            if let msg = await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                expectation1.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation1], timeout: 5.0)
         try await client.close()
     }
 
@@ -107,7 +200,6 @@ class CoreNatsTests: XCTestCase {
             }
         }
         await fulfillment(of: [expectation], timeout: 5.0)
-        sub.complete()
         try await client.close()
     }
 
@@ -178,7 +270,6 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
-        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
     }
 
@@ -191,7 +282,6 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         var message = await iter.next()
-        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.publish("msg".data(using: .utf8)!, subject: "test")

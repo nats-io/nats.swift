@@ -62,7 +62,7 @@ public class Subscription: AsyncSequence {
         }
     }
 
-    func complete() {
+    internal func complete() {
         lock.withLock {
             closed = true
             if let continuation {

@@ -13,6 +13,7 @@
 
 import Dispatch
 import Foundation
+import Logging
 import NIO
 import NIOFoundationCompat
 

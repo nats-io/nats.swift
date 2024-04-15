@@ -47,7 +47,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var clientKey: URL?
 
     typealias InboundIn = ByteBuffer
-    private var state: NatsState = .pending
+    internal var state: NatsState = .pending
     private var subscriptions: [UInt64: Subscription]
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
     private var serverInfo: ServerInfo?
@@ -56,6 +56,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var pingTask: RepeatedTask?
     private var outstandingPings = ManagedAtomic<UInt8>(0)
     private var reconnectAttempts = 0
+    private var reconnectTask: Task<(), Never>? = nil
 
     private var group: MultiThreadedEventLoopGroup
 
@@ -219,7 +220,6 @@ class ConnectionHandler: ChannelInboundHandler {
         // if there are more reconnect attempts than the number of servers,
         // we are after the initial connect, so sleep between servers
         let shouldSleep = self.reconnectAttempts >= self.urls.count
-        logger.debug("reconnect attempts: \(self.reconnectAttempts)")
         for s in servers {
             if let maxReconnects {
                 if reconnectAttempts >= maxReconnects {
@@ -249,8 +249,6 @@ class ConnectionHandler: ChannelInboundHandler {
             throw lastErr
         }
         self.reconnectAttempts = 0
-        self.state = .connected
-        self.fire(.connected)
         guard let channel = self.channel else {
             throw NatsClientError("internal error: empty channel")
         }
@@ -497,14 +495,41 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func close() async throws {
+        self.reconnectTask?.cancel()
+        await self.reconnectTask?.value
         self.state = .closed
         try await disconnect()
         self.fire(.closed)
     }
 
-    func disconnect() async throws {
+    private func disconnect() async throws {
         self.pingTask?.cancel()
         try await self.channel?.close().get()
+    }
+
+    func suspend() async throws {
+        self.reconnectTask?.cancel()
+        await self.reconnectTask?.value
+        if self.state == .connected {
+            self.state = .suspended
+            try await disconnect()
+            self.fire(.disconnected)
+        } else {
+            self.state = .suspended
+        }
+    }
+
+    func resume() async throws {
+        guard self.state == .suspended else {
+            throw NatsClientError(
+                "unable to resume connection - connection is not in suspended state")
+        }
+        handleReconnect()
+    }
+
+    func reconnect() async throws {
+        try await suspend()
+        try await resume()
     }
 
     internal func sendPing(_ rttCommand: RttCommand? = nil) async {
@@ -594,19 +619,30 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func handleReconnect() {
-        Task {
-            while maxReconnects == nil || self.reconnectAttempts < maxReconnects! {
+        reconnectTask = Task {
+            var reconnected = false
+            while !Task.isCancelled
+                && (maxReconnects == nil || self.reconnectAttempts < maxReconnects!)
+            {
                 do {
                     try await self.connect()
+                } catch _ as CancellationError {
+                    // task cancelled
+                    return
                 } catch {
                     // TODO(pp): add option to set this to exponential backoff (with jitter)
                     logger.debug("could not reconnect: \(error)")
                     continue
                 }
                 logger.debug("reconnected")
+                reconnected = true
                 break
             }
-            if self.state != .connected {
+            // if task was cancelled when establishing connection, do not attempt to recreate subscriptions
+            if Task.isCancelled {
+                return
+            }
+            if !reconnected && !Task.isCancelled {
                 logger.error("could not reconnect; maxReconnects exceeded")
                 logger.debug("closing connection")
                 do {
@@ -618,8 +654,14 @@ class ConnectionHandler: ChannelInboundHandler {
                 return
             }
             for (sid, sub) in self.subscriptions {
-                try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
+                do {
+                    try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
+                } catch {
+                    logger.error("error recreating subscription \(sid): \(error)")
+                }
             }
+            self.state = .connected
+            self.fire(.connected)
         }
     }
 
@@ -708,6 +750,7 @@ public enum NatsEventKind: String {
     case connected = "connected"
     case disconnected = "disconnected"
     case closed = "closed"
+    case suspended = "suspended"
     case lameDuckMode = "lameDuckMode"
     case error = "error"
     static let all = [connected, disconnected, closed, lameDuckMode, error]
