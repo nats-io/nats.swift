@@ -61,7 +61,7 @@ public struct Auth {
         var auth = Auth()
         auth.nkey = nkey
         return auth
-     }
+    }
 }
 
 public class NatsClient {

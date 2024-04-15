@@ -85,7 +85,7 @@ public class NatsClientOptions {
         return self
     }
 
-    public func NkeyFile(_ nkey: URL) -> NatsClientOptions {
+    public func nkeyFile(_ nkey: URL) -> NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth.fromNkey(nkey)
         } else {
@@ -93,7 +93,7 @@ public class NatsClientOptions {
         }
         return self
     }
-    public func Nkey(_ nkey: String) -> NatsClientOptions {
+    public func nkey(_ nkey: String) -> NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth.fromNkey(nkey)
         } else {
