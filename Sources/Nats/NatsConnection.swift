@@ -47,7 +47,21 @@ class ConnectionHandler: ChannelInboundHandler {
     private var clientKey: URL?
 
     typealias InboundIn = ByteBuffer
-    internal var state: NatsState = .pending
+    private let stateLock = NSLock()
+    private var _state: NatsState = .pending
+    internal var state: NatsState {
+        get{
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _state
+        }
+        set{
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            _state = newValue
+        }
+    }
+
     private var subscriptions: [UInt64: Subscription]
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
     private var serverInfo: ServerInfo?
