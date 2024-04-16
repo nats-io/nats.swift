@@ -357,7 +357,8 @@ class ConnectionHandler: ChannelInboundHandler {
             guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
                 throw NatsConfigError("failed to read NKEY file")
             }
-            let keypair = try KeyPair(seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines))
+            let keypair = try KeyPair(seed: nkeyContent
+                .trimmingCharacters(in: .whitespacesAndNewlines))
             guard let nonce = self.serverInfo?.nonce else {
                 throw NatsConfigError("missing nonce")
             }
