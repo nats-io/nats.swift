@@ -411,8 +411,7 @@ class CoreNatsTests: XCTestCase {
             .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
             .build()
 
-
-       var thrownError: Error?
+        var thrownError: Error?
         do {
             try await badClient.connect()
         } catch {
