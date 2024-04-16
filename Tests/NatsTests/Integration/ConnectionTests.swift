@@ -40,6 +40,8 @@ class CoreNatsTests: XCTestCase {
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_timeout", testRequest_timeout),
+        ("testNkeyAuth", testNkeyAuth),
+        ("testNkeyAuthFile", testNkeyAuthFile),
     ]
     var natsServer = NatsServer()
 
@@ -371,6 +373,58 @@ class CoreNatsTests: XCTestCase {
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
         _ = await subscribe.next()
+    }
+
+    func testNkeyAuth() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
+            .build()
+        try await client.connect()
+        let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
+        try await client.publish("data".data(using: .utf8)!, subject: "foo")
+        _ = await subscribe.next()
+    }
+
+    func testNkeyAuthFile() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .nkeyFile(bundle.url(forResource: "nkey", withExtension: "")!)
+            .build()
+        try await client.connect()
+        let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
+        try await client.publish("data".data(using: .utf8)!, subject: "foo")
+        _ = await subscribe.next()
+
+        // Test if passing both nkey and nkeyPath throws an error
+        let badClient = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .nkeyFile(bundle.url(forResource: "nkey", withExtension: "")!)
+            .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
+            .build()
+
+        var thrownError: Error?
+        do {
+            try await badClient.connect()
+        } catch {
+            thrownError = error
+        }
+
+        // Now assert that an error was thrown and check its type and properties
+        XCTAssertNotNil(thrownError, "Expected method to throw an error but it did not.")
+        if let natsError = thrownError as? NatsConfigError {
+            XCTAssertEqual(natsError.description, "cannot use both nkey and nkeyPath")
+        } else {
+            XCTFail("Unexpected error type: \(String(describing: thrownError))")
+        }
     }
 
     func testMutualTls() async throws {
