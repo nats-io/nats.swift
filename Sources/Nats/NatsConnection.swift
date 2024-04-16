@@ -48,19 +48,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     typealias InboundIn = ByteBuffer
     private let stateLock = NSLock()
-    private var _state: NatsState = .pending
-    internal var state: NatsState {
-        get {
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            return _state
-        }
-        set {
-            stateLock.lock()
-            defer { stateLock.unlock() }
-            _state = newValue
-        }
-    }
+    internal var state: NatsState = .pending
 
     private var subscriptions: [UInt64: Subscription]
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
@@ -511,8 +499,23 @@ class ConnectionHandler: ChannelInboundHandler {
     func close() async throws {
         self.reconnectTask?.cancel()
         await self.reconnectTask?.value
-        self.state = .closed
-        try await disconnect()
+
+        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        let promise = eventLoop.makePromise(of: Void.self)
+
+        eventLoop.execute {  // This ensures the code block runs on the event loop
+            Task {
+                self.state = .closed
+                do {
+                    try await self.disconnect()
+                    promise.succeed()
+                } catch {
+                    promise.fail(error)
+                }
+            }
+        }
+
+        try await promise.futureResult.get()
         self.fire(.closed)
     }
 
@@ -523,22 +526,41 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func suspend() async throws {
         self.reconnectTask?.cancel()
-        await self.reconnectTask?.value
-        if self.state == .connected {
-            self.state = .suspended
-            try await disconnect()
-        } else {
-            self.state = .suspended
+        _ = await self.reconnectTask?.value
+
+        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        let promise = eventLoop.makePromise(of: Void.self)
+
+        eventLoop.execute {  // This ensures the code block runs on the event loop
+            if self.state == .connected {
+                self.state = .suspended
+                Task {
+                    do {
+                        try await self.disconnect()
+                        promise.succeed()
+                    } catch {
+                        promise.fail(error)
+                    }
+                }
+            } else {
+                self.state = .suspended
+                promise.succeed()
+            }
         }
+
+        try await promise.futureResult.get()
         self.fire(.suspended)
     }
 
     func resume() async throws {
-        guard self.state == .suspended else {
-            throw NatsClientError(
-                "unable to resume connection - connection is not in suspended state")
-        }
-        handleReconnect()
+        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        try await eventLoop.submit {
+            guard self.state == .suspended else {
+                throw NatsClientError(
+                    "unable to resume connection - connection is not in suspended state")
+            }
+            self.handleReconnect()
+        }.get()
     }
 
     func reconnect() async throws {
@@ -674,8 +696,10 @@ class ConnectionHandler: ChannelInboundHandler {
                     logger.error("error recreating subscription \(sid): \(error)")
                 }
             }
-            self.state = .connected
-            self.fire(.connected)
+            self.channel?.eventLoop.execute {
+                self.state = .connected
+                self.fire(.connected)
+            }
         }
     }
 
