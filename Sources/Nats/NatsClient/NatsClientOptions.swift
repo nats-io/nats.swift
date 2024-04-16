@@ -86,6 +86,23 @@ public class NatsClientOptions {
         return self
     }
 
+    public func nkeyFile(_ nkey: URL) -> NatsClientOptions {
+        if self.auth == nil {
+            self.auth = Auth.fromNkey(nkey)
+        } else {
+            self.auth?.nkeyPath = nkey
+        }
+        return self
+    }
+    public func nkey(_ nkey: String) -> NatsClientOptions {
+        if self.auth == nil {
+            self.auth = Auth.fromNkey(nkey)
+        } else {
+            self.auth?.nkey = nkey
+        }
+        return self
+    }
+
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
