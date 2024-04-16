@@ -333,6 +333,9 @@ class ConnectionHandler: ChannelInboundHandler {
             user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
             authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
+        if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
+            throw NatsConfigError("cannot use both nkey and nkeyPath")
+        }
         if let auth = self.auth, let credentialsPath = auth.credentialsPath {
             let credentials = try await URLSession.shared.data(from: credentialsPath).0
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
