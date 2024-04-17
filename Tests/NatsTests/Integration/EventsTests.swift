@@ -21,8 +21,8 @@ class TestNatsEvents: XCTestCase {
 
     static var allTests = [
         ("testClientConnectedEvent", testClientConnectedEvent),
-        ("testClientConnectedEvent", testClientConnectedEvent),
-        ("testClientConnectedEvent", testClientConnectedEvent),
+        ("testClientClosedEvent", testClientClosedEvent),
+        ("testClientReconnectEvent", testClientReconnectEvent),
     ]
 
     var natsServer = NatsServer()

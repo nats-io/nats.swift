@@ -26,6 +26,7 @@ public enum NatsState {
     case connected
     case disconnected
     case closed
+    case suspended
 }
 
 public struct Auth {
@@ -85,6 +86,8 @@ extension NatsClient {
         }
         if !connectionHandler.retryOnFailedConnect {
             try await connectionHandler.connect()
+            connectionHandler.state = .connected
+            connectionHandler.fire(.connected)
         } else {
             connectionHandler.handleReconnect()
         }
@@ -96,6 +99,30 @@ extension NatsClient {
             throw NatsClientError("internal error: empty connection handler")
         }
         try await connectionHandler.close()
+    }
+
+    public func suspend() async throws {
+        logger.debug("suspend")
+        guard let connectionHandler = self.connectionHandler else {
+            throw NatsClientError("internal error: empty connection handler")
+        }
+        try await connectionHandler.suspend()
+    }
+
+    public func resume() async throws {
+        logger.debug("resume")
+        guard let connectionHandler = self.connectionHandler else {
+            throw NatsClientError("internal error: empty connection handler")
+        }
+        try await connectionHandler.resume()
+    }
+
+    public func reconnect() async throws {
+        logger.debug("resume")
+        guard let connectionHandler = self.connectionHandler else {
+            throw NatsClientError("internal error: empty connection handler")
+        }
+        try await connectionHandler.reconnect()
     }
 
     public func publish(

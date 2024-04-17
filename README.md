@@ -20,7 +20,6 @@ Currently, the client supports **Core NATS** with auth, TLS, lame duck mode and 
 
 JetStream, KV, Object Store, Service API are on the roadmap.
 
-
 ## Support
 
 Join the [#swift](https://natsio.slack.com/channels/swift) channel on nats.io Slack.
@@ -127,7 +126,6 @@ specific subjects, facilitating asynchronous communication patterns. This exampl
 will guide you through creating a subscription to a subject, allowing your application to process
 incoming messages as they are received.
 
-
 ```swift
 let subscription = try await nats.subscribe(subject: "foo.>")
 
@@ -172,6 +170,26 @@ let nats = NatsClientOptions()
 
 nats.on(.connected) { event in
     print("event: connected")
+}
+```
+
+### AppDelegate or SceneDelegate Integration
+
+In order to make sure the connection is managed properly in your
+AppDelegate.swift or SceneDelegate.swift, integrate the NatsClient connection
+management as follows:
+
+```swift
+func sceneDidBecomeActive(_ scene: UIScene) {
+    Task {
+        try await self.natsClient.resume()
+    }
+}
+
+func sceneWillResignActive(_ scene: UIScene) {
+    Task {
+        try await self.natsClient.suspend()
+    }
 }
 ```
 

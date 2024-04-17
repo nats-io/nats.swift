@@ -77,7 +77,6 @@ class NatsServer {
 
             for lineSequence in completedLines {
                 let line = String(lineSequence)
-                print("nats-server: \(line)")
                 lineCount += 1
 
                 let errorLine = self.extracErrorMessage(from: line)
