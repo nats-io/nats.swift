@@ -500,19 +500,15 @@ class ConnectionHandler: ChannelInboundHandler {
         self.reconnectTask?.cancel()
         await self.reconnectTask?.value
 
-        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        guard let eventLoop = self.channel?.eventLoop else {
+            throw NatsClientError("internal error: channel should not be nil")
+        }
         let promise = eventLoop.makePromise(of: Void.self)
 
         eventLoop.execute {  // This ensures the code block runs on the event loop
-            Task {
-                self.state = .closed
-                do {
-                    try await self.disconnect()
-                    promise.succeed()
-                } catch {
-                    promise.fail(error)
-                }
-            }
+            self.state = .closed
+            self.pingTask?.cancel()
+            self.channel?.close(mode: .all, promise: promise)
         }
 
         try await promise.futureResult.get()
@@ -528,20 +524,16 @@ class ConnectionHandler: ChannelInboundHandler {
         self.reconnectTask?.cancel()
         _ = await self.reconnectTask?.value
 
-        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        guard let eventLoop = self.channel?.eventLoop else {
+            throw NatsClientError("internal error: channel should not be nil")
+        }
         let promise = eventLoop.makePromise(of: Void.self)
 
         eventLoop.execute {  // This ensures the code block runs on the event loop
             if self.state == .connected {
                 self.state = .suspended
-                Task {
-                    do {
-                        try await self.disconnect()
-                        promise.succeed()
-                    } catch {
-                        promise.fail(error)
-                    }
-                }
+                self.pingTask?.cancel()
+                self.channel?.close(mode: .all, promise: promise)
             } else {
                 self.state = .suspended
                 promise.succeed()
@@ -553,7 +545,9 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func resume() async throws {
-        let eventLoop = self.channel?.eventLoop ?? MultiThreadedEventLoopGroup.currentEventLoop!
+        guard let eventLoop = self.channel?.eventLoop else {
+            throw NatsClientError("internal error: channel should not be nil")
+        }
         try await eventLoop.submit {
             guard self.state == .suspended else {
                 throw NatsClientError(
