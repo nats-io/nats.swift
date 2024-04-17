@@ -333,6 +333,9 @@ class ConnectionHandler: ChannelInboundHandler {
             user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
             authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
+        if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
+            throw NatsConfigError("cannot use both nkey and nkeyPath")
+        }
         if let auth = self.auth, let credentialsPath = auth.credentialsPath {
             let credentials = try await URLSession.shared.data(from: credentialsPath).0
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
@@ -350,6 +353,35 @@ class ConnectionHandler: ChannelInboundHandler {
             let base64sig = sig.base64EncodedURLSafeNotPadded()
             initialConnect.signature = base64sig
             initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
+        }
+        if let nkey = self.auth?.nkeyPath {
+            let nkeyData = try await URLSession.shared.data(from: nkey).0
+
+            guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
+                throw NatsConfigError("failed to read NKEY file")
+            }
+            let keypair = try KeyPair(
+                seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+
+            guard let nonce = self.serverInfo?.nonce else {
+                throw NatsConfigError("missing nonce")
+            }
+            let sig = try keypair.sign(input: nonce.data(using: .utf8)!)
+            let base64sig = sig.base64EncodedURLSafeNotPadded()
+            initialConnect.signature = base64sig
+            initialConnect.nkey = keypair.publicKeyEncoded
+        }
+        if let nkey = self.auth?.nkey {
+            let keypair = try KeyPair(seed: nkey)
+            guard let nonce = self.serverInfo?.nonce else {
+                throw NatsConfigError("missing nonce")
+            }
+            let nonceData = nonce.data(using: .utf8)!
+            let sig = try keypair.sign(input: nonceData)
+            let base64sig = sig.base64EncodedURLSafeNotPadded()
+            initialConnect.signature = base64sig
+            initialConnect.nkey = keypair.publicKeyEncoded
         }
         let connect = initialConnect
         try await withCheckedThrowingContinuation { continuation in
@@ -447,6 +479,7 @@ class ConnectionHandler: ChannelInboundHandler {
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandler(sslHandler)
                             } catch {
+                                upgradePromise.fail(error)
                                 return channel.eventLoop.makeFailedFuture(error)
                             }
                         }
