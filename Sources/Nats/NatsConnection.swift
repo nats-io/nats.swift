@@ -479,6 +479,7 @@ class ConnectionHandler: ChannelInboundHandler {
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandler(sslHandler)
                             } catch {
+                                upgradePromise.fail(error)
                                 return channel.eventLoop.makeFailedFuture(error)
                             }
                         }
