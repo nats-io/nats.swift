@@ -11,17 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import Foundation
 import Logging
+import NIO
+import Nats
 import NatsServer
 import XCTest
 
+@testable import JetStream
 @testable import Nats
 
-class TestMessageWithHeadersTests: XCTestCase {
+class JetStreamTests: XCTestCase {
 
     static var allTests = [
-        ("testMessageWithHeaders", testMessageWithHeaders)
+        ("testJetStreamContext", testJetStreamContext)
     ]
 
     var natsServer = NatsServer()
@@ -31,26 +33,19 @@ class TestMessageWithHeadersTests: XCTestCase {
         natsServer.stop()
     }
 
-    func testMessageWithHeaders() async throws {
+    func testJetStreamContext() async throws {
         natsServer.start()
         logger.logLevel = .debug
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
-        let sub = try await client.subscribe(subject: "foo")
+        _ = Context(client: client)
+        _ = Context(client: client, prefix: "$JS.API")
+        _ = Context(client: client, domain: "STREAMS")
+        _ = Context(client: client, timeout: 10)
+        _ = Context(client: client, domain: "STREAMS", timeout: 10)
 
-        var hm = NatsHeaderMap()
-        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
-        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
-        hm.insert(try! NatsHeaderName("another"), NatsHeaderValue("one"))
-
-        try await client.publish(
-            "hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
-
-        let iter = sub.makeAsyncIterator()
-        let msg = await iter.next()
-        XCTAssertEqual(msg!.headers, hm)
-
+        try await client.close()
     }
 }
