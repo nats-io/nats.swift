@@ -9,7 +9,9 @@ let package = Package(
         .iOS(.v13),
     ],
     products: [
-        .library(name: "Nats", targets: ["Nats"])
+        .library(name: "Nats", targets: ["Nats"]),
+        .library(name: "JetStream", targets: ["JetStream"]),
+        .library(name: "NatsServer", targets: ["NatsServer"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
@@ -31,14 +33,32 @@ let package = Package(
                 .product(name: "NKeys", package: "nkeys.swift"),
                 .product(name: "Nuid", package: "swift-nuid"),
             ]),
-        .testTarget(
-            name: "NatsTests",
-            dependencies: ["Nats"],
-            resources: [
-                .process("Integration/Resources")
-            ]
-        ),
+        .target(
+            name: "JetStream",
+            dependencies: [
+                "Nats",
+                .product(name: "Logging", package: "swift-log"),
+            ]),
+        .target(
+            name: "NatsServer",
+            dependencies: [
+                .product(name: "Logging", package: "swift-log"),
+            ]),
 
+        .testTarget(
+                name: "NatsTests",
+                dependencies: ["Nats", "NatsServer"],
+                resources: [
+                .process("Integration/Resources")
+                ]
+        ),
+        .testTarget(
+                name: "JetStreamTests",
+                dependencies: ["Nats", "JetStream", "NatsServer"],
+                resources: [
+                .process("Integration/Resources")
+                ]
+        ),
         .executableTarget(name: "bench", dependencies: ["Nats"]),
         .executableTarget(name: "Benchmark", dependencies: ["Nats"]),
         .executableTarget(name: "BenchmarkPubSub", dependencies: ["Nats"]),

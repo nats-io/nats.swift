@@ -14,9 +14,9 @@
 import Foundation
 import XCTest
 
-class NatsServer {
-    var port: Int? { return natsServerPort }
-    var clientURL: String {
+public class NatsServer {
+    public var port: Int? { return natsServerPort }
+    public var clientURL: String {
         let scheme = tlsEnabled ? "tls://" : "nats://"
         if let natsServerPort {
             return "\(scheme)localhost:\(natsServerPort)"
@@ -25,7 +25,7 @@ class NatsServer {
         }
     }
 
-    var clientWebsocketURL: String {
+    public var clientWebsocketURL: String {
         let scheme = tlsEnabled ? "wss://" : "ws://"
         if let natsWebsocketPort {
             return "\(scheme)localhost:\(natsWebsocketPort)"
@@ -40,8 +40,12 @@ class NatsServer {
     private var tlsEnabled = false
     private var pidFile: URL?
 
+    public init() {}
+
     // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
-    func start(port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line) {
+    public func start(
+        port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line
+    ) {
         XCTAssertNil(
             self.process, "nats-server is already running on port \(port)", file: file, line: line)
         let process = Process()
@@ -125,7 +129,7 @@ class NatsServer {
         self.process = process
     }
 
-    func stop() {
+    public func stop() {
         if process == nil {
             return
         }
@@ -137,7 +141,7 @@ class NatsServer {
         tlsEnabled = false
     }
 
-    func setLameDuckMode(file: StaticString = #file, line: UInt = #line) {
+    public func setLameDuckMode(file: StaticString = #file, line: UInt = #line) {
         let process = Process()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

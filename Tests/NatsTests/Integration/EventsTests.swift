@@ -13,6 +13,7 @@
 
 import Foundation
 import Logging
+import NatsServer
 import XCTest
 
 @testable import Nats

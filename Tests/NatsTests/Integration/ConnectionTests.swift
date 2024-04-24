@@ -13,6 +13,7 @@
 
 import Logging
 import NIO
+import NatsServer
 import XCTest
 
 @testable import Nats
