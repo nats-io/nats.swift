@@ -50,7 +50,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private let stateLock = NSLock()
     internal var state: NatsState = .pending
 
-    private var subscriptions: [UInt64: Subscription]
+    private var subscriptions: [UInt64: NatsSubscription]
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
     private var serverInfo: ServerInfo?
     private var auth: Auth?
@@ -79,7 +79,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.urls = urls
         self.group = .singleton
         self.inputBuffer = allocator.buffer(capacity: 1024)
-        self.subscriptions = [UInt64: Subscription]()
+        self.subscriptions = [UInt64: NatsSubscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
         self.retainServersOrder = retainServersOrder
@@ -737,16 +737,16 @@ class ConnectionHandler: ChannelInboundHandler {
         try await buffer.writeMessage(operation)
     }
 
-    internal func subscribe(_ subject: String) async throws -> Subscription {
+    internal func subscribe(_ subject: String) async throws -> NatsSubscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         try await write(operation: ClientOp.subscribe((sid, subject, nil)))
-        let sub = Subscription(sid: sid, subject: subject, conn: self)
+        let sub = NatsSubscription(sid: sid, subject: subject, conn: self)
         self.subscriptions[sid] = sub
         return sub
     }
 
-    internal func unsubscribe(sub: Subscription, max: UInt64?) async throws {
+    internal func unsubscribe(sub: NatsSubscription, max: UInt64?) async throws {
         if let max, sub.delivered < max {
             // if max is set and the sub has not yet reached it, send unsub with max set
             // and do not remove the sub from connection
@@ -760,7 +760,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    internal func removeSub(sub: Subscription) {
+    internal func removeSub(sub: NatsSubscription) {
         self.subscriptions.removeValue(forKey: sub.sid)
         sub.complete()
     }

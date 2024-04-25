@@ -14,7 +14,7 @@
 import Foundation
 
 // TODO(pp): Implement slow consumer
-public class Subscription: AsyncSequence {
+public class NatsSubscription: AsyncSequence {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
 
@@ -33,7 +33,7 @@ public class Subscription: AsyncSequence {
     private static let defaultSubCapacity: UInt64 = 512 * 1024
 
     convenience init(sid: UInt64, subject: String, conn: ConnectionHandler) {
-        self.init(sid: sid, subject: subject, capacity: Subscription.defaultSubCapacity, conn: conn)
+        self.init(sid: sid, subject: subject, capacity: NatsSubscription.defaultSubCapacity, conn: conn)
     }
 
     init(sid: UInt64, subject: String, capacity: UInt64, conn: ConnectionHandler) {
@@ -74,9 +74,9 @@ public class Subscription: AsyncSequence {
 
     // AsyncIterator implementation
     public class SubscriptionIterator: AsyncIteratorProtocol {
-        private var subscription: Subscription
+        private var subscription: NatsSubscription
 
-        init(subscription: Subscription) {
+        init(subscription: NatsSubscription) {
             self.subscription = subscription
         }
 
