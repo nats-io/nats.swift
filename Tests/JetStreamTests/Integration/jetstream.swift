@@ -34,17 +34,31 @@ class JetStreamTests: XCTestCase {
     }
 
     func testJetStreamContext() async throws {
-        natsServer.start()
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
         logger.logLevel = .debug
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
-        _ = Context(client: client)
-        _ = Context(client: client, prefix: "$JS.API")
-        _ = Context(client: client, domain: "STREAMS")
-        _ = Context(client: client, timeout: 10)
-        _ = Context(client: client, domain: "STREAMS", timeout: 10)
+        _ = JetStreamContext(client: client)
+        _ = JetStreamContext(client: client, prefix: "$JS.API")
+        _ = JetStreamContext(client: client, domain: "STREAMS")
+        _ = JetStreamContext(client: client, timeout: 10)
+        var ctx = JetStreamContext(client: client)
+
+        let stream = """
+            {
+                "name": "FOO",
+                "subjects": ["foo"]
+            }
+            """
+        let data = stream.data(using: .utf8)!
+
+        var resp = try await client.request(data, subject: "$JS.API.STREAM.CREATE.FOO")
+        var ack = try await ctx.publish("foo", message: "Hello, World!".data(using: .utf8)!)
+        _ = try await ack.wait()
 
         try await client.close()
     }

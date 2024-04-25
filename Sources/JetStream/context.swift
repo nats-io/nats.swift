@@ -11,11 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Combine
 import Foundation
 import Nats
+import Nuid
 
 /// A context which can perform jetstream scoped requests.
-class Context {
+class JetStreamContext {
     private var client: NatsClient
     private var prefix: String = "$JS.API"
     private var timeout: TimeInterval = 5.0
@@ -41,10 +43,79 @@ class Context {
     }
 }
 
-extension Context {
-    public func publish(_ subject: String, message: Data) async throws {
-        let subject = "\(self.prefix).PUB \(subject)"
-        // add ack
-        try await self.client.publish(message, subject: subject)
+extension JetStreamContext {
+    // fix the error type. Add AckError
+    public func publish(_ subject: String, message: Data) async throws -> AckFuture {
+
+        let inbox = nextNuid()
+        let sub = try await self.client.subscribe(subject: inbox)
+        try await self.client.publish(message, subject: subject, reply: inbox)
+        return AckFuture(sub: sub)
+    }
+}
+
+struct AckFuture {
+    var sub: NatsSubscription
+    //TODO(jrm): Add handling of all response errors (wrong expected sequence etc.)
+    func wait() async throws -> Ack {
+        guard let response = await sub.makeAsyncIterator().next() else {
+            throw JetStreamPublishError("broken pipe")
+        }
+        if response.status == StatusCode.noResponders {
+            throw JetStreamPublishError("Stream not found")
+        }
+
+        let decoder = JSONDecoder()
+        guard let payload = response.payload else {
+            throw JetStreamPublishError("empty ack payload")
+        }
+        let ack: Response<Ack>
+        do {
+            ack = try decoder.decode(Response<Ack>.self, from: payload)
+        } catch {
+            throw JetStreamPublishError("failed to send request: \(error)")
+        }
+        switch ack {
+        case .success(let ack):
+            return ack
+        case .error(let err):
+            throw JetStreamPublishError("ack failed: \(err)")
+        }
+
+    }
+}
+struct JetStreamPublishError: NatsError {
+    var description: String
+    init(_ description: String) {
+        self.description = description
+    }
+}
+
+struct Ack: Codable {
+    var stream: String
+    var seq: UInt64
+    var domain: String?
+    var duplicate: Bool
+
+    // Custom CodingKeys to map JSON keys to Swift property names
+    enum CodingKeys: String, CodingKey {
+        case stream
+        case seq
+        case domain
+        case duplicate
+    }
+
+    // Custom initializer from Decoder
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Decode `stream` and `seq` as they are required
+        stream = try container.decode(String.self, forKey: .stream)
+        seq = try container.decode(UInt64.self, forKey: .seq)
+
+        // Decode `domain` as optional since it may not be present
+        domain = try container.decodeIfPresent(String.self, forKey: .domain)
+
+        // Decode `duplicate` and provide a default value of `false` if not present
+        duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
     }
 }
