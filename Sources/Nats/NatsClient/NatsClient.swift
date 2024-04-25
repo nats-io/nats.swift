@@ -189,7 +189,7 @@ extension NatsClient {
         connectionHandler.channel?.flush()
     }
 
-    public func subscribe(subject: String) async throws -> Subscription {
+    public func subscribe(subject: String) async throws -> NatsSubscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsClientError("internal error: empty connection handler")
