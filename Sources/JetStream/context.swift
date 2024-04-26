@@ -55,8 +55,8 @@ extension JetStreamContext {
 }
 
 struct AckFuture {
-    var sub: NatsSubscription
-    var timeout: TimeInterval
+    let sub: NatsSubscription
+    let timeout: TimeInterval
     func wait() async throws -> Ack {
         let response = try await withThrowingTaskGroup(
             of: NatsMessage?.self,
