@@ -24,7 +24,12 @@ public struct NatsMessage {
 }
 
 public struct StatusCode: Equatable {
+    public static let idleHeartbeat = StatusCode(100)
+    public static let ok = StatusCode(200)
+    public static let notFound = StatusCode(404)
+    public static let timeout = StatusCode(408)
     public static let noResponders = StatusCode(503)
+    public static let requestTerminated = StatusCode(409)
 
     let value: UInt16
 
