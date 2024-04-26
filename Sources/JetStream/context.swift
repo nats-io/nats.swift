@@ -50,17 +50,43 @@ extension JetStreamContext {
         let inbox = nextNuid()
         let sub = try await self.client.subscribe(subject: inbox)
         try await self.client.publish(message, subject: subject, reply: inbox)
-        return AckFuture(sub: sub)
+        return AckFuture(sub: sub, timeout: self.timeout)
     }
 }
 
 struct AckFuture {
     var sub: NatsSubscription
-    //TODO(jrm): Add handling of all response errors (wrong expected sequence etc.)
+    var timeout: TimeInterval
     func wait() async throws -> Ack {
-        guard let response = await sub.makeAsyncIterator().next() else {
-            throw JetStreamPublishError("broken pipe")
-        }
+        let response = try await withThrowingTaskGroup(
+            of: NatsMessage?.self,
+            body: { group in
+                group.addTask {
+                    return await sub.makeAsyncIterator().next()
+                }
+
+                // task for the timeout
+                group.addTask {
+                    try await Task.sleep(nanoseconds: UInt64(self.timeout * 1_000_000_000))
+                    return nil
+                }
+
+                for try await result in group {
+                    // if the result is not empty, return it (or throw status error)
+                    if let msg = result {
+                        if let status = msg.status, status == StatusCode.noResponders {
+                            throw NatsRequestError.noResponders
+                        }
+                        return msg
+                    } else {
+                        // if result is empty, time out
+                        throw NatsRequestError.timeout
+                    }
+                }
+
+                // this should not be reachable
+                throw JetStreamPublishError("internal error; error waiting for response")
+            })
         if response.status == StatusCode.noResponders {
             throw JetStreamPublishError("Stream not found")
         }
