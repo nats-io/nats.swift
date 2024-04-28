@@ -272,10 +272,14 @@ class ConnectionHandler: ChannelInboundHandler {
                 do {
                     let (bootstrap, upgradePromise) = try self.bootstrapConnection(to: s)
                     guard let host = s.host, let port = s.port else {
+                        upgradePromise.succeed() // avoid promise leaks
                         throw NatsConfigError("no url")
                     }
-                    self.channel = try await bootstrap.connect(host: host, port: port).get()
+                    let connect = bootstrap.connect(host: host, port: port)
+                    connect.cascadeFailure(to: upgradePromise)
+                    self.channel = try await connect.get()
                     guard let channel = self.channel else {
+                        upgradePromise.succeed() // avoid promise leaks
                         throw NatsClientError("internal error: empty channel")
                     }
 
