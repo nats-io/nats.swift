@@ -438,7 +438,7 @@ class ConnectionHandler: ChannelInboundHandler {
                             host: server.host ?? "localhost",
                             path: server.path,
                             query: server.query,
-                            headers: HTTPHeaders(), // TODO (mtmk): pass in from client options
+                            headers: HTTPHeaders(),  // TODO (mtmk): pass in from client options
                             upgradePromise: upgradePromise)
                         let httpUpgradeRequestHandlerBox = NIOLoopBound(
                             httpUpgradeRequestHandler, eventLoop: channel.eventLoop)

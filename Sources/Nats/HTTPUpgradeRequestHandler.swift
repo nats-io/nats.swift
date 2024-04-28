@@ -28,7 +28,10 @@ internal final class HTTPUpgradeRequestHandler: ChannelInboundHandler, Removable
 
     private var requestSent = false
 
-    init(host: String, path: String, query: String?, headers: HTTPHeaders, upgradePromise: EventLoopPromise<Void>) {
+    init(
+        host: String, path: String, query: String?, headers: HTTPHeaders,
+        upgradePromise: EventLoopPromise<Void>
+    ) {
         self.host = host
         self.path = path
         self.query = query
@@ -58,7 +61,8 @@ internal final class HTTPUpgradeRequestHandler: ChannelInboundHandler, Removable
         headers.add(name: "Host", value: self.host)
 
         var uri: String
-        if self.path.hasPrefix("/") || self.path.hasPrefix("ws://") || self.path.hasPrefix("wss://") {
+        if self.path.hasPrefix("/") || self.path.hasPrefix("ws://") || self.path.hasPrefix("wss://")
+        {
             uri = self.path
         } else {
             uri = "/" + self.path
