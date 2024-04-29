@@ -17,7 +17,7 @@ import Nats
 import Nuid
 
 /// A context which can perform jetstream scoped requests.
-class JetStreamContext {
+public class JetStreamContext {
     private var client: NatsClient
     private var prefix: String = "$JS.API"
     private var timeout: TimeInterval = 5.0
@@ -66,7 +66,7 @@ extension JetStreamContext {
     }
 }
 
-struct AckFuture {
+public struct AckFuture {
     let sub: NatsSubscription
     let timeout: TimeInterval
     func wait() async throws -> Ack {
@@ -122,25 +122,25 @@ struct AckFuture {
 
     }
 }
-struct JetStreamPublishError: NatsError {
-    var description: String
+public struct JetStreamPublishError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct JetStreamRequestError: NatsError {
-    var description: String
+public struct JetStreamRequestError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct Ack: Codable {
-    var stream: String
-    var seq: UInt64
-    var domain: String?
-    var duplicate: Bool
+public struct Ack: Codable {
+    public let stream: String
+    public let seq: UInt64
+    public let domain: String?
+    public let duplicate: Bool
 
     // Custom CodingKeys to map JSON keys to Swift property names
     enum CodingKeys: String, CodingKey {
@@ -151,7 +151,7 @@ struct Ack: Codable {
     }
 
     // Custom initializer from Decoder
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Decode `stream` and `seq` as they are required
         stream = try container.decode(String.self, forKey: .stream)
