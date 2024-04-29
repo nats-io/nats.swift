@@ -93,14 +93,14 @@ class JetStreamTests: XCTestCase {
         }
 
         XCTAssertEqual(info.streams, 1)
-        let badInfo: Response<AccountInfo> = try await ctx.request("STREAM.INFO.BAD", message: Data())
+        let badInfo: Response<AccountInfo> = try await ctx.request(
+            "STREAM.INFO.BAD", message: Data())
         guard case .error(let jetStreamAPIResponse) = badInfo else {
             XCTFail("should get error")
             return
         }
 
         XCTAssertEqual(ErrorCode.streamNotFound, jetStreamAPIResponse.error.errorCode)
-
 
     }
 }

@@ -53,11 +53,13 @@ extension JetStreamContext {
         return AckFuture(sub: sub, timeout: self.timeout)
     }
 
-    internal func request<T: Codable>(_ subject: String, message: Data) async throws -> Response<T> {
-        let response = try await self.client.request(message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+    internal func request<T: Codable>(_ subject: String, message: Data) async throws -> Response<T>
+    {
+        let response = try await self.client.request(
+            message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
 
         let decoder = JSONDecoder()
-       // maybe empty is ok if the response type is nil and we can skip this check?
+        // maybe empty is ok if the response type is nil and we can skip this check?
         guard let payload = response.payload else {
             throw JetStreamRequestError("empty response payload")
         }

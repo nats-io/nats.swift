@@ -534,5 +534,5 @@ public enum Response<T: Codable>: Codable {
 }
 
 func test() {
-//    JetStreamError(code: 400, errorCode: ErrorCode.accountResourcesExceeded, description: nil)
+    //    JetStreamError(code: 400, errorCode: ErrorCode.accountResourcesExceeded, description: nil)
 }
