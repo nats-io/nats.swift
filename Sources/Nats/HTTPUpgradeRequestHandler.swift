@@ -21,13 +21,21 @@ internal final class HTTPUpgradeRequestHandler: ChannelInboundHandler, Removable
     typealias OutboundOut = HTTPClientRequestPart
 
     let host: String
-    let headers = HTTPHeaders()
+    let path: String
+    let query: String?
+    let headers: HTTPHeaders
     let upgradePromise: EventLoopPromise<Void>
 
     private var requestSent = false
 
-    init(host: String, upgradePromise: EventLoopPromise<Void>) {
+    init(
+        host: String, path: String, query: String?, headers: HTTPHeaders,
+        upgradePromise: EventLoopPromise<Void>
+    ) {
         self.host = host
+        self.path = path
+        self.query = query
+        self.headers = headers
         self.upgradePromise = upgradePromise
     }
 
@@ -52,10 +60,22 @@ internal final class HTTPUpgradeRequestHandler: ChannelInboundHandler, Removable
         var headers = self.headers
         headers.add(name: "Host", value: self.host)
 
+        var uri: String
+        if self.path.hasPrefix("/") || self.path.hasPrefix("ws://") || self.path.hasPrefix("wss://")
+        {
+            uri = self.path
+        } else {
+            uri = "/" + self.path
+        }
+
+        if let query = self.query {
+            uri += "?\(query)"
+        }
+
         let requestHead = HTTPRequestHead(
             version: HTTPVersion(major: 1, minor: 1),
             method: .GET,
-            uri: "/",
+            uri: uri,
             headers: headers
         )
         context.write(self.wrapOutboundOut(.head(requestHead)), promise: nil)

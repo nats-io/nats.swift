@@ -438,10 +438,12 @@ class ConnectionHandler: ChannelInboundHandler {
                     }
                 } else {
                     if server.scheme == "ws" || server.scheme == "wss" {
-                        let host = server.host ?? "localhost"
-                        let port = server.port ?? 80
                         let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
-                            host: "\(host):\(port)", upgradePromise: upgradePromise)
+                            host: server.host ?? "localhost",
+                            path: server.path,
+                            query: server.query,
+                            headers: HTTPHeaders(),  // TODO (mtmk): pass in from client options
+                            upgradePromise: upgradePromise)
                         let httpUpgradeRequestHandlerBox = NIOLoopBound(
                             httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
 
