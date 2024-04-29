@@ -52,6 +52,18 @@ extension JetStreamContext {
         try await self.client.publish(message, subject: subject, reply: inbox)
         return AckFuture(sub: sub, timeout: self.timeout)
     }
+
+    internal func request<T: Codable>(_ subject: String, message: Data) async throws -> Response<T> {
+        let response = try await self.client.request(message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+
+        let decoder = JSONDecoder()
+       // maybe empty is ok if the response type is nil and we can skip this check?
+        guard let payload = response.payload else {
+            throw JetStreamRequestError("empty response payload")
+        }
+
+        return try decoder.decode(Response<T>.self, from: payload)
+    }
 }
 
 struct AckFuture {
@@ -117,6 +129,13 @@ struct JetStreamPublishError: NatsError {
     }
 }
 
+struct JetStreamRequestError: NatsError {
+    var description: String
+    init(_ description: String) {
+        self.description = description
+    }
+}
+
 struct Ack: Codable {
     var stream: String
     var seq: UInt64
@@ -144,4 +163,12 @@ struct Ack: Codable {
         // Decode `duplicate` and provide a default value of `false` if not present
         duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
     }
+}
+
+/// contains info about the `JetStream` usage from the current account.
+public struct AccountInfo: Codable {
+    public let memory: Int64
+    public let storage: Int64
+    public let streams: Int64
+    public let consumers: Int64
 }

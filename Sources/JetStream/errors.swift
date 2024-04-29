@@ -13,8 +13,13 @@
 
 import Foundation
 
-struct JetStreamError: Codable {
-    var code: uint
+public struct JetStreamAPIResponse: Codable {
+    let type: String
+    let error: JetStreamError
+}
+
+public struct JetStreamError: Codable {
+    var code: UInt
     //FIXME(jrm): This should be mapped to predefined JetStream errors from the server.
     var errorCode: ErrorCode
     var description: String?
@@ -26,7 +31,7 @@ struct JetStreamError: Codable {
     }
 }
 
-struct ErrorCode: Codable {
+struct ErrorCode: Codable, Equatable {
     let rawValue: UInt64
     /// Peer not a member
     static let clusterPeerNotMember = ErrorCode(rawValue: 10040)
@@ -483,11 +488,26 @@ struct ErrorCode: Codable {
 
 }
 
-enum Response<T: Codable>: Codable {
-    case success(T)
-    case error(JetStreamError)
+extension ErrorCode {
+    // Encoding
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
+    // Decoding
     init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let decodedValue = try container.decode(UInt64.self)
+        self = ErrorCode(rawValue: decodedValue)
+    }
+}
+
+public enum Response<T: Codable>: Codable {
+    case success(T)
+    case error(JetStreamAPIResponse)
+
+    public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
         // Try to decode the expected success type T first
@@ -497,11 +517,12 @@ enum Response<T: Codable>: Codable {
         }
 
         // If that fails, try to decode ErrorResponse
-        let errorResponse = try container.decode(JetStreamError.self)
+        let errorResponse = try container.decode(JetStreamAPIResponse.self)
         self = .error(errorResponse)
+        return
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
         case .success(let successData):
@@ -513,5 +534,5 @@ enum Response<T: Codable>: Codable {
 }
 
 func test() {
-    JetStreamError(code: 400, errorCode: ErrorCode.accountResourcesExceeded, description: nil)
+//    JetStreamError(code: 400, errorCode: ErrorCode.accountResourcesExceeded, description: nil)
 }
