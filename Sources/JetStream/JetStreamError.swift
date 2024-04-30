@@ -18,7 +18,7 @@ public struct JetStreamAPIResponse: Codable {
     let error: JetStreamError
 }
 
-public struct JetStreamError: Codable {
+public struct JetStreamError: Codable, Error {
     var code: UInt
     //FIXME(jrm): This should be mapped to predefined JetStream errors from the server.
     var errorCode: ErrorCode

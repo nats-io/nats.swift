@@ -145,8 +145,8 @@ extension NatsClient {
         }
         let inbox = "_INBOX.\(nextNuid())"
 
-        let response = try await connectionHandler.subscribe(inbox)
-        try await response.unsubscribe(after: 1)
+        let sub = try await connectionHandler.subscribe(inbox)
+        try await sub.unsubscribe(after: 1)
         try await connectionHandler.write(
             operation: ClientOp.publish((subject, inbox, payload, headers)))
 
@@ -154,7 +154,7 @@ extension NatsClient {
             of: NatsMessage?.self,
             body: { group in
                 group.addTask {
-                    return await response.makeAsyncIterator().next()
+                    return await sub.makeAsyncIterator().next()
                 }
 
                 // task for the timeout
@@ -166,12 +166,14 @@ extension NatsClient {
                 for try await result in group {
                     // if the result is not empty, return it (or throw status error)
                     if let msg = result {
+                        group.cancelAll()
                         if let status = msg.status, status == StatusCode.noResponders {
                             throw NatsRequestError.noResponders
                         }
                         return msg
                     } else {
-                        // if result is empty, time out
+                        try await sub.unsubscribe()
+                        group.cancelAll()
                         throw NatsRequestError.timeout
                     }
                 }

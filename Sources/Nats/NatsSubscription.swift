@@ -67,6 +67,7 @@ public class NatsSubscription: AsyncSequence {
         lock.withLock {
             closed = true
             if let continuation {
+                self.continuation = nil
                 continuation.resume(returning: nil)
             }
 

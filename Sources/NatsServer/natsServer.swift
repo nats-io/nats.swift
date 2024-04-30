@@ -54,8 +54,13 @@ public class NatsServer {
         let fileManager = FileManager.default
         pidFile = fileManager.temporaryDirectory.appendingPathComponent("nats-server.pid")
 
+        let tempDir = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["nats-server", "-p", "\(port)", "-P", pidFile!.path]
+        process.arguments = [
+            "nats-server", "-p", "\(port)", "-P", pidFile!.path, "--store_dir",
+            "\(tempDir.absoluteString)",
+        ]
         if let cfg {
             process.arguments?.append(contentsOf: ["-c", cfg])
         }
