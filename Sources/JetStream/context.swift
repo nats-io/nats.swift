@@ -59,7 +59,6 @@ extension JetStreamContext {
             message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
 
         let decoder = JSONDecoder()
-        // maybe empty is ok if the response type is nil and we can skip this check?
         guard let payload = response.payload else {
             throw JetStreamRequestError("empty response payload")
         }
