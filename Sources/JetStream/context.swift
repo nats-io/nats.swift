@@ -17,7 +17,7 @@ import Nats
 import Nuid
 
 /// A context which can perform jetstream scoped requests.
-class JetStreamContext {
+public class JetStreamContext {
     private var client: NatsClient
     private var prefix: String = "$JS.API"
     private var timeout: TimeInterval = 5.0
@@ -52,9 +52,22 @@ extension JetStreamContext {
         try await self.client.publish(message, subject: subject, reply: inbox)
         return AckFuture(sub: sub, timeout: self.timeout)
     }
+
+    internal func request<T: Codable>(_ subject: String, message: Data) async throws -> Response<T>
+    {
+        let response = try await self.client.request(
+            message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+
+        let decoder = JSONDecoder()
+        guard let payload = response.payload else {
+            throw JetStreamRequestError("empty response payload")
+        }
+
+        return try decoder.decode(Response<T>.self, from: payload)
+    }
 }
 
-struct AckFuture {
+public struct AckFuture {
     let sub: NatsSubscription
     let timeout: TimeInterval
     func wait() async throws -> Ack {
@@ -110,18 +123,25 @@ struct AckFuture {
 
     }
 }
-struct JetStreamPublishError: NatsError {
-    var description: String
+public struct JetStreamPublishError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct Ack: Codable {
-    var stream: String
-    var seq: UInt64
-    var domain: String?
-    var duplicate: Bool
+public struct JetStreamRequestError: NatsError {
+    public var description: String
+    init(_ description: String) {
+        self.description = description
+    }
+}
+
+public struct Ack: Codable {
+    public let stream: String
+    public let seq: UInt64
+    public let domain: String?
+    public let duplicate: Bool
 
     // Custom CodingKeys to map JSON keys to Swift property names
     enum CodingKeys: String, CodingKey {
@@ -132,7 +152,7 @@ struct Ack: Codable {
     }
 
     // Custom initializer from Decoder
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         // Decode `stream` and `seq` as they are required
         stream = try container.decode(String.self, forKey: .stream)
@@ -144,4 +164,12 @@ struct Ack: Codable {
         // Decode `duplicate` and provide a default value of `false` if not present
         duplicate = try container.decodeIfPresent(Bool.self, forKey: .duplicate) ?? false
     }
+}
+
+/// contains info about the `JetStream` usage from the current account.
+public struct AccountInfo: Codable {
+    public let memory: Int64
+    public let storage: Int64
+    public let streams: Int64
+    public let consumers: Int64
 }
