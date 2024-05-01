@@ -56,12 +56,7 @@ extension JetStreamContext {
     internal func request<T: Codable>(
         _ subject: String, message: Data? = nil
     ) async throws -> Response<T> {
-        var data: Data
-        if let message {
-            data = message
-        } else {
-            data = Data()
-        }
+        let data = message ?? Data()
         let response = try await self.client.request(
             data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
 
