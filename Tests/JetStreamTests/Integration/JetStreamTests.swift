@@ -206,4 +206,42 @@ class JetStreamTests: XCTestCase {
 
         XCTAssertEqual(stream.info.config, cfg)
     }
+
+    func testStreamInfo() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        // minimal config
+        let cfg = StreamConfig(name: "test", subjects: ["foo"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+
+        let info = try await stream.info()
+        XCTAssertEqual(info.config.name, "test")
+
+        // simulate external update of stream
+        let updateJSON = """
+            {
+                "name": "test",
+                "subjects": ["foo"],
+                "description": "updated"
+            }
+            """
+        let data = updateJSON.data(using: .utf8)!
+
+        _ = try await client.request(data, subject: "$JS.API.STREAM.UPDATE.test")
+
+        XCTAssertNil(stream.info.config.description)
+
+        let newInfo = try await stream.info()
+        XCTAssertEqual(newInfo.config.description, "updated")
+        XCTAssertEqual(stream.info.config.description, "updated")
+    }
 }
