@@ -53,10 +53,12 @@ extension JetStreamContext {
         return AckFuture(sub: sub, timeout: self.timeout)
     }
 
-    internal func request<T: Codable>(_ subject: String, message: Data) async throws -> Response<T>
-    {
+    internal func request<T: Codable>(
+        _ subject: String, message: Data? = nil
+    ) async throws -> Response<T> {
+        let data = message ?? Data()
         let response = try await self.client.request(
-            message, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+            data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
 
         let decoder = JSONDecoder()
         guard let payload = response.payload else {
@@ -87,11 +89,14 @@ public struct AckFuture {
                 for try await result in group {
                     // if the result is not empty, return it (or throw status error)
                     if let msg = result {
+                        group.cancelAll()
                         if let status = msg.status, status == StatusCode.noResponders {
                             throw NatsRequestError.noResponders
                         }
                         return msg
                     } else {
+                        group.cancelAll()
+                        try await sub.unsubscribe()
                         // if result is empty, time out
                         throw NatsRequestError.timeout
                     }
