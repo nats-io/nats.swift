@@ -222,7 +222,6 @@ class JetStreamTests: XCTestCase {
         let cfg = StreamConfig(name: "test", subjects: ["foo"])
         let stream = try await ctx.createStream(cfg: cfg)
 
-
         let info = try await stream.info()
         XCTAssertEqual(info.config.name, "test")
 
@@ -243,5 +242,72 @@ class JetStreamTests: XCTestCase {
         let newInfo = try await stream.info()
         XCTAssertEqual(newInfo.config.description, "updated")
         XCTAssertEqual(stream.info.config.description, "updated")
+    }
+
+    func testListStreams() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        for i in 0..<260 {
+            let subPrefix = i % 2 == 0 ? "foo" : "bar"
+            let cfg = StreamConfig(name: "STREAM-\(i)", subjects: ["\(subPrefix).\(i)"])
+            let _ = try await ctx.createStream(cfg: cfg)
+        }
+
+        // list all streams
+        var streams = await ctx.streams()
+
+        var i = 0
+        for try await _ in streams {
+            i += 1
+        }
+        XCTAssertEqual(i, 260)
+
+        var names = await ctx.streamNames()
+        i = 0
+        for try await _ in names {
+            i += 1
+        }
+        XCTAssertEqual(i, 260)
+
+        // list streams with subject foo.*
+        streams = await ctx.streams(subject: "foo.*")
+
+        i = 0
+        for try await stream in streams {
+            XCTAssert(stream.config.subjects!.first!.starts(with: "foo."))
+            i += 1
+        }
+        XCTAssertEqual(i, 130)
+
+        names = await ctx.streamNames(subject: "foo.*")
+        i = 0
+        for try await _ in names {
+            i += 1
+        }
+        XCTAssertEqual(i, 130)
+
+        // list streams with subject not matching any
+        streams = await ctx.streams(subject: "baz.*")
+
+        i = 0
+        for try await stream in streams {
+            XCTFail("should return 0 streams, got: \(stream.config)")
+        }
+        XCTAssertEqual(i, 0)
+
+        names = await ctx.streamNames(subject: "baz.*")
+        i = 0
+        for try await _ in names {
+            i += 1
+        }
+        XCTAssertEqual(i, 0)
     }
 }
