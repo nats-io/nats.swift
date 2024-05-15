@@ -835,7 +835,7 @@ public enum NatsEvent {
     case lameDuckMode
     case error(NatsError)
 
-    func kind() -> NatsEventKind {
+    public func kind() -> NatsEventKind {
         switch self {
         case .connected:
             return .connected

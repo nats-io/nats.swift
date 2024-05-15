@@ -11,14 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import JetStream
 import Logging
 import NIO
 import Nats
 import NatsServer
 import XCTest
-
-@testable import JetStream
-@testable import Nats
 
 class JetStreamTests: XCTestCase {
 
@@ -27,6 +25,8 @@ class JetStreamTests: XCTestCase {
         ("testRequest", testRequest),
         ("testStreamCRUD", testStreamCRUD),
         ("testStreamConfig", testStreamConfig),
+        ("testStreamInfo", testStreamInfo),
+        ("testListStreams", testListStreams),
     ]
 
     var natsServer = NatsServer()

@@ -13,10 +13,9 @@
 
 import Foundation
 import Logging
+import Nats
 import NatsServer
 import XCTest
-
-@testable import Nats
 
 class TestNatsEvents: XCTestCase {
 

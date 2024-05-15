@@ -15,8 +15,8 @@ public protocol NatsError: Error {
     var description: String { get }
 }
 
-struct NatsServerError: NatsError {
-    var description: String
+public struct NatsServerError: NatsError {
+    public var description: String
     var normalizedError: String {
         return description.trimWhitespacesAndApostrophes().lowercased()
     }
@@ -25,22 +25,22 @@ struct NatsServerError: NatsError {
     }
 }
 
-struct NatsParserError: NatsError {
-    var description: String
+public struct NatsParserError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct NatsClientError: NatsError {
-    var description: String
+public struct NatsClientError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-struct NatsConfigError: NatsError {
-    var description: String
+public struct NatsConfigError: NatsError {
+    public var description: String
     init(_ description: String) {
         self.description = description
     }
