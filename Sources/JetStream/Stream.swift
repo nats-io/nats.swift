@@ -23,6 +23,18 @@ public class Stream {
         self.info = info
     }
 
+    public func info() async throws -> StreamInfo {
+        let subj = "STREAM.INFO.\(info.config.name)"
+        let info: Response<StreamInfo> = try await ctx.request(subj)
+        switch info {
+        case .success(let info):
+            self.info = info
+            return info
+        case .error(let apiResponse):
+            throw apiResponse.error
+        }
+    }
+
     static func validate(name: String) throws {
         guard !name.isEmpty else {
             throw StreamValidationError.nameRequired
