@@ -13,10 +13,9 @@
 
 import Logging
 import NIO
+import Nats
 import NatsServer
 import XCTest
-
-@testable import Nats
 
 class CoreNatsTests: XCTestCase {
 

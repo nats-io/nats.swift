@@ -64,25 +64,25 @@ public enum StreamValidationError: NatsError {
 /// `StreamInfo` contains details about the configuration and state of a stream within JetStream.
 public struct StreamInfo: Codable {
     /// The configuration settings of the stream, set upon creation or update.
-    let config: StreamConfig
+    public let config: StreamConfig
 
     /// The timestamp indicating when the stream was created.
-    let created: String
+    public let created: String
 
     /// Provides the current state of the stream including metrics such as message count and total bytes.
-    let state: StreamState
+    public let state: StreamState
 
     /// Information about the cluster to which this stream belongs, if applicable.
-    let cluster: ClusterInfo?
+    public let cluster: ClusterInfo?
 
     /// Information about another stream that this one is mirroring, if applicable.
-    let mirror: StreamSourceInfo?
+    public let mirror: StreamSourceInfo?
 
     /// A list of source streams from which this stream collects data.
-    let sources: [StreamSourceInfo]?
+    public let sources: [StreamSourceInfo]?
 
     /// The timestamp indicating when this information was gathered by the server.
-    let timeStamp: String
+    public let timeStamp: String
 
     enum CodingKeys: String, CodingKey {
         case config, created, state, cluster, mirror, sources
@@ -93,97 +93,163 @@ public struct StreamInfo: Codable {
 /// `StreamConfig` defines the configuration for a JetStream stream.
 public struct StreamConfig: Codable, Equatable {
     /// The name of the stream, required and must be unique across the JetStream account.
-    let name: String
+    public let name: String
 
     /// An optional description of the stream.
-    var description: String? = nil
+    public var description: String?
 
     /// A list of subjects that the stream is listening on, cannot be set if the stream is a mirror.
-    var subjects: [String]? = nil
+    public var subjects: [String]?
 
     /// The message retention policy for the stream, defaults to `LimitsPolicy`.
-    var retention: RetentionPolicy = .limits
+    public var retention: RetentionPolicy
 
     /// The maximum number of consumers allowed for the stream.
-    var maxConsumers: Int = -1
+    public var maxConsumers: Int
 
     /// The maximum number of messages the stream will store.
-    var maxMsgs: Int64 = -1
+    public var maxMsgs: Int64
 
     /// The maximum total size of messages the stream will store.
-    var maxBytes: Int64 = -1
+    public var maxBytes: Int64
 
     /// Defines the policy for handling messages when the stream's limits are reached.
-    var discard: DiscardPolicy = .old
+    public var discard: DiscardPolicy
 
     /// A flag to enable discarding new messages per subject when limits are reached.
-    var discardNewPerSubject: Bool? = nil
+    public var discardNewPerSubject: Bool?
 
     /// The maximum age of messages that the stream will retain.
-    var maxAge: NanoTimeInterval = NanoTimeInterval(0)
+    public var maxAge: NanoTimeInterval
 
     /// The maximum number of messages per subject that the stream will retain.
-    var maxMsgsPerSubject: Int64 = -1
+    public var maxMsgsPerSubject: Int64
 
     /// The maximum size of any single message in the stream.
-    var maxMsgSize: Int32 = -1
+    public var maxMsgSize: Int32
 
     /// Specifies the type of storage backend used for the stream (file or memory).
-    var storage: StorageType = .file
+    public var storage: StorageType
 
     /// The number of stream replicas in clustered JetStream.
-    var replicas: Int = 1
+    public var replicas: Int
 
     /// A flag to disable acknowledging messages received by this stream.
-    var noAck: Bool? = nil
+    public var noAck: Bool?
 
     /// The window within which to track duplicate messages.
-    var duplicates: NanoTimeInterval? = nil
+    public var duplicates: NanoTimeInterval?
 
     /// Used to declare where the stream should be placed via tags or an explicit cluster name.
-    var placement: Placement? = nil
+    public var placement: Placement?
 
     /// Configuration for mirroring another stream.
-    var mirror: StreamSource? = nil
+    public var mirror: StreamSource?
 
     /// A list of other streams this stream sources messages from.
-    var sources: [StreamSource]? = nil
+    public var sources: [StreamSource]?
 
     /// Whether the stream does not allow messages to be published or deleted.
-    var sealed: Bool? = nil
+    public var sealed: Bool?
 
     /// Restricts the ability to delete messages from a stream via the API.
-    var denyDelete: Bool? = nil
+    public var denyDelete: Bool?
 
     /// Restricts the ability to purge messages from a stream via the API.
-    var denyPurge: Bool? = nil
+    public var denyPurge: Bool?
 
     /// Allows the use of the Nats-Rollup header to replace all contents of a stream or subject in a stream with a single new message.
-    var allowRollup: Bool? = nil
+    public var allowRollup: Bool?
 
     /// Specifies the message storage compression algorithm.
-    var compression: StoreCompression = .none
+    public var compression: StoreCompression
 
     /// The initial sequence number of the first message in the stream.
-    var firstSeq: UInt64? = nil
+    public var firstSeq: UInt64?
 
     /// Allows applying a transformation to matching messages' subjects.
-    var subjectTransform: SubjectTransformConfig? = nil
+    public var subjectTransform: SubjectTransformConfig?
 
     /// Allows immediate republishing a message to the configured subject after it's stored.
-    var rePublish: RePublish? = nil
+    public var rePublish: RePublish?
 
     /// Enables direct access to individual messages using direct get API.
-    var allowDirect: Bool = false
+    public var allowDirect: Bool
 
     /// Enables direct access to individual messages from the origin stream using direct get API.
-    var mirrorDirect: Bool = false
+    public var mirrorDirect: Bool
 
     /// Defines limits of certain values that consumers can set.
-    var consumerLimits: StreamConsumerLimits? = nil
+    public var consumerLimits: StreamConsumerLimits?
 
     /// A set of application-defined key-value pairs for associating metadata on the stream.
-    var metadata: [String: String]? = nil
+    public var metadata: [String: String]?
+
+    public init(
+        name: String,
+        description: String? = nil,
+        subjects: [String]? = nil,
+        retention: RetentionPolicy = .limits,
+        maxConsumers: Int = -1,
+        maxMsgs: Int64 = -1,
+        maxBytes: Int64 = -1,
+        discard: DiscardPolicy = .old,
+        discardNewPerSubject: Bool? = nil,
+        maxAge: NanoTimeInterval = NanoTimeInterval(0),
+        maxMsgsPerSubject: Int64 = -1,
+        maxMsgSize: Int32 = -1,
+        storage: StorageType = .file,
+        replicas: Int = 1,
+        noAck: Bool? = nil,
+        duplicates: NanoTimeInterval? = nil,
+        placement: Placement? = nil,
+        mirror: StreamSource? = nil,
+        sources: [StreamSource]? = nil,
+        sealed: Bool? = nil,
+        denyDelete: Bool? = nil,
+        denyPurge: Bool? = nil,
+        allowRollup: Bool? = nil,
+        compression: StoreCompression = .none,
+        firstSeq: UInt64? = nil,
+        subjectTransform: SubjectTransformConfig? = nil,
+        rePublish: RePublish? = nil,
+        allowDirect: Bool = false,
+        mirrorDirect: Bool = false,
+        consumerLimits: StreamConsumerLimits? = nil,
+        metadata: [String: String]? = nil
+    ) {
+        self.name = name
+        self.description = description
+        self.subjects = subjects
+        self.retention = retention
+        self.maxConsumers = maxConsumers
+        self.maxMsgs = maxMsgs
+        self.maxBytes = maxBytes
+        self.discard = discard
+        self.discardNewPerSubject = discardNewPerSubject
+        self.maxAge = maxAge
+        self.maxMsgsPerSubject = maxMsgsPerSubject
+        self.maxMsgSize = maxMsgSize
+        self.storage = storage
+        self.replicas = replicas
+        self.noAck = noAck
+        self.duplicates = duplicates
+        self.placement = placement
+        self.mirror = mirror
+        self.sources = sources
+        self.sealed = sealed
+        self.denyDelete = denyDelete
+        self.denyPurge = denyPurge
+        self.allowRollup = allowRollup
+        self.compression = compression
+        self.firstSeq = firstSeq
+        self.subjectTransform = subjectTransform
+        self.rePublish = rePublish
+        self.allowDirect = allowDirect
+        self.mirrorDirect = mirrorDirect
+        self.consumerLimits = consumerLimits
+        self.metadata = metadata
+    }
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -266,7 +332,7 @@ public struct StreamConfig: Codable, Equatable {
 }
 
 /// `RetentionPolicy` determines how messages in a stream are retained.
-enum RetentionPolicy: String, Codable {
+public enum RetentionPolicy: String, Codable {
     /// Messages are retained until any given limit is reached (MaxMsgs, MaxBytes or MaxAge).
     case limits
 
@@ -278,7 +344,7 @@ enum RetentionPolicy: String, Codable {
 }
 
 /// `DiscardPolicy` determines how to proceed when limits of messages or bytes are reached.
-enum DiscardPolicy: String, Codable {
+public enum DiscardPolicy: String, Codable {
     /// Remove older messages to return to the limits.
     case old
 
@@ -287,7 +353,7 @@ enum DiscardPolicy: String, Codable {
 }
 
 /// `StorageType` determines how messages are stored for retention.
-enum StorageType: String, Codable {
+public enum StorageType: String, Codable {
     /// Messages are stored on disk.
     case file
 
@@ -296,33 +362,51 @@ enum StorageType: String, Codable {
 }
 
 /// `Placement` guides the placement of streams in clustered JetStream.
-struct Placement: Codable, Equatable {
+public struct Placement: Codable, Equatable {
     /// Tags used to match streams to servers in the cluster.
-    var tags: [String]? = nil
+    public var tags: [String]?
 
     /// Name of the cluster to which the stream should be assigned.
-    var cluster: String? = nil
+    public var cluster: String?
+
+    public init(tags: [String]? = nil, cluster: String? = nil) {
+        self.tags = tags
+        self.cluster = cluster
+    }
 }
 
 /// `StreamSource` defines how streams can source from other streams.
-struct StreamSource: Codable, Equatable {
+public struct StreamSource: Codable, Equatable {
     /// Name of the stream to source from.
-    let name: String
+    public let name: String
 
     /// Sequence number to start sourcing from.
-    let optStartSeq: UInt64? = nil
+    public let optStartSeq: UInt64?
 
     // Timestamp of messages to start sourcing from.
-    let optStartTime: Date? = nil
+    public let optStartTime: Date?
 
     /// Subject filter to replicate only matching messages.
-    let filterSubject: String? = nil
+    public let filterSubject: String?
 
     /// Transforms applied to subjects.
-    let subjectTransforms: [SubjectTransformConfig]? = nil
+    public let subjectTransforms: [SubjectTransformConfig]?
 
     /// Configuration for external stream sources.
-    let external: ExternalStream? = nil
+    public let external: ExternalStream?
+
+    public init(
+        name: String, optStartSeq: UInt64? = nil, optStartTime: Date? = nil,
+        filterSubject: String? = nil, subjectTransforms: [SubjectTransformConfig]? = nil,
+        external: ExternalStream? = nil
+    ) {
+        self.name = name
+        self.optStartSeq = optStartSeq
+        self.optStartTime = optStartTime
+        self.filterSubject = filterSubject
+        self.subjectTransforms = subjectTransforms
+        self.external = external
+    }
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -335,13 +419,18 @@ struct StreamSource: Codable, Equatable {
 }
 
 /// `ExternalStream` qualifies access to a stream source in another account or JetStream domain.
-struct ExternalStream: Codable, Equatable {
+public struct ExternalStream: Codable, Equatable {
 
     /// Subject prefix for importing API subjects.
-    let apiPrefix: String
+    public let apiPrefix: String
 
     /// Delivery subject for push consumers.
-    let deliverPrefix: String
+    public let deliverPrefix: String
+
+    public init(apiPrefix: String, deliverPrefix: String) {
+        self.apiPrefix = apiPrefix
+        self.deliverPrefix = deliverPrefix
+    }
 
     enum CodingKeys: String, CodingKey {
         case apiPrefix = "api"
@@ -350,7 +439,7 @@ struct ExternalStream: Codable, Equatable {
 }
 
 /// `StoreCompression` specifies the message storage compression algorithm.
-enum StoreCompression: String, Codable {
+public enum StoreCompression: String, Codable {
     /// No compression is applied.
     case none
 
@@ -359,12 +448,17 @@ enum StoreCompression: String, Codable {
 }
 
 /// `SubjectTransformConfig` configures subject transformations for incoming messages.
-struct SubjectTransformConfig: Codable, Equatable {
+public struct SubjectTransformConfig: Codable, Equatable {
     /// Subject pattern to match incoming messages.
-    let source: String
+    public let source: String
 
     /// Subject pattern to remap the subject to.
-    let destination: String
+    public let destination: String
+
+    public init(source: String, destination: String) {
+        self.source = source
+        self.destination = destination
+    }
 
     enum CodingKeys: String, CodingKey {
         case source = "src"
@@ -373,15 +467,21 @@ struct SubjectTransformConfig: Codable, Equatable {
 }
 
 /// `RePublish` configures republishing of messages once they are committed to a stream.
-struct RePublish: Codable, Equatable {
+public struct RePublish: Codable, Equatable {
     /// Subject pattern to match incoming messages.
-    let source: String? = nil
+    public let source: String?
 
     /// Subject pattern to republish the subject to.
-    let destination: String
+    public let destination: String
 
     /// Flag to indicate if only headers should be republished.
-    let headersOnly: Bool? = nil
+    public let headersOnly: Bool?
+
+    public init(destination: String, source: String? = nil, headersOnly: Bool? = nil) {
+        self.destination = destination
+        self.source = source
+        self.headersOnly = headersOnly
+    }
 
     enum CodingKeys: String, CodingKey {
         case source = "src"
@@ -391,12 +491,17 @@ struct RePublish: Codable, Equatable {
 }
 
 /// `StreamConsumerLimits` defines the limits for a consumer on a stream.
-struct StreamConsumerLimits: Codable, Equatable {
+public struct StreamConsumerLimits: Codable, Equatable {
     /// Duration to clean up the consumer if inactive.
-    var inactiveThreshold: NanoTimeInterval? = nil
+    public var inactiveThreshold: NanoTimeInterval?
 
     /// Maximum number of outstanding unacknowledged messages.
-    var maxAckPending: Int? = nil
+    public var maxAckPending: Int?
+
+    public init(inactiveThreshold: NanoTimeInterval? = nil, maxAckPending: Int? = nil) {
+        self.inactiveThreshold = inactiveThreshold
+        self.maxAckPending = maxAckPending
+    }
 
     enum CodingKeys: String, CodingKey {
         case inactiveThreshold = "inactive_threshold"
@@ -407,37 +512,37 @@ struct StreamConsumerLimits: Codable, Equatable {
 /// `StreamState` represents the state of a JetStream stream at the time of the request.
 public struct StreamState: Codable {
     /// Number of messages stored in the stream.
-    let messages: UInt64
+    public let messages: UInt64
 
     /// Number of bytes stored in the stream.
-    let bytes: UInt64
+    public let bytes: UInt64
 
     /// Sequence number of the first message.
-    let firstSeq: UInt64
+    public let firstSeq: UInt64
 
     /// Timestamp of the first message.
-    let firstTime: String
+    public let firstTime: String
 
     /// Sequence number of the last message.
-    let lastSeq: UInt64
+    public let lastSeq: UInt64
 
     /// Timestamp of the last message.
-    let lastTime: String
+    public let lastTime: String
 
     /// Number of consumers on the stream.
-    let consumers: Int
+    public let consumers: Int
 
     /// Sequence numbers of deleted messages.
-    let deleted: [UInt64]?
+    public let deleted: [UInt64]?
 
     /// Number of messages deleted causing gaps in sequence numbers.
-    let numDeleted: Int?
+    public let numDeleted: Int?
 
     /// Number of unique subjects received messages.
-    let numSubjects: UInt64?
+    public let numSubjects: UInt64?
 
     /// Message count per subject.
-    let subjects: [String: UInt64]?
+    public let subjects: [String: UInt64]?
 
     enum CodingKeys: String, CodingKey {
         case messages
@@ -457,31 +562,31 @@ public struct StreamState: Codable {
 /// `ClusterInfo` contains details about the cluster to which a stream belongs.
 public struct ClusterInfo: Codable {
     /// The name of the cluster.
-    let name: String?
+    public let name: String?
 
     /// The server name of the RAFT leader within the cluster.
-    let leader: String?
+    public let leader: String?
 
     /// A list of peers that are part of the cluster.
-    let replicas: [PeerInfo]?
+    public let replicas: [PeerInfo]?
 }
 
 /// `StreamSourceInfo` provides information about an upstream stream source or mirror.
 public struct StreamSourceInfo: Codable {
     /// The name of the stream that is being replicated or mirrored.
-    let name: String
+    public let name: String
 
     /// The lag in messages between this stream and the stream it mirrors or sources from.
-    let lag: UInt64
+    public let lag: UInt64
 
     /// The time since the last activity was detected for this stream.
-    let active: NanoTimeInterval
+    public let active: NanoTimeInterval
 
     /// The subject filter used to replicate messages with matching subjects.
-    let filterSubject: String?
+    public let filterSubject: String?
 
     /// A list of subject transformations applied to messages as they are sourced.
-    let subjectTransforms: [SubjectTransformConfig]?
+    public let subjectTransforms: [SubjectTransformConfig]?
 
     enum CodingKeys: String, CodingKey {
         case name
@@ -495,19 +600,19 @@ public struct StreamSourceInfo: Codable {
 /// `PeerInfo` provides details about the peers in a cluster that support the stream or consumer.
 public struct PeerInfo: Codable {
     /// The server name of the peer within the cluster.
-    let name: String
+    public let name: String
 
     /// Indicates if the peer is currently synchronized and up-to-date with the leader.
-    let current: Bool
+    public let current: Bool
 
     /// Indicates if the peer is considered offline by the cluster.
-    let offline: Bool?
+    public let offline: Bool?
 
     /// The time duration since this peer was last active.
-    let active: NanoTimeInterval
+    public let active: NanoTimeInterval
 
     /// The number of uncommitted operations this peer is lagging behind the leader.
-    let lag: UInt64?
+    public let lag: UInt64?
 
     enum CodingKeys: String, CodingKey {
         case name

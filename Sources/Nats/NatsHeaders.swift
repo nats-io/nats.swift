@@ -109,7 +109,7 @@ public struct NatsHeaderMap: Equatable {
 }
 
 extension NatsHeaderMap {
-    subscript(name: NatsHeaderName) -> NatsHeaderValue? {
+    public subscript(name: NatsHeaderName) -> NatsHeaderValue? {
         get {
             return get(name)
         }

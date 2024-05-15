@@ -18,7 +18,7 @@ import NIO
 import NIOFoundationCompat
 import Nuid
 
-var logger = Logger(label: "Nats")
+public var logger = Logger(label: "Nats")
 
 /// NatsClient connection states
 public enum NatsState {

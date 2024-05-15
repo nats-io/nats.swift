@@ -53,7 +53,7 @@ extension JetStreamContext {
         return AckFuture(sub: sub, timeout: self.timeout)
     }
 
-    internal func request<T: Codable>(
+    public func request<T: Codable>(
         _ subject: String, message: Data? = nil
     ) async throws -> Response<T> {
         let data = message ?? Data()
@@ -72,7 +72,7 @@ extension JetStreamContext {
 public struct AckFuture {
     let sub: NatsSubscription
     let timeout: TimeInterval
-    func wait() async throws -> Ack {
+    public func wait() async throws -> Ack {
         let response = try await withThrowingTaskGroup(
             of: NatsMessage?.self,
             body: { group in
