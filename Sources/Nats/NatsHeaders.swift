@@ -56,15 +56,57 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
     // Example of standard headers
     public static let natsStream = try! NatsHeaderName("Nats-Stream")
     public static let natsSequence = try! NatsHeaderName("Nats-Sequence")
+    public static let natsTimestamp = try! NatsHeaderName("Nats-Time-Stamp")
+    public static let natsSubject = try! NatsHeaderName("Nats-Subject")
     // Add other standard headers as needed...
 }
 
 // Represents a NATS header map in Swift.
 public struct NatsHeaderMap: Equatable {
     private var inner: [NatsHeaderName: [NatsHeaderValue]]
+    internal var status: StatusCode? = nil
+    internal var description: String? = nil
 
     public init() {
         self.inner = [:]
+    }
+
+    public init(from headersString: String) throws {
+        self.inner = [:]
+        let headersArray = headersString.split(separator: "\r\n")
+        let versionLine = headersArray[0]
+        guard versionLine.hasPrefix(Data.versionLinePrefix) else {
+            throw NatsParserError(
+                "header version line does not begin with `NATS/1.0`")
+        }
+        let versionLineSuffix =
+            versionLine
+            .dropFirst(Data.versionLinePrefix.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // handle inlines status and description
+        if versionLineSuffix.count > 0 {
+            let statusAndDesc = versionLineSuffix.split(
+                separator: " ", maxSplits: 1)
+            guard let status = StatusCode(statusAndDesc[0]) else {
+                throw NatsParserError("could not parse status parameter")
+            }
+            self.status = status
+            if statusAndDesc.count > 1 {
+                self.description = String(statusAndDesc[1])
+            }
+        }
+
+        for header in headersArray.dropFirst() {
+            let headerParts = header.split(separator: ":", maxSplits: 1)
+            if headerParts.count == 2 {
+                self.append(
+                    try NatsHeaderName(String(headerParts[0])),
+                    NatsHeaderValue(String(headerParts[1]).trimmingCharacters(in: .whitespaces)))
+            } else {
+                logger.error("Error parsing header: \(header)")
+            }
+        }
     }
 
     var isEmpty: Bool {
@@ -105,6 +147,11 @@ public struct NatsHeaderMap: Equatable {
         }
         bytes.append(contentsOf: "\r\n".utf8)
         return bytes
+    }
+
+    // Implementing the == operator to exclude status and desc internal properties
+    public static func == (lhs: NatsHeaderMap, rhs: NatsHeaderMap) -> Bool {
+        return lhs.inner == rhs.inner
     }
 }
 

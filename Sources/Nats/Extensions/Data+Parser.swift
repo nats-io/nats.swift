@@ -19,7 +19,7 @@ extension Data {
     private static let crlf = Data([cr, lf])
     private static var currentNum = 0
     private static var errored = false
-    private static let versionLinePrefix = "NATS/1.0"
+    internal static let versionLinePrefix = "NATS/1.0"
 
     func removePrefix(_ prefix: Data) -> Data {
         guard self.starts(with: prefix) else { return self }
@@ -152,41 +152,10 @@ extension Data {
 
                     let headersData = self[headersStartIndex..<headersEndIndex]
                     if let headersString = String(data: headersData, encoding: .utf8) {
-                        let headersArray = headersString.split(separator: "\r\n")
-                        let versionLine = headersArray[0]
-                        guard versionLine.hasPrefix(Data.versionLinePrefix) else {
-                            throw NatsParserError(
-                                "header version line does not begin with `NATS/1.0`")
-                        }
-                        let versionLineSuffix =
-                            versionLine
-                            .dropFirst(Data.versionLinePrefix.count)
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        // handle inlines status and description
-                        if versionLineSuffix.count > 0 {
-                            let statusAndDesc = versionLineSuffix.split(
-                                separator: " ", maxSplits: 1)
-                            guard let status = StatusCode(statusAndDesc[0]) else {
-                                throw NatsParserError("could not parse status parameter")
-                            }
-                            msg.status = status
-                            if statusAndDesc.count > 1 {
-                                msg.description = String(statusAndDesc[1])
-                            }
-                        }
-
-                        for header in headersArray.dropFirst() {
-                            let headerParts = header.split(separator: ":")
-                            if headerParts.count == 2 {
-                                headers.append(
-                                    try NatsHeaderName(String(headerParts[0])),
-                                    NatsHeaderValue(String(headerParts[1])))
-                            } else {
-                                logger.error("Error parsing header: \(header)")
-                            }
-                        }
+                        headers = try NatsHeaderMap(from: headersString)
                     }
+                    msg.status = headers.status
+                    msg.description = headers.description
                     msg.headers = headers
 
                     if var payload = payload {
