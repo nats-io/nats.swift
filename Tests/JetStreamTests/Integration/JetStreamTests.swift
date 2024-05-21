@@ -340,30 +340,27 @@ class JetStreamTests: XCTestCase {
 
         // get by sequence
         var msg = try await stream.getMsg(sequence: 50)
-        XCTAssertEqual(msg.payload, "50".data(using: .utf8)!)
+        XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
 
         // get by sequence and subject
         msg = try await stream.getMsg(sequence: 50, subject: "foo.B")
         // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
-        XCTAssertEqual(msg.payload, "51".data(using: .utf8)!)
-        XCTAssertEqual(msg.headers, hm)
+        XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
 
         // get first message from a subject
         msg = try await stream.getMsg(firstForSubject: "foo.A")
-        XCTAssertEqual(msg.payload, "2".data(using: .utf8)!)
-        XCTAssertEqual(msg.headers, hm)
+        XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
 
         // get last message from subject
         msg = try await stream.getMsg(lastForSubject: "foo.B")
-        XCTAssertEqual(msg.payload, "99".data(using: .utf8)!)
-        XCTAssertEqual(msg.headers, hm)
+        XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
 
         // message not found
-        do {
-            _ = try await stream.getMsg(sequence: 200)
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .noMessageFound)
-        }
+        msg = try await stream.getMsg(sequence: 200)
+        XCTAssertNil(msg)
     }
 
     func testGetMsgDirect() async throws {
@@ -393,26 +390,23 @@ class JetStreamTests: XCTestCase {
 
         // get by sequence
         var msg = try await stream.getMsgDirect(sequence: 50)
-        XCTAssertEqual(msg.payload, "50".data(using: .utf8)!)
+        XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
 
         // get by sequence and subject
         msg = try await stream.getMsgDirect(sequence: 50, subject: "foo.B")
         // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
-        XCTAssertEqual(msg.payload, "51".data(using: .utf8)!)
+        XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
 
         // get first message from a subject
         msg = try await stream.getMsgDirect(firstForSubject: "foo.A")
-        XCTAssertEqual(msg.payload, "2".data(using: .utf8)!)
+        XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
 
         // get last message from subject
         msg = try await stream.getMsgDirect(lastForSubject: "foo.B")
-        XCTAssertEqual(msg.payload, "99".data(using: .utf8)!)
+        XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
 
         // message not found
-        do {
-            msg = try await stream.getMsgDirect(sequence: 200)
-        } catch let err as JetStreamDirectGetError {
-            XCTAssertEqual(err, .msgNotFound)
-        }
+        msg = try await stream.getMsgDirect(sequence: 200)
+        XCTAssertNil(msg)
     }
 }

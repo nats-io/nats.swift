@@ -65,7 +65,7 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(sequence: UInt64, subject: String? = nil) async throws -> RawMessage {
+    public func getMsg(sequence: UInt64, subject: String? = nil) async throws -> RawMessage? {
         let request = GetMsgRequest(seq: sequence, next: subject)
         return try await getRawMsg(request: request)
     }
@@ -79,7 +79,7 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(firstForSubject: String) async throws -> RawMessage {
+    public func getMsg(firstForSubject: String) async throws -> RawMessage? {
         let request = GetMsgRequest(next: firstForSubject)
         return try await getRawMsg(request: request)
     }
@@ -93,7 +93,7 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(lastForSubject: String) async throws -> RawMessage {
+    public func getMsg(lastForSubject: String) async throws -> RawMessage? {
         let request = GetMsgRequest(last: lastForSubject)
         return try await getRawMsg(request: request)
     }
@@ -115,7 +115,7 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(sequence: UInt64, subject: String? = nil) async throws -> RawMessage {
+    public func getMsgDirect(sequence: UInt64, subject: String? = nil) async throws -> RawMessage? {
         let request = GetMsgRequest(seq: sequence, next: subject)
         return try await getRawMsgDirect(request: request)
     }
@@ -134,7 +134,7 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(firstForSubject: String) async throws -> RawMessage {
+    public func getMsgDirect(firstForSubject: String) async throws -> RawMessage? {
         let request = GetMsgRequest(next: firstForSubject)
         return try await getRawMsgDirect(request: request)
     }
@@ -153,12 +153,12 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(lastForSubject: String) async throws -> RawMessage {
+    public func getMsgDirect(lastForSubject: String) async throws -> RawMessage? {
         let request = GetMsgRequest(last: lastForSubject)
         return try await getRawMsgDirect(request: request)
     }
 
-    private func getRawMsg(request: GetMsgRequest) async throws -> RawMessage {
+    private func getRawMsg(request: GetMsgRequest) async throws -> RawMessage? {
         let subject = "STREAM.MSG.GET.\(info.config.name)"
         let requestData = try JSONEncoder().encode(request)
 
@@ -168,11 +168,14 @@ public class Stream {
         case .success(let msg):
             return try RawMessage(from: msg.message)
         case .error(let err):
+            if err.error.errorCode == .noMessageFound {
+                return nil
+            }
             throw err.error
         }
     }
 
-    private func getRawMsgDirect(request: GetMsgRequest) async throws -> RawMessage {
+    private func getRawMsgDirect(request: GetMsgRequest) async throws -> RawMessage? {
         let subject = "DIRECT.GET.\(info.config.name)"
         let requestData = try JSONEncoder().encode(request)
 
@@ -180,7 +183,7 @@ public class Stream {
 
         if let status = resp.status {
             if status == StatusCode.notFound {
-                throw JetStreamDirectGetError.msgNotFound
+                return nil
             }
             throw JetStreamDirectGetError.errorResponse(status, resp.description)
         }
