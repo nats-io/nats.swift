@@ -27,6 +27,8 @@ class JetStreamTests: XCTestCase {
         ("testStreamConfig", testStreamConfig),
         ("testStreamInfo", testStreamInfo),
         ("testListStreams", testListStreams),
+        ("testGetMessage", testGetMessage),
+        ("testGetMessageDirect", testGetMessageDirect),
     ]
 
     var natsServer = NatsServer()
@@ -309,5 +311,102 @@ class JetStreamTests: XCTestCase {
             i += 1
         }
         XCTAssertEqual(i, 0)
+    }
+
+    func testGetMessage() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        var hm = NatsHeaderMap()
+        hm[try! NatsHeaderName("foo")] = NatsHeaderValue("bar")
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm[try! NatsHeaderName("key")] = NatsHeaderValue("val")
+        for i in 1...100 {
+            let msg = "\(i)".data(using: .utf8)!
+            let subj = i % 2 == 0 ? "foo.A" : "foo.B"
+            let ack = try await ctx.publish(subj, message: msg, headers: hm)
+            _ = try await ack.wait()
+        }
+
+        // get by sequence
+        var msg = try await stream.getMessage(sequence: 50)
+        XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
+
+        // get by sequence and subject
+        msg = try await stream.getMessage(sequence: 50, subject: "foo.B")
+        // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
+        XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
+
+        // get first message from a subject
+        msg = try await stream.getMessage(firstForSubject: "foo.A")
+        XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
+
+        // get last message from subject
+        msg = try await stream.getMessage(lastForSubject: "foo.B")
+        XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
+        XCTAssertEqual(msg!.headers, hm)
+
+        // message not found
+        msg = try await stream.getMessage(sequence: 200)
+        XCTAssertNil(msg)
+    }
+
+    func testGetMessageDirect() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"], allowDirect: true)
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        var hm = NatsHeaderMap()
+        hm[try! NatsHeaderName("foo")] = NatsHeaderValue("bar")
+        hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
+        hm[try! NatsHeaderName("key")] = NatsHeaderValue("val")
+        for i in 1...100 {
+            let msg = "\(i)".data(using: .utf8)!
+            let subj = i % 2 == 0 ? "foo.A" : "foo.B"
+            let ack = try await ctx.publish(subj, message: msg, headers: hm)
+            _ = try await ack.wait()
+        }
+
+        // get by sequence
+        var msg = try await stream.getMessageDirect(sequence: 50)
+        XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
+
+        // get by sequence and subject
+        msg = try await stream.getMessageDirect(sequence: 50, subject: "foo.B")
+        // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
+        XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
+
+        // get first message from a subject
+        msg = try await stream.getMessageDirect(firstForSubject: "foo.A")
+        XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
+
+        // get last message from subject
+        msg = try await stream.getMessageDirect(lastForSubject: "foo.B")
+        XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
+
+        // message not found
+        msg = try await stream.getMessageDirect(sequence: 200)
+        XCTAssertNil(msg)
     }
 }
