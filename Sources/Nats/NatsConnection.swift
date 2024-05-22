@@ -266,9 +266,10 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     private func connectToServer(s: URL) async throws {
+        var infoTask: Task<(), Never>? = nil
         let info = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
-            Task.detached {
+            infoTask = Task {
                 do {
                     let (bootstrap, upgradePromise) = try self.bootstrapConnection(to: s)
                     guard let host = s.host, let port = s.port else {
@@ -287,11 +288,12 @@ class ConnectionHandler: ChannelInboundHandler {
 
                     self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
+                    self.serverInfoContinuation = nil
                     continuation.resume(throwing: error)
                 }
             }
-            // Wait for the first message after sending the connect request
         }
+        await infoTask?.value
         self.serverInfo = info
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
