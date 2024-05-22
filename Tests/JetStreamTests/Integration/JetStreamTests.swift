@@ -27,8 +27,8 @@ class JetStreamTests: XCTestCase {
         ("testStreamConfig", testStreamConfig),
         ("testStreamInfo", testStreamInfo),
         ("testListStreams", testListStreams),
-        ("testGetMsg", testGetMsg),
-        ("testGetMsgDirect", testGetMsgDirect),
+        ("testGetMessage", testGetMessage),
+        ("testGetMessageDirect", testGetMessageDirect),
     ]
 
     var natsServer = NatsServer()
@@ -313,7 +313,7 @@ class JetStreamTests: XCTestCase {
         XCTAssertEqual(i, 0)
     }
 
-    func testGetMsg() async throws {
+    func testGetMessage() async throws {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
@@ -339,31 +339,31 @@ class JetStreamTests: XCTestCase {
         }
 
         // get by sequence
-        var msg = try await stream.getMsg(sequence: 50)
+        var msg = try await stream.getMessage(sequence: 50)
         XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
 
         // get by sequence and subject
-        msg = try await stream.getMsg(sequence: 50, subject: "foo.B")
+        msg = try await stream.getMessage(sequence: 50, subject: "foo.B")
         // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
         XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
         XCTAssertEqual(msg!.headers, hm)
 
         // get first message from a subject
-        msg = try await stream.getMsg(firstForSubject: "foo.A")
+        msg = try await stream.getMessage(firstForSubject: "foo.A")
         XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
         XCTAssertEqual(msg!.headers, hm)
 
         // get last message from subject
-        msg = try await stream.getMsg(lastForSubject: "foo.B")
+        msg = try await stream.getMessage(lastForSubject: "foo.B")
         XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
         XCTAssertEqual(msg!.headers, hm)
 
         // message not found
-        msg = try await stream.getMsg(sequence: 200)
+        msg = try await stream.getMessage(sequence: 200)
         XCTAssertNil(msg)
     }
 
-    func testGetMsgDirect() async throws {
+    func testGetMessageDirect() async throws {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
@@ -389,24 +389,24 @@ class JetStreamTests: XCTestCase {
         }
 
         // get by sequence
-        var msg = try await stream.getMsgDirect(sequence: 50)
+        var msg = try await stream.getMessageDirect(sequence: 50)
         XCTAssertEqual(msg!.payload, "50".data(using: .utf8)!)
 
         // get by sequence and subject
-        msg = try await stream.getMsgDirect(sequence: 50, subject: "foo.B")
+        msg = try await stream.getMessageDirect(sequence: 50, subject: "foo.B")
         // msg with sequence 50 is on subject foo.A, so we expect the next message which should be on foo.B
         XCTAssertEqual(msg!.payload, "51".data(using: .utf8)!)
 
         // get first message from a subject
-        msg = try await stream.getMsgDirect(firstForSubject: "foo.A")
+        msg = try await stream.getMessageDirect(firstForSubject: "foo.A")
         XCTAssertEqual(msg!.payload, "2".data(using: .utf8)!)
 
         // get last message from subject
-        msg = try await stream.getMsgDirect(lastForSubject: "foo.B")
+        msg = try await stream.getMessageDirect(lastForSubject: "foo.B")
         XCTAssertEqual(msg!.payload, "99".data(using: .utf8)!)
 
         // message not found
-        msg = try await stream.getMsgDirect(sequence: 200)
+        msg = try await stream.getMessageDirect(sequence: 200)
         XCTAssertNil(msg)
     }
 }

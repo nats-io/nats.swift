@@ -65,9 +65,10 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(sequence: UInt64, subject: String? = nil) async throws -> RawMessage? {
-        let request = GetMsgRequest(seq: sequence, next: subject)
-        return try await getRawMsg(request: request)
+    public func getMessage(sequence: UInt64, subject: String? = nil) async throws -> StreamMessage?
+    {
+        let request = GetMessageRequest(seq: sequence, next: subject)
+        return try await getMessage(request: request)
     }
 
     /// Retrieves the first message on the stream for a given subject.
@@ -79,9 +80,9 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(firstForSubject: String) async throws -> RawMessage? {
-        let request = GetMsgRequest(next: firstForSubject)
-        return try await getRawMsg(request: request)
+    public func getMessage(firstForSubject: String) async throws -> StreamMessage? {
+        let request = GetMessageRequest(next: firstForSubject)
+        return try await getMessage(request: request)
     }
 
     /// Retrieves last message on a stream for a given subject
@@ -93,9 +94,9 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamError`` if the server responded with an API error.
-    public func getMsg(lastForSubject: String) async throws -> RawMessage? {
-        let request = GetMsgRequest(last: lastForSubject)
-        return try await getRawMsg(request: request)
+    public func getMessage(lastForSubject: String) async throws -> StreamMessage? {
+        let request = GetMessageRequest(last: lastForSubject)
+        return try await getMessage(request: request)
     }
 
     /// Retrieves a raw message from stream.
@@ -115,9 +116,11 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(sequence: UInt64, subject: String? = nil) async throws -> RawMessage? {
-        let request = GetMsgRequest(seq: sequence, next: subject)
-        return try await getRawMsgDirect(request: request)
+    public func getMessageDirect(
+        sequence: UInt64, subject: String? = nil
+    ) async throws -> StreamMessage? {
+        let request = GetMessageRequest(seq: sequence, next: subject)
+        return try await getMessageDirect(request: request)
     }
 
     /// Retrieves the first message on the stream for a given subject.
@@ -134,9 +137,9 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(firstForSubject: String) async throws -> RawMessage? {
-        let request = GetMsgRequest(next: firstForSubject)
-        return try await getRawMsgDirect(request: request)
+    public func getMessageDirect(firstForSubject: String) async throws -> StreamMessage? {
+        let request = GetMessageRequest(next: firstForSubject)
+        return try await getMessageDirect(request: request)
     }
 
     /// Retrieves last message on a stream for a given subject
@@ -153,12 +156,12 @@ public class Stream {
     /// - Throws:
     ///   - ``JetStreamRequestError`` if the request was unsuccesful.
     ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
-    public func getMsgDirect(lastForSubject: String) async throws -> RawMessage? {
-        let request = GetMsgRequest(last: lastForSubject)
-        return try await getRawMsgDirect(request: request)
+    public func getMessageDirect(lastForSubject: String) async throws -> StreamMessage? {
+        let request = GetMessageRequest(last: lastForSubject)
+        return try await getMessageDirect(request: request)
     }
 
-    private func getRawMsg(request: GetMsgRequest) async throws -> RawMessage? {
+    private func getMessage(request: GetMessageRequest) async throws -> StreamMessage? {
         let subject = "STREAM.MSG.GET.\(info.config.name)"
         let requestData = try JSONEncoder().encode(request)
 
@@ -166,7 +169,7 @@ public class Stream {
 
         switch resp {
         case .success(let msg):
-            return try RawMessage(from: msg.message)
+            return try StreamMessage(from: msg.message)
         case .error(let err):
             if err.error.errorCode == .noMessageFound {
                 return nil
@@ -175,7 +178,7 @@ public class Stream {
         }
     }
 
-    private func getRawMsgDirect(request: GetMsgRequest) async throws -> RawMessage? {
+    private func getMessageDirect(request: GetMessageRequest) async throws -> StreamMessage? {
         let subject = "DIRECT.GET.\(info.config.name)"
         let requestData = try JSONEncoder().encode(request)
 
@@ -215,12 +218,12 @@ public class Stream {
 
         let payload = resp.payload ?? Data()
 
-        return RawMessage(
+        return StreamMessage(
             subject: subject.description, sequence: seq!, payload: payload, headers: resp.headers,
             time: timeStamp.description)
     }
 
-    internal struct GetMsgRequest: Codable {
+    internal struct GetMessageRequest: Codable {
         internal let seq: UInt64?
         internal let nextBySubject: String?
         internal let lastBySubject: String?
@@ -880,7 +883,8 @@ internal struct GetRawMessageResp: Codable {
     internal let message: StoredRawMessage
 }
 
-public struct RawMessage {
+/// Represents a message persisted on a stream.
+public struct StreamMessage {
 
     /// Subject of the message.
     public let subject: String
@@ -891,7 +895,7 @@ public struct RawMessage {
     /// Raw payload of the message as a base64 encoded string.
     public let payload: Data
 
-    /// Raw header string, if any.
+    /// Message headers, if any.
     public let headers: NatsHeaderMap?
 
     /// The time the message was published.
