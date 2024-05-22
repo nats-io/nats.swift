@@ -111,7 +111,7 @@ public class NatsSubscription: AsyncSequence {
     }
 
     public func unsubscribe(after: UInt64? = nil) async throws {
-        logger.debug("unsubscribe from subject \(subject)")
+        logger.info("unsubscribe from subject \(subject)")
         return try await self.conn.unsubscribe(sub: self, max: after)
     }
 }

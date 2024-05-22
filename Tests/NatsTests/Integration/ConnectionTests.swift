@@ -306,6 +306,7 @@ class CoreNatsTests: XCTestCase {
 
         var i = 0
         for await msg in sub {
+            print(msg)
             i += 1
         }
         XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
@@ -623,6 +624,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
@@ -657,6 +659,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
+        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
