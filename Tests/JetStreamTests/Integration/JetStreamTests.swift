@@ -29,6 +29,10 @@ class JetStreamTests: XCTestCase {
         ("testListStreams", testListStreams),
         ("testGetMessage", testGetMessage),
         ("testGetMessageDirect", testGetMessageDirect),
+        ("testDeleteMessage", testDeleteMessage),
+        ("testPurge", testPurge),
+        ("testPurgeSequence", testPurgeSequence),
+        ("testPurgeKeepm", testPurgeKeep),
     ]
 
     var natsServer = NatsServer()
@@ -408,5 +412,192 @@ class JetStreamTests: XCTestCase {
         // message not found
         msg = try await stream.getMessageDirect(sequence: 200)
         XCTAssertNil(msg)
+    }
+
+    func testDeleteMessage() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        for i in 1...10 {
+            let msg = "\(i)".data(using: .utf8)!
+            let subj = "foo.A"
+            let ack = try await ctx.publish(subj, message: msg)
+            _ = try await ack.wait()
+        }
+
+        // get by sequence to make sure the msg is available
+        var msg = try await stream.getMessage(sequence: 5)
+        XCTAssertEqual(msg!.payload, "5".data(using: .utf8)!)
+
+        // delete
+        try await stream.deleteMessage(sequence: 5)
+
+        msg = try await stream.getMessage(sequence: 5)
+        XCTAssertNil(msg)
+
+        // try deleting the msg again
+        do {
+            try await stream.deleteMessage(sequence: 5)
+        } catch let err as JetStreamError {
+            XCTAssertEqual(err.errorCode, .sequenceNotFound)
+        }
+
+        // now do the same with secure delete
+        // we cannot easily test whether the operation actually overwritten the value from unit test
+        msg = try await stream.getMessage(sequence: 7)
+        XCTAssertEqual(msg!.payload, "7".data(using: .utf8)!)
+
+        // delete
+        try await stream.deleteMessage(sequence: 7, secure: true)
+
+        msg = try await stream.getMessage(sequence: 7)
+        XCTAssertNil(msg)
+    }
+
+    func testPurge() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        let data = "hello".data(using: .utf8)!
+        for _ in 0..<3 {
+            let subj = "foo.A"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<4 {
+            let subj = "foo.B"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<5 {
+            let subj = "foo.C"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+
+        // purge foo.B
+        var purged = try await stream.purge(subject: "foo.B")
+        XCTAssertEqual(purged, 4)
+        var info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 8)
+
+        // purge rest of the messages
+        purged = try await stream.purge()
+        XCTAssertEqual(purged, 8)
+        info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 0)
+    }
+
+    func testPurgeSequence() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        let data = "hello".data(using: .utf8)!
+        for _ in 0..<10 {
+            let subj = "foo.A"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<20 {
+            let subj = "foo.B"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<30 {
+            let subj = "foo.C"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+
+        // purge "foo.B" with sequence 15
+        // This should remove only the first 4 messages on foo.B
+        var purged = try await stream.purge(sequence: 15, subject: "foo.B")
+        XCTAssertEqual(purged, 4)
+        var info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 56)
+
+        // purge with sequence 41, no filter
+        // This should remove the first 36 (after previous purge) messages
+        // and leave us with 20 messages
+        purged = try await stream.purge(sequence: 41)
+        XCTAssertEqual(purged, 36)
+        info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 20)
+    }
+
+    func testPurgeKeep() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "STREAM", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        let data = "hello".data(using: .utf8)!
+        for _ in 0..<10 {
+            let subj = "foo.A"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<20 {
+            let subj = "foo.B"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+        for _ in 0..<30 {
+            let subj = "foo.C"
+            let ack = try await ctx.publish(subj, message: data)
+            _ = try await ack.wait()
+        }
+
+        // purge "foo.B" retaining 50 messages
+        // This should remove 15 messages from "foo.B"
+        var purged = try await stream.purge(keep: 5, subject: "foo.B")
+        XCTAssertEqual(purged, 15)
+        var info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 45)
+
+        // purge with keep 10, no filter
+        // This should remove all but 10 messages from the stream
+        purged = try await stream.purge(keep: 10)
+        XCTAssertEqual(purged, 35)
+        info = try await stream.info()
+        XCTAssertEqual(info.state.messages, 10)
     }
 }
