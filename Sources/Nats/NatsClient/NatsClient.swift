@@ -79,10 +79,23 @@ public class NatsClient {
 }
 
 extension NatsClient {
+
+    /// Connects to a NATS server using configuration provided via ``NatsClientOptions``.
+    /// If ``NatsClientOptions/retryOnfailedConnect()`` is used, `connect()`
+    /// will not wait until the connection is but rather return immediatelly.
+    ///
+    /// - Throws:
+    ///  - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
+    ///  - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
+    ///  - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
+    ///  - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
+    ///  - ``NatsError/ConnectError/io`` if there was other error establishing connection
+    ///  - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
+    ///  - ``NatsError/ServerError/other(_:)`` if the server responds to client connection with a different error (e.g. max connections exceeded)
     public func connect() async throws {
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         if !connectionHandler.retryOnFailedConnect {
             try await connectionHandler.connect()
@@ -96,7 +109,7 @@ extension NatsClient {
     public func close() async throws {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         try await connectionHandler.close()
     }
@@ -104,7 +117,7 @@ extension NatsClient {
     public func suspend() async throws {
         logger.debug("suspend")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         try await connectionHandler.suspend()
     }
@@ -112,7 +125,7 @@ extension NatsClient {
     public func resume() async throws {
         logger.debug("resume")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         try await connectionHandler.resume()
     }
@@ -120,7 +133,7 @@ extension NatsClient {
     public func reconnect() async throws {
         logger.debug("resume")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         try await connectionHandler.reconnect()
     }
@@ -130,7 +143,7 @@ extension NatsClient {
     ) async throws {
         logger.debug("publish")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         try await connectionHandler.write(
             operation: ClientOp.publish((subject, reply, payload, headers)))
@@ -141,7 +154,7 @@ extension NatsClient {
     ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         let inbox = "_INBOX.\(nextNuid())"
 
@@ -168,25 +181,25 @@ extension NatsClient {
                     if let msg = result {
                         group.cancelAll()
                         if let status = msg.status, status == StatusCode.noResponders {
-                            throw NatsRequestError.noResponders
+                            throw NatsError.RequestError.noResponders
                         }
                         return msg
                     } else {
                         try await sub.unsubscribe()
                         group.cancelAll()
-                        throw NatsRequestError.timeout
+                        throw NatsError.RequestError.timeout
                     }
                 }
 
                 // this should not be reachable
-                throw NatsClientError("internal error; error waiting for response")
+                throw NatsError.ClientError.internalError("error waiting for response")
             })
     }
 
     public func flush() async throws {
         logger.debug("flush")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         connectionHandler.channel?.flush()
     }
@@ -194,14 +207,14 @@ extension NatsClient {
     public func subscribe(subject: String) async throws -> NatsSubscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         return try await connectionHandler.subscribe(subject)
     }
 
     public func rtt() async throws -> TimeInterval {
         guard let connectionHandler = self.connectionHandler else {
-            throw NatsClientError("internal error: empty connection handler")
+            throw NatsError.ClientError.internalError("empty connection handler")
         }
         let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
         await connectionHandler.sendPing(ping)

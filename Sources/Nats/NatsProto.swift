@@ -47,17 +47,17 @@ enum ServerOp {
     case info(ServerInfo)
     case ping
     case pong
-    case error(NatsServerError)
+    case error(NatsError.ServerError)
     case message(MessageInbound)
     case hMessage(HMessageInbound)
 
     static func parse(from msg: Data) throws -> ServerOp {
         guard msg.count > 2 else {
-            throw NatsParserError(
+            throw NatsError.ProtocolError.parserFailure(
                 "unable to parse inbound message: \(String(data: msg, encoding: .utf8)!)")
         }
         guard let msgType = msg.getMessageType() else {
-            throw NatsParserError("unknown server op: \(String(data: msg, encoding: .utf8)!)")
+            throw NatsError.ProtocolError.invalidOperation(String(data: msg, encoding: .utf8)!)
         }
         switch msgType {
         case .message:
@@ -70,15 +70,16 @@ enum ServerOp {
             return ok
         case .error:
             if let errMsg = msg.removePrefix(Data(NatsOperation.error.rawBytes)).toString() {
-                return error(NatsServerError(errMsg))
+                return error(NatsError.ServerError(errMsg))
             }
-            return error(NatsServerError("unexpected error"))
+            return error(NatsError.ServerError("unexpected error"))
         case .ping:
             return ping
         case .pong:
             return pong
         default:
-            throw NatsParserError("unknown server op: \(String(data: msg, encoding: .utf8)!)")
+            throw NatsError.ProtocolError.invalidOperation(
+                "unknown server op: \(String(data: msg, encoding: .utf8)!)")
         }
     }
 }
@@ -108,7 +109,8 @@ internal struct HMessageInbound: Equatable {
             subjectData, sidData, replyData, lengthHeaders, lengthData in
             let subject = String(decoding: subjectData, as: UTF8.self)
             guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
-                throw NatsParserError("unable to parse subscription ID as number")
+                throw NatsError.ProtocolError.parserFailure(
+                    "unable to parse subscription ID as number")
             }
             var replySubject: String? = nil
             if let replyData = replyData {
@@ -133,7 +135,7 @@ internal struct HMessageInbound: Equatable {
                 protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3],
                 protoComponents[4])
         default:
-            throw NatsParserError("unable to parse inbound message header")
+            throw NatsError.ProtocolError.parserFailure("unable to parse inbound message header")
         }
         return msg
     }
@@ -161,7 +163,8 @@ internal struct MessageInbound: Equatable {
             subjectData, sidData, replyData, lengthData in
             let subject = String(decoding: subjectData, as: UTF8.self)
             guard let sid = UInt64(String(decoding: sidData, as: UTF8.self)) else {
-                throw NatsParserError("unable to parse subscription ID as number")
+                throw NatsError.ProtocolError.parserFailure(
+                    "unable to parse subscription ID as number")
             }
             var replySubject: String? = nil
             if let replyData = replyData {
@@ -180,7 +183,7 @@ internal struct MessageInbound: Equatable {
             msg = try parseArgs(
                 protoComponents[0], protoComponents[1], protoComponents[2], protoComponents[3])
         default:
-            throw NatsParserError("unable to parse inbound message header")
+            throw NatsError.ProtocolError.parserFailure("unable to parse inbound message header")
         }
         return msg
     }

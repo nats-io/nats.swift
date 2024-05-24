@@ -26,6 +26,7 @@ class CoreNatsTests: XCTestCase {
         ("testForceReconnect", testForceReconnect),
         ("testConnectMultipleURLsOneIsValid", testConnectMultipleURLsOneIsValid),
         ("testConnectMultipleURLsRetainOrder", testConnectMultipleURLsRetainOrder),
+        ("testConnectDNSError", testConnectDNSError),
         ("testRetryOnFailedConnect", testRetryOnFailedConnect),
         ("testPublishWithReply", testPublishWithReply),
         ("testSubscribe", testSubscribe),
@@ -221,6 +222,43 @@ class CoreNatsTests: XCTestCase {
         }
     }
 
+    func testConnectDNSError() async throws {
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .urls([URL(string: "nats://invalid:1234")!])
+            .build()
+        do {
+            try await client.connect()
+        } catch let err as NatsError.ConnectError {
+            if case .dns(_) = err {
+                // pass
+            } else {
+                XCTFail("Expeted dns lookup error; got: \(err)")
+            }
+        } catch {
+            XCTFail("Expeted dns lookup error; got: \(error)")
+        }
+    }
+
+    func testConnectNIOError() async throws {
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .urls([URL(string: "nats://localhost:4321")!])
+            .build()
+        do {
+            // should be connection refused error
+            try await client.connect()
+        } catch let err as NatsError.ConnectError {
+            if case .io(_) = err {
+                // pass
+            } else {
+                XCTFail("Expeted dns lookup error; got: \(err)")
+            }
+        } catch {
+            XCTFail("Expeted dns lookup error; got: \(error)")
+        }
+    }
+
     func testRetryOnFailedConnect() async throws {
         let client = NatsClientOptions()
             .url(URL(string: "nats://localhost:4321")!)
@@ -306,7 +344,6 @@ class CoreNatsTests: XCTestCase {
 
         var i = 0
         for await msg in sub {
-            print(msg)
             i += 1
         }
         XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
@@ -412,10 +449,15 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
+        } catch let error as NatsError.ServerError {
+            if case .autorization(_) = error {
+                return
+            }
+            XCTFail("Expected auth error; got: \(error)")
         } catch {
-            XCTAssertNotNil(error, "Error should not be nil")
+            XCTFail("Expected auth error; got: \(error)")
         }
-
+        XCTFail("Expected error from connect")
     }
 
     func testTokenAuth() async throws {
@@ -444,9 +486,15 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
+        } catch let error as NatsError.ServerError {
+            if case .autorization(_) = error {
+                return
+            }
+            XCTFail("Expected auth error; got: \(error)")
         } catch {
-            XCTAssertNotNil(error, "Error should not be nil")
+            XCTFail("Expected auth error; got: \(error)")
         }
+        XCTFail("Expected error from connect")
     }
 
     func testCredentialsAuth() async throws {
@@ -501,20 +549,21 @@ class CoreNatsTests: XCTestCase {
             .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
             .build()
 
-        var thrownError: Error?
         do {
             try await badClient.connect()
+            XCTFail("Should have thrown an error")
+        } catch let error as NatsError.ConnectError {
+            if case .invalidConfig(_) = error {
+                XCTAssertEqual(
+                    error.description,
+                    "nats: invalid client configuration: cannot use both nkey and nkeyPath")
+                return
+            }
+            XCTFail("Expected auth error; got: \(error)")
         } catch {
-            thrownError = error
+            XCTFail("Expected auth error; got: \(error)")
         }
-
-        // Now assert that an error was thrown and check its type and properties
-        XCTAssertNotNil(thrownError, "Expected method to throw an error but it did not.")
-        if let natsError = thrownError as? NatsConfigError {
-            XCTAssertEqual(natsError.description, "cannot use both nkey and nkeyPath")
-        } else {
-            XCTFail("Unexpected error type: \(String(describing: thrownError))")
-        }
+        XCTFail("Expected error from connect")
     }
 
     func testMutualTls() async throws {
@@ -606,8 +655,13 @@ class CoreNatsTests: XCTestCase {
             .build()
         do {
             try await client.connect()
+        } catch let error as NatsError.ConnectError {
+            if case .tlsFailure(_) = error {
+                return
+            }
+            XCTFail("Expected tls error; got: \(error)")
         } catch {
-            return
+            XCTFail("Expected tls error; got: \(error)")
         }
         XCTFail("Expected error from connect")
     }
@@ -624,7 +678,6 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
-        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
@@ -659,7 +712,6 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
         let message = await iter.next()
-        print("payload: \(String(data:message!.payload!, encoding: .utf8)!)")
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
@@ -713,7 +765,7 @@ class CoreNatsTests: XCTestCase {
 
         do {
             _ = try await client.request("request".data(using: .utf8)!, subject: "service")
-        } catch NatsRequestError.noResponders {
+        } catch NatsError.RequestError.noResponders {
             try await client.close()
             return
         }
@@ -739,7 +791,7 @@ class CoreNatsTests: XCTestCase {
         do {
             _ = try await client.request(
                 "request".data(using: .utf8)!, subject: "service", timeout: 1)
-        } catch NatsRequestError.timeout {
+        } catch NatsError.RequestError.timeout {
             try await service.unsubscribe()
             try await client.close()
             return
