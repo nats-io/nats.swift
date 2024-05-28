@@ -62,6 +62,8 @@ public enum NatsError {
     public enum ClientError: NatsErrorProtocol {
         case internalError(String)
         case maxReconnects
+        case connectionClosed
+        case io(Error)
         case other(String)
 
         public var description: String {
@@ -70,6 +72,10 @@ public enum NatsError {
                 return "nats: internal error: \(error)"
             case .maxReconnects:
                 return "nats: max reconnects exceeded"
+            case .connectionClosed:
+                return "nats: connection is closed"
+            case .io(let error):
+                return "nats: IO error: \(error)"
             case .other(let error):
                 return "nats: \(error)"
             }
@@ -113,6 +119,17 @@ public enum NatsError {
         }
     }
 
+    public enum SubscriptionError: NatsErrorProtocol {
+        case subscriptionClosed
+
+        public var description: String {
+            switch self {
+            case .subscriptionClosed:
+                return "nats: subscription closed"
+            }
+        }
+    }
+
     public enum ParseHeaderError: NatsErrorProtocol {
         case invalidCharacter
 
@@ -120,7 +137,7 @@ public enum NatsError {
             switch self {
             case .invalidCharacter:
                 return
-                    "Invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
+                    "nats: invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
             }
         }
     }

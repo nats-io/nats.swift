@@ -106,38 +106,78 @@ extension NatsClient {
         }
     }
 
+    /// Closes a connection to NATS server.
+    ///
+    /// - Throws ``NatsError/ClientError/connectionClosed`` if the conneciton is already closed.
     public func close() async throws {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         try await connectionHandler.close()
     }
 
+    /// Suspends a connection to NATS server.
+    /// A suspended connection does not receive messages on subscriptions.
+    /// It can be resumed using ``resume()`` which restores subscriptions on successful reconnect.
+    ///
+    /// - Throws ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     public func suspend() async throws {
         logger.debug("suspend")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         try await connectionHandler.suspend()
     }
 
+    /// Resumes a suspended connection.
+    /// ``resume()`` will not wait for successful reconnection but rather trigger a reconnect process and return.
+    /// Register ``NatsEvent`` using ``NatsClient/on()`` to wait for successful reconnection.
+    ///
+    /// - Throws ``NatsError/ClientError`` if the conneciton is not in suspended state.
     public func resume() async throws {
         logger.debug("resume")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         try await connectionHandler.resume()
     }
 
+    /// Forces a reconnect attempt to the server.
+    /// This is a non-blocking operation and will start the  process without waiting for it to complete.
+    ///
+    /// - Throws ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     public func reconnect() async throws {
         logger.debug("resume")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         try await connectionHandler.reconnect()
     }
 
+    /// Publishes a message on a given subject.
+    ///
+    /// - Parameters:
+    ///   - payload: data to be published.
+    ///   - subject: a NATS subject on which the message will be published.
+    ///   - reply: optional reply subject when publishing a request.
+    ///   - headers: optional message headers.
+    ///
+    /// - Throws:
+    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    ///   - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
     public func publish(
         _ payload: Data, subject: String, reply: String? = nil, headers: NatsHeaderMap? = nil
     ) async throws {
@@ -145,16 +185,37 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         try await connectionHandler.write(
             operation: ClientOp.publish((subject, reply, payload, headers)))
     }
 
+    /// Sends a blocking request on a given subject.
+    ///
+    /// - Parameters:
+    ///   - payload: data to be published in the request.
+    ///   - subject: a NATS subject on which the request will be published.
+    ///   - headers: optional request headers.
+    ///   - timeout: request timeout - defaults to 5 seconds.
+    ///
+    /// - Returns a ``NatsMessage`` containing the response.
+    ///
+    /// - Throws:
+    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    ///   - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
+    ///   - ``NatsError/RequestError/noResponders`` if there are no responders available for the request.
+    ///   - ``NatsError/RequestError/timeout`` if there was a timeout waiting for the response.
     public func request(
         _ payload: Data, subject: String, headers: NatsHeaderMap? = nil, timeout: TimeInterval = 5
     ) async throws -> NatsMessage {
         logger.debug("request")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
+        }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
         }
         let inbox = "_INBOX.\(nextNuid())"
 
@@ -196,25 +257,53 @@ extension NatsClient {
             })
     }
 
+    /// Flushes the internal buffer ensuring that all messages are sent.
+    ///
+    /// - Throws ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     public func flush() async throws {
         logger.debug("flush")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         connectionHandler.channel?.flush()
     }
 
+    /// Subscribes to a subject to receive messages.
+    ///
+    /// - Parameter subject is a subject the client want's to subscribe to.
+    ///
+    /// - Returns a ``NatsSubscription`` allowing iteration over incoming messages.
+    ///
+    /// - Throws:
+    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    ///   - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
     public func subscribe(subject: String) async throws -> NatsSubscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
+        }
         return try await connectionHandler.subscribe(subject)
     }
 
+    /// Sends a PING to the server, returning the time it took for the server to respond.
+    ///
+    /// - Returns rtt of the request.
+    ///
+    /// - Throws:
+    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    ///   - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
     public func rtt() async throws -> TimeInterval {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
+        }
+        if case .closed = connectionHandler.state {
+            throw NatsError.ClientError.connectionClosed
         }
         let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
         await connectionHandler.sendPing(ping)

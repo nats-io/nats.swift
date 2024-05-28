@@ -14,6 +14,14 @@
 import Foundation
 
 extension NatsClient {
+
+    /// Registers a callback for given event types.
+    ///
+    /// - Parameters:
+    ///   - events: an array of ``NatsEventKind`` for which the handler will be invoked.
+    ///   - handler: a callback invoked upon triggering a specific event.
+    ///
+    /// - Returns an ID of the registered listener which can be used to disable it.
     @discardableResult
     public func on(_ events: [NatsEventKind], _ handler: @escaping (NatsEvent) -> Void) -> String {
         guard let connectionHandler = self.connectionHandler else {
@@ -22,6 +30,13 @@ extension NatsClient {
         return connectionHandler.addListeners(for: events, using: handler)
     }
 
+    /// Registers a callback for given event type.
+    ///
+    /// - Parameters:
+    ///   - events: a ``NatsEventKind`` for which the handler will be invoked.
+    ///   - handler: a callback invoked upon triggering a specific event.
+    ///
+    /// - Returns an ID of the registered listener which can be used to disable it.
     @discardableResult
     public func on(_ event: NatsEventKind, _ handler: @escaping (NatsEvent) -> Void) -> String {
         guard let connectionHandler = self.connectionHandler else {
@@ -30,7 +45,10 @@ extension NatsClient {
         return connectionHandler.addListeners(for: [event], using: handler)
     }
 
-    func off(_ id: String) {
+    /// Disables the event listener.
+    ///
+    /// - Parameter id: an ID of a listener to be disabled (returned when creating it).
+    public func off(_ id: String) {
         guard let connectionHandler = self.connectionHandler else {
             return
         }

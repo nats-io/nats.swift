@@ -263,7 +263,6 @@ class ConnectionHandler: ChannelInboundHandler {
                     err = .timeout
                 default:
                     err = .io(error)
-
                 }
                 throw err
             case let error as NIOConnectionError:
@@ -324,8 +323,10 @@ class ConnectionHandler: ChannelInboundHandler {
 
                     self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
-                    self.serverInfoContinuation = nil
-                    continuation.resume(throwing: error)
+                    if let continuation = self.serverInfoContinuation {
+                        self.serverInfoContinuation = nil
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
         }
@@ -594,7 +595,13 @@ class ConnectionHandler: ChannelInboundHandler {
             self.channel?.close(mode: .all, promise: promise)
         }
 
-        try await promise.futureResult.get()
+        do {
+            try await promise.futureResult.get()
+        } catch ChannelError.alreadyClosed {
+            // we don't want to throw an error if channel is already closed
+            // as that would mean we would get an error closing client during reconnect
+        }
+
         self.fire(.closed)
     }
 
@@ -784,7 +791,11 @@ class ConnectionHandler: ChannelInboundHandler {
         guard let buffer = self.batchBuffer else {
             throw NatsError.ClientError.other("not connected")
         }
-        try await buffer.writeMessage(operation)
+        do {
+            try await buffer.writeMessage(operation)
+        } catch let err as ChannelError {
+            throw NatsError.ClientError.io(err)
+        }
     }
 
     internal func subscribe(_ subject: String) async throws -> NatsSubscription {

@@ -31,6 +31,10 @@ extension BatchBuffer {
             return self.buffer.readableBytes
         }
 
+        mutating func clear() {
+            buffer.clear()
+        }
+
         mutating func getWriteBuffer() -> ByteBuffer {
             var writeBuffer = allocator.buffer(capacity: buffer.readableBytes)
             writeBuffer.writeBytes(buffer.readableBytesView)
@@ -105,10 +109,11 @@ internal class BatchBuffer {
                     }
                     state.waitingPromises.removeAll()
                 case .failure(let error):
-                    for promise in state.waitingPromises {
-                        promise.1.resume(throwing: error)
+                    for (_, continuation) in state.waitingPromises {
+                        continuation.resume(throwing: error)
                     }
                     state.waitingPromises.removeAll()
+                    state.clear()
                 }
 
                 // Check if there are any pending flushes

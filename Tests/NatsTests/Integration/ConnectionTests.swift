@@ -37,6 +37,8 @@ class CoreNatsTests: XCTestCase {
         ("testUsernameAndPassword", testUsernameAndPassword),
         ("testTokenAuth", testTokenAuth),
         ("testCredentialsAuth", testCredentialsAuth),
+        ("testNkeyAuth", testNkeyAuth),
+        ("testNkeyAuthFile", testNkeyAuthFile),
         ("testMutualTls", testMutualTls),
         ("testTlsFirst", testTlsFirst),
         ("testInvalidCertificate", testInvalidCertificate),
@@ -45,9 +47,10 @@ class CoreNatsTests: XCTestCase {
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
-        ("testRequest_timeout", testRequest_timeout),
-        ("testNkeyAuth", testNkeyAuth),
-        ("testNkeyAuthFile", testNkeyAuthFile),
+        ("testPublishOnClosedConnection", testPublishOnClosedConnection),
+        ("testCloseClosedConnection", testCloseClosedConnection),
+        ("testSuspendClosedConnection", testSuspendClosedConnection),
+        ("testReconnectOnClosedConnection", testReconnectOnClosedConnection),
     ]
     var natsServer = NatsServer()
 
@@ -229,15 +232,12 @@ class CoreNatsTests: XCTestCase {
             .build()
         do {
             try await client.connect()
-        } catch let err as NatsError.ConnectError {
-            if case .dns(_) = err {
-                // pass
-            } else {
-                XCTFail("Expeted dns lookup error; got: \(err)")
-            }
+        } catch NatsError.ConnectError.dns(_) {
+            return
         } catch {
             XCTFail("Expeted dns lookup error; got: \(error)")
         }
+        XCTFail("Expeted dns lookup error")
     }
 
     func testConnectNIOError() async throws {
@@ -248,15 +248,12 @@ class CoreNatsTests: XCTestCase {
         do {
             // should be connection refused error
             try await client.connect()
-        } catch let err as NatsError.ConnectError {
-            if case .io(_) = err {
-                // pass
-            } else {
-                XCTFail("Expeted dns lookup error; got: \(err)")
-            }
+        } catch NatsError.ConnectError.io(_) {
+            return
         } catch {
-            XCTFail("Expeted dns lookup error; got: \(error)")
+            XCTFail("Expeted IO lookup error; got: \(error)")
         }
+        XCTFail("Expeted io lookup error")
     }
 
     func testRetryOnFailedConnect() async throws {
@@ -329,6 +326,13 @@ class CoreNatsTests: XCTestCase {
 
         message = await iter.next()
         XCTAssertNil(message)
+
+        do {
+            try await sub.unsubscribe()
+        } catch NatsError.SubscriptionError.subscriptionClosed {
+            return
+        }
+        XCTFail("Expected subscription closed error")
     }
 
     func testUnsubscribeAfter() async throws {
@@ -343,7 +347,7 @@ class CoreNatsTests: XCTestCase {
         }
 
         var i = 0
-        for await msg in sub {
+        for await _ in sub {
             i += 1
         }
         XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
@@ -449,11 +453,9 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
-        } catch let error as NatsError.ServerError {
-            if case .autorization(_) = error {
-                return
-            }
-            XCTFail("Expected auth error; got: \(error)")
+        } catch NatsError.ServerError.autorization(_) {
+            // success
+            return
         } catch {
             XCTFail("Expected auth error; got: \(error)")
         }
@@ -486,11 +488,8 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
-        } catch let error as NatsError.ServerError {
-            if case .autorization(_) = error {
-                return
-            }
-            XCTFail("Expected auth error; got: \(error)")
+        } catch NatsError.ServerError.autorization(_) {
+            return
         } catch {
             XCTFail("Expected auth error; got: \(error)")
         }
@@ -655,11 +654,8 @@ class CoreNatsTests: XCTestCase {
             .build()
         do {
             try await client.connect()
-        } catch let error as NatsError.ConnectError {
-            if case .tlsFailure(_) = error {
-                return
-            }
-            XCTFail("Expected tls error; got: \(error)")
+        } catch NatsError.ConnectError.tlsFailure(_) {
+            return
         } catch {
             XCTFail("Expected tls error; got: \(error)")
         }
@@ -798,6 +794,94 @@ class CoreNatsTests: XCTestCase {
         }
 
         XCTFail("Expected timeout")
+    }
+
+    func testPublishOnClosedConnection() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let rtt: TimeInterval = try await client.rtt()
+        XCTAssertGreaterThan(rtt, 0, "should have RTT")
+
+        try await client.close()
+        do {
+            try await client.publish("msg".data(using: .utf8)!, subject: "test")
+        } catch NatsError.ClientError.connectionClosed {
+            return
+        } catch {
+            XCTFail("Expected connection closed error; got: \(error)")
+        }
+        XCTFail("Expected connection closed error")
+    }
+
+    func testCloseClosedConnection() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let rtt: TimeInterval = try await client.rtt()
+        XCTAssertGreaterThan(rtt, 0, "should have RTT")
+
+        try await client.close()
+        do {
+            try await client.close()
+        } catch NatsError.ClientError.connectionClosed {
+            return
+        } catch {
+            XCTFail("Expected connection closed error; got: \(error)")
+        }
+        XCTFail("Expected connection closed error")
+    }
+
+    func testSuspendClosedConnection() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let rtt: TimeInterval = try await client.rtt()
+        XCTAssertGreaterThan(rtt, 0, "should have RTT")
+
+        try await client.close()
+        do {
+            try await client.suspend()
+        } catch NatsError.ClientError.connectionClosed {
+            return
+        } catch {
+            XCTFail("Expected connection closed error; got: \(error)")
+        }
+        XCTFail("Expected connection closed error")
+    }
+
+    func testReconnectOnClosedConnection() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let rtt: TimeInterval = try await client.rtt()
+        XCTAssertGreaterThan(rtt, 0, "should have RTT")
+
+        try await client.close()
+        do {
+            try await client.reconnect()
+        } catch NatsError.ClientError.connectionClosed {
+            return
+        } catch {
+            XCTFail("Expected connection closed error; got: \(error)")
+        }
+        XCTFail("Expected connection closed error")
     }
 
     func createConfigFileFromTemplate(templateURL: URL, args: [String]) throws -> URL {

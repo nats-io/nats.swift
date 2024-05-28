@@ -110,8 +110,22 @@ public class NatsSubscription: AsyncSequence {
         return msg
     }
 
+    /// Unsubscribes from subscription.
+    ///
+    /// - Parameter after: if set, unsubscribe will be performed after reaching given number of messages.
+    ///   If it already reached or surpassed the passed value, it will immediately stop.
+    ///
+    /// - Throws:
+    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    ///   - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
     public func unsubscribe(after: UInt64? = nil) async throws {
         logger.info("unsubscribe from subject \(subject)")
+        if case .closed = self.conn.state {
+            throw NatsError.ClientError.connectionClosed
+        }
+        if self.closed {
+            throw NatsError.SubscriptionError.subscriptionClosed
+        }
         return try await self.conn.unsubscribe(sub: self, max: after)
     }
 }
