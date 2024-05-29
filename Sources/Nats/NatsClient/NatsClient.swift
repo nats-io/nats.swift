@@ -82,7 +82,7 @@ extension NatsClient {
 
     /// Connects to a NATS server using configuration provided via ``NatsClientOptions``.
     /// If ``NatsClientOptions/retryOnfailedConnect()`` is used, `connect()`
-    /// will not wait until the connection is but rather return immediatelly.
+    /// will not wait until the connection is established but rather return immediatelly.
     ///
     /// - Throws:
     ///  - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
