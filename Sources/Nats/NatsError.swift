@@ -64,7 +64,7 @@ public enum NatsError {
         case maxReconnects
         case connectionClosed
         case io(Error)
-        case other(String)
+        case invalidConnection(String)
 
         public var description: String {
             switch self {
@@ -76,7 +76,7 @@ public enum NatsError {
                 return "nats: connection is closed"
             case .io(let error):
                 return "nats: IO error: \(error)"
-            case .other(let error):
+            case .invalidConnection(let error):
                 return "nats: \(error)"
             }
         }

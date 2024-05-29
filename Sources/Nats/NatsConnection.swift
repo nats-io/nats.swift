@@ -152,10 +152,12 @@ class ConnectionHandler: ChannelInboundHandler {
                 Task {
                     do {
                         try await self.write(operation: .pong)
-                    } catch {
-                        logger.error("error sending pong: \(error)")
+                    } catch let err as NatsError.ClientError {
+                        logger.error("error sending pong: \(err)")
                         self.fire(
-                            .error(NatsError.ClientError.other("error sending pong: \(error)")))
+                            .error(err))
+                    } catch {
+                        logger.error("unexpected error sending pong: \(error)")
                     }
                 }
             case .pong:
@@ -640,7 +642,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         try await eventLoop.submit {
             guard self.state == .suspended else {
-                throw NatsError.ClientError.other(
+                throw NatsError.ClientError.invalidConnection(
                     "unable to resume connection - connection is not in suspended state")
             }
             self.handleReconnect()
@@ -789,12 +791,12 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func write(operation: ClientOp) async throws {
         guard let buffer = self.batchBuffer else {
-            throw NatsError.ClientError.other("not connected")
+            throw NatsError.ClientError.invalidConnection("not connected")
         }
         do {
             try await buffer.writeMessage(operation)
-        } catch let err as ChannelError {
-            throw NatsError.ClientError.io(err)
+        } catch {
+            throw NatsError.ClientError.io(error)
         }
     }
 
