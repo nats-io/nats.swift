@@ -93,8 +93,8 @@ internal final class HTTPUpgradeRequestHandler: ChannelInboundHandler, Removable
         let clientResponse = self.unwrapInboundIn(data)
         switch clientResponse {
         case .head(let responseHead):
-            //let error = WebSocketClient.Error.invalidResponseStatus(responseHead)
-            self.upgradePromise.fail(NatsClientError("ws error \(responseHead)"))
+            self.upgradePromise.fail(
+                NatsError.ClientError.invalidConnection("ws error \(responseHead)"))
         case .body: break
         case .end:
             context.close(promise: nil)

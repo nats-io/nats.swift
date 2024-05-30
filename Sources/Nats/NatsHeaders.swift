@@ -26,25 +26,13 @@ public struct NatsHeaderValue: Equatable, CustomStringConvertible {
     }
 }
 
-public enum ParseNatsHeaderNameError: NatsError {
-    case invalidCharacter
-
-    public var description: String {
-        switch self {
-        case .invalidCharacter:
-            return
-                "Invalid header name (name cannot contain non-ascii alphanumeric characters other than '-')"
-        }
-    }
-}
-
 // Custom header representation in Swift
 public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
     private var inner: String
 
     public init(_ value: String) throws {
         if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
-            throw ParseNatsHeaderNameError.invalidCharacter
+            throw NatsError.ParseHeaderError.invalidCharacter
         }
         self.inner = value
     }
@@ -76,7 +64,7 @@ public struct NatsHeaderMap: Equatable {
         let headersArray = headersString.split(separator: "\r\n")
         let versionLine = headersArray[0]
         guard versionLine.hasPrefix(Data.versionLinePrefix) else {
-            throw NatsParserError(
+            throw NatsError.ProtocolError.parserFailure(
                 "header version line does not begin with `NATS/1.0`")
         }
         let versionLineSuffix =
@@ -89,7 +77,7 @@ public struct NatsHeaderMap: Equatable {
             let statusAndDesc = versionLineSuffix.split(
                 separator: " ", maxSplits: 1)
             guard let status = StatusCode(statusAndDesc[0]) else {
-                throw NatsParserError("could not parse status parameter")
+                throw NatsError.ProtocolError.parserFailure("could not parse status parameter")
             }
             self.status = status
             if statusAndDesc.count > 1 {

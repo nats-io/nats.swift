@@ -152,9 +152,12 @@ class ConnectionHandler: ChannelInboundHandler {
                 Task {
                     do {
                         try await self.write(operation: .pong)
+                    } catch let err as NatsError.ClientError {
+                        logger.error("error sending pong: \(err)")
+                        self.fire(
+                            .error(err))
                     } catch {
-                        logger.error("error sending pong: \(error)")
-                        self.fire(.error(NatsClientError("error sending pong: \(error)")))
+                        logger.error("unexpected error sending pong: \(error)")
                     }
                 }
             case .pong:
@@ -225,7 +228,7 @@ class ConnectionHandler: ChannelInboundHandler {
         for s in servers {
             if let maxReconnects {
                 if reconnectAttempts >= maxReconnects {
-                    throw NatsClientError("could not reconnect; maxReconnects exceeded")
+                    throw NatsError.ClientError.maxReconnects
                 }
 
             }
@@ -236,10 +239,15 @@ class ConnectionHandler: ChannelInboundHandler {
 
             do {
                 try await connectToServer(s: s)
-            } catch let error as NatsConfigError {
-                throw error
+            } catch let error as NatsError.ConnectError {
+                if case .invalidConfig(_) = error {
+                    throw error
+                }
+                logger.debug("error connecting to server: \(error)")
+                lastErr = error
+                continue
             } catch {
-                logger.error("error connecting to server: \(error)")
+                logger.debug("error connecting to server: \(error)")
                 lastErr = error
                 continue
             }
@@ -248,11 +256,38 @@ class ConnectionHandler: ChannelInboundHandler {
         }
         if let lastErr {
             self.state = .disconnected
-            throw lastErr
+            switch lastErr {
+            case let error as ChannelError:
+                self.serverInfoContinuation = nil
+                var err: NatsError.ConnectError
+                switch error.self {
+                case .connectTimeout(_):
+                    err = .timeout
+                default:
+                    err = .io(error)
+                }
+                throw err
+            case let error as NIOConnectionError:
+                if let dnsAAAAError = error.dnsAAAAError {
+                    throw NatsError.ConnectError.dns(dnsAAAAError)
+                } else if let dnsAError = error.dnsAError {
+                    throw NatsError.ConnectError.dns(dnsAError)
+                } else {
+                    throw NatsError.ConnectError.io(error)
+                }
+            case let err as NIOSSLError:
+                throw NatsError.ConnectError.tlsFailure(err)
+            case let err as BoringSSLError:
+                throw NatsError.ConnectError.tlsFailure(err)
+            case let err as NatsError.ServerError:
+                throw err
+            default:
+                throw NatsError.ConnectError.io(lastErr)
+            }
         }
         self.reconnectAttempts = 0
         guard let channel = self.channel else {
-            throw NatsClientError("internal error: empty channel")
+            throw NatsError.ClientError.internalError("empty channel")
         }
         // Schedule the task to send a PING periodically
         let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval * 1_000_000_000))
@@ -267,29 +302,33 @@ class ConnectionHandler: ChannelInboundHandler {
 
     private func connectToServer(s: URL) async throws {
         var infoTask: Task<(), Never>? = nil
+        // this continuation can throw NatsError.ServerError if server responds with
+        // -ERR to client connect (e.g. auth error)
         let info = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
             infoTask = Task {
                 do {
-                    let (bootstrap, upgradePromise) = try self.bootstrapConnection(to: s)
+                    let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
                     guard let host = s.host, let port = s.port else {
                         upgradePromise.succeed()  // avoid promise leaks
-                        throw NatsConfigError("no url")
+                        throw NatsError.ConnectError.invalidConfig("no url")
                     }
                     let connect = bootstrap.connect(host: host, port: port)
                     connect.cascadeFailure(to: upgradePromise)
                     self.channel = try await connect.get()
                     guard let channel = self.channel else {
                         upgradePromise.succeed()  // avoid promise leaks
-                        throw NatsClientError("internal error: empty channel")
+                        throw NatsError.ClientError.internalError("empty channel")
                     }
 
                     try await upgradePromise.futureResult.get()
 
                     self.batchBuffer = BatchBuffer(channel: channel)
                 } catch {
-                    self.serverInfoContinuation = nil
-                    continuation.resume(throwing: error)
+                    if let continuation = self.serverInfoContinuation {
+                        self.serverInfoContinuation = nil
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
         }
@@ -340,18 +379,20 @@ class ConnectionHandler: ChannelInboundHandler {
             authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
         if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
-            throw NatsConfigError("cannot use both nkey and nkeyPath")
+            throw NatsError.ConnectError.invalidConfig("cannot use both nkey and nkeyPath")
         }
         if let auth = self.auth, let credentialsPath = auth.credentialsPath {
             let credentials = try await URLSession.shared.data(from: credentialsPath).0
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
-                throw NatsConfigError("failed to extract JWT from credentials file")
+                throw NatsError.ConnectError.invalidConfig(
+                    "failed to extract JWT from credentials file")
             }
             guard let nkey = JwtUtils.parseDecoratedNKey(contents: credentials) else {
-                throw NatsConfigError("failed to extract NKEY from credentials file")
+                throw NatsError.ConnectError.invalidConfig(
+                    "failed to extract NKEY from credentials file")
             }
             guard let nonce = self.serverInfo?.nonce else {
-                throw NatsConfigError("missing nonce")
+                throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
             let nonceData = nonce.data(using: .utf8)!
@@ -364,14 +405,14 @@ class ConnectionHandler: ChannelInboundHandler {
             let nkeyData = try await URLSession.shared.data(from: nkey).0
 
             guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
-                throw NatsConfigError("failed to read NKEY file")
+                throw NatsError.ConnectError.invalidConfig("failed to read NKEY file")
             }
             let keypair = try KeyPair(
                 seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines)
             )
 
             guard let nonce = self.serverInfo?.nonce else {
-                throw NatsConfigError("missing nonce")
+                throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let sig = try keypair.sign(input: nonce.data(using: .utf8)!)
             let base64sig = sig.base64EncodedURLSafeNotPadded()
@@ -381,7 +422,7 @@ class ConnectionHandler: ChannelInboundHandler {
         if let nkey = self.auth?.nkey {
             let keypair = try KeyPair(seed: nkey)
             guard let nonce = self.serverInfo?.nonce else {
-                throw NatsConfigError("missing nonce")
+                throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let nonceData = nonce.data(using: .utf8)!
             let sig = try keypair.sign(input: nonceData)
@@ -390,6 +431,8 @@ class ConnectionHandler: ChannelInboundHandler {
             initialConnect.nkey = keypair.publicKeyEncoded
         }
         let connect = initialConnect
+        // this continuation can throw NatsError.ServerError if server responds with
+        // -ERR to client connect (e.g. auth error)
         try await withCheckedThrowingContinuation { continuation in
             self.connectionEstablishedContinuation = continuation
             Task.detached {
@@ -406,7 +449,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     private func bootstrapConnection(
         to server: URL
-    ) throws -> (ClientBootstrap, EventLoopPromise<Void>) {
+    ) -> (ClientBootstrap, EventLoopPromise<Void>) {
         let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: self.group)
             .channelOption(
@@ -436,7 +479,8 @@ class ConnectionHandler: ChannelInboundHandler {
                         }
                         return channel.eventLoop.makeSucceededFuture(())
                     } catch {
-                        return channel.eventLoop.makeFailedFuture(error)
+                        let tlsError = NatsError.ConnectError.tlsFailure(error)
+                        return channel.eventLoop.makeFailedFuture(tlsError)
                     }
                 } else {
                     if server.scheme == "ws" || server.scheme == "wss" {
@@ -487,8 +531,9 @@ class ConnectionHandler: ChannelInboundHandler {
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandler(sslHandler)
                             } catch {
-                                upgradePromise.fail(error)
-                                return channel.eventLoop.makeFailedFuture(error)
+                                let tlsError = NatsError.ConnectError.tlsFailure(error)
+                                upgradePromise.fail(tlsError)
+                                return channel.eventLoop.makeFailedFuture(tlsError)
                             }
                         }
 
@@ -542,7 +587,7 @@ class ConnectionHandler: ChannelInboundHandler {
         await self.reconnectTask?.value
 
         guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsClientError("internal error: channel should not be nil")
+            throw NatsError.ClientError.internalError("channel should not be nil")
         }
         let promise = eventLoop.makePromise(of: Void.self)
 
@@ -552,7 +597,13 @@ class ConnectionHandler: ChannelInboundHandler {
             self.channel?.close(mode: .all, promise: promise)
         }
 
-        try await promise.futureResult.get()
+        do {
+            try await promise.futureResult.get()
+        } catch ChannelError.alreadyClosed {
+            // we don't want to throw an error if channel is already closed
+            // as that would mean we would get an error closing client during reconnect
+        }
+
         self.fire(.closed)
     }
 
@@ -566,7 +617,7 @@ class ConnectionHandler: ChannelInboundHandler {
         _ = await self.reconnectTask?.value
 
         guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsClientError("internal error: channel should not be nil")
+            throw NatsError.ClientError.internalError("channel should not be nil")
         }
         let promise = eventLoop.makePromise(of: Void.self)
 
@@ -587,11 +638,11 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func resume() async throws {
         guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsClientError("internal error: channel should not be nil")
+            throw NatsError.ClientError.internalError("channel should not be nil")
         }
         try await eventLoop.submit {
             guard self.state == .suspended else {
-                throw NatsClientError(
+                throw NatsError.ClientError.invalidConnection(
                     "unable to resume connection - connection is not in suspended state")
             }
             self.handleReconnect()
@@ -638,7 +689,7 @@ class ConnectionHandler: ChannelInboundHandler {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         logger.debug("Encountered error on the channel: \(error)")
         context.close(promise: nil)
-        if let natsErr = error as? NatsError {
+        if let natsErr = error as? NatsErrorProtocol {
             self.fire(.error(natsErr))
         } else {
             logger.error("unexpected error: \(error)")
@@ -740,9 +791,13 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func write(operation: ClientOp) async throws {
         guard let buffer = self.batchBuffer else {
-            throw NatsClientError("not connected")
+            throw NatsError.ClientError.invalidConnection("not connected")
         }
-        try await buffer.writeMessage(operation)
+        do {
+            try await buffer.writeMessage(operation)
+        } catch {
+            throw NatsError.ClientError.io(error)
+        }
     }
 
     internal func subscribe(_ subject: String) async throws -> NatsSubscription {
@@ -835,7 +890,7 @@ public enum NatsEvent {
     case suspended
     case closed
     case lameDuckMode
-    case error(NatsError)
+    case error(NatsErrorProtocol)
 
     public func kind() -> NatsEventKind {
         switch self {

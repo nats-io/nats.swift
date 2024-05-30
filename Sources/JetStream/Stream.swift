@@ -399,7 +399,7 @@ public class Stream {
     }
 }
 
-public enum JetStreamDirectGetError: NatsError, Equatable {
+public enum JetStreamDirectGetError: Error, Equatable {
     case msgNotFound
     case invalidResponse(String)
     case errorResponse(StatusCode, String?)
@@ -421,7 +421,7 @@ public enum JetStreamDirectGetError: NatsError, Equatable {
 }
 
 /// Returned when a provided ``StreamConfig`` is not valid.
-public enum StreamValidationError: NatsError, Equatable {
+public enum StreamValidationError: Error, Equatable {
     case nameRequired
     case invalidCharacterFound(String)
 

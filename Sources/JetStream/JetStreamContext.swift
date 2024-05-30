@@ -99,14 +99,14 @@ public struct AckFuture {
                     if let msg = result {
                         group.cancelAll()
                         if let status = msg.status, status == StatusCode.noResponders {
-                            throw NatsRequestError.noResponders
+                            throw NatsError.RequestError.noResponders
                         }
                         return msg
                     } else {
                         group.cancelAll()
                         try await sub.unsubscribe()
                         // if result is empty, time out
-                        throw NatsRequestError.timeout
+                        throw NatsError.RequestError.timeout
                     }
                 }
 
@@ -136,14 +136,14 @@ public struct AckFuture {
 
     }
 }
-public struct JetStreamPublishError: NatsError {
+public struct JetStreamPublishError: Error {
     public var description: String
     init(_ description: String) {
         self.description = description
     }
 }
 
-public struct JetStreamRequestError: NatsError {
+public struct JetStreamRequestError: Error {
     public var description: String
     init(_ description: String) {
         self.description = description
