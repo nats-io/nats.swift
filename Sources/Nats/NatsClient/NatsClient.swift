@@ -228,7 +228,7 @@ extension NatsClient {
             of: NatsMessage?.self,
             body: { group in
                 group.addTask {
-                    return await sub.makeAsyncIterator().next()
+                    return try await sub.makeAsyncIterator().next()
                 }
 
                 // task for the timeout

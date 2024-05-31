@@ -167,6 +167,25 @@ class ConnectionHandler: ChannelInboundHandler {
             case .error(let err):
                 logger.debug("error \(err)")
 
+                switch err {
+                case .staleConnection, .maxConnectionsExceeded:
+                    inputBuffer.clear()
+                    context.fireErrorCaught(err)
+                case .permissionsViolation(let operation, let subject):
+                    switch operation {
+                    case .subscribe:
+                        for (_, s) in subscriptions {
+                            if s.subject == subject {
+                                s.receiveError(NatsError.SubscriptionError.permissionDenied)
+                            }
+                        }
+                    case .publish:
+                        self.fire(.error(err))
+                    }
+                default:
+                    self.fire(.error(err))
+                }
+
                 let normalizedError = err.normalizedError
                 // on some errors, force reconnect
                 if normalizedError == "stale connection"
@@ -180,7 +199,7 @@ class ConnectionHandler: ChannelInboundHandler {
             case .message(let msg):
                 self.handleIncomingMessage(msg)
             case .hMessage(let msg):
-                self.handleIncomingHMessage(msg)
+                self.handleIncomingMessage(msg)
             case .info(let serverInfo):
                 logger.debug("info \(op)")
                 self.serverInfo = serverInfo
@@ -205,7 +224,7 @@ class ConnectionHandler: ChannelInboundHandler {
         }
     }
 
-    private func handleIncomingHMessage(_ message: HMessageInbound) {
+    private func handleIncomingMessage(_ message: HMessageInbound) {
         let natsMsg = NatsMessage(
             payload: message.payload, subject: message.subject, replySubject: message.reply,
             length: message.length, headers: message.headers, status: message.status,

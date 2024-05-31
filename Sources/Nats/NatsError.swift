@@ -16,15 +16,34 @@ import Foundation
 public protocol NatsErrorProtocol: Error, CustomStringConvertible {}
 
 public enum NatsError {
-    public enum ServerError: NatsErrorProtocol {
-        case autorization(String)
-        case other(String)
+    public enum ServerError: NatsErrorProtocol, Equatable {
+        case staleConnection
+        case maxConnectionsExceeded
+        case authorizationViolation
+        case authenticationExpired
+        case authenticationRevoked
+        case authenticationTimeout
+        case permissionsViolation(Operation, String)
+        case proto(String)
 
         public var description: String {
             switch self {
-            case .autorization(let type):
-                return "nats: authorization error: \(type)"
-            case .other(let error):
+            case .staleConnection:
+                return "nats: stale connection"
+            case .maxConnectionsExceeded:
+                return "nats: maximum connections exceeded"
+            case .authorizationViolation:
+                return "nats: authorization violation"
+            case .authenticationExpired:
+                return "nats: authentication expired"
+            case .authenticationRevoked:
+                return "nats: authentication revoked"
+            case .authenticationTimeout:
+                return "nats: authentication timeout"
+            case .permissionsViolation(let operation, let subject):
+                return
+                    "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\""
+            case .proto(let error):
                 return "nats: \(error)"
             }
         }
@@ -33,19 +52,64 @@ public enum NatsError {
         }
         init(_ error: String) {
             let normalizedError = error.trimWhitespacesAndApostrophes().lowercased()
-            if normalizedError.contains("authorization violation")
-                || normalizedError.contains("user authentication expired")
-                || normalizedError.contains("user authentication revoked")
-                || normalizedError.contains("account authentication expired")
-            {
-                self = .autorization(normalizedError)
+            if normalizedError.contains("stale connection") {
+                self = .staleConnection
+            } else if normalizedError.contains("maximum connections exceeded") {
+                self = .maxConnectionsExceeded
+            } else if normalizedError.contains("authorization violation") {
+                self = .authorizationViolation
+            } else if normalizedError.contains("authentication expired") {
+                self = .authenticationExpired
+            } else if normalizedError.contains("authentication revoked") {
+                self = .authenticationRevoked
+            } else if normalizedError.contains("authentication timeout") {
+                self = .authenticationTimeout
+            } else if normalizedError.contains("permissions violation") {
+                if let (operation, subject) = NatsError.ServerError.parsePermissions(error: error) {
+                    self = .permissionsViolation(operation, subject)
+                } else {
+                    self = .proto(normalizedError)
+                }
             } else {
-                self = .other(normalizedError)
+                self = .proto(normalizedError)
+            }
+        }
+
+        public enum Operation: String, Equatable {
+            case publish = "Publish"
+            case subscribe = "Subscription"
+        }
+
+        internal static func parsePermissions(error: String) -> (Operation, String)? {
+            let pattern = "(Publish|Subscription) to \"(\\S+)\""
+            let regex = try! NSRegularExpression(pattern: pattern)
+            let matches = regex.matches(
+                in: error, options: [], range: NSRange(location: 0, length: error.utf16.count))
+
+            guard let match = matches.first else {
+                return nil
+            }
+
+            var operation: Operation?
+            if let operationRange = Range(match.range(at: 1), in: error) {
+                let operationString = String(error[operationRange])
+                operation = Operation(rawValue: operationString)
+            }
+
+            var subject: String?
+            if let subjectRange = Range(match.range(at: 2), in: error) {
+                subject = String(error[subjectRange])
+            }
+
+            if let operation, let subject {
+                return (operation, subject)
+            } else {
+                return nil
             }
         }
     }
 
-    public enum ProtocolError: NatsErrorProtocol {
+    public enum ProtocolError: NatsErrorProtocol, Equatable {
         case invalidOperation(String)
         case parserFailure(String)
 
@@ -105,7 +169,7 @@ public enum NatsError {
         }
     }
 
-    public enum RequestError: NatsErrorProtocol {
+    public enum RequestError: NatsErrorProtocol, Equatable {
         case noResponders
         case timeout
 
@@ -119,18 +183,21 @@ public enum NatsError {
         }
     }
 
-    public enum SubscriptionError: NatsErrorProtocol {
+    public enum SubscriptionError: NatsErrorProtocol, Equatable {
+        case permissionDenied
         case subscriptionClosed
 
         public var description: String {
             switch self {
+            case .permissionDenied:
+                return "nats: permission denied"
             case .subscriptionClosed:
                 return "nats: subscription closed"
             }
         }
     }
 
-    public enum ParseHeaderError: NatsErrorProtocol {
+    public enum ParseHeaderError: NatsErrorProtocol, Equatable {
         case invalidCharacter
 
         public var description: String {

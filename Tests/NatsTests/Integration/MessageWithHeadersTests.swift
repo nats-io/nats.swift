@@ -48,7 +48,7 @@ class TestMessageWithHeadersTests: XCTestCase {
             "hello".data(using: .utf8)!, subject: "foo", reply: nil, headers: hm)
 
         let iter = sub.makeAsyncIterator()
-        let msg = await iter.next()
+        let msg = try await iter.next()
         XCTAssertEqual(msg!.headers, hm)
 
     }

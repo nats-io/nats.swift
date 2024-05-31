@@ -30,7 +30,7 @@ var hm = NatsHeaderMap()
 hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("bar"))
 hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
 for i in 1...numMsgs {
-    let msg = await sub.next()
+    let msg = try await sub.next()
     if i == 0 {
         print("Received first message! Starting the timer")
         now = DispatchTime.now()
