@@ -228,7 +228,11 @@ extension NatsClient {
             of: NatsMessage?.self,
             body: { group in
                 group.addTask {
-                    return try await sub.makeAsyncIterator().next()
+                    do {
+                        return try await sub.makeAsyncIterator().next()
+                    } catch NatsError.SubscriptionError.permissionDenied {
+                        throw NatsError.RequestError.permissionDenied
+                    }
                 }
 
                 // task for the timeout

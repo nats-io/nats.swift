@@ -24,10 +24,17 @@ class ErrorsTests: XCTestCase {
     func testServerErrorPermissionsDenied() {
         var err = NatsError.ServerError(
             "Permissions Violation for Subscription to \"events.A.B.*\"]")
-        XCTAssertEqual(err, NatsError.ServerError.permissionsViolation(.subscribe, "events.A.B.*"))
+        XCTAssertEqual(
+            err, NatsError.ServerError.permissionsViolation(.subscribe, "events.A.B.*", nil))
 
-        err = NatsError.ServerError("Permissions Violation for Publish to \"events.A.B.*\"]")
-        XCTAssertEqual(err, NatsError.ServerError.permissionsViolation(.publish, "events.A.B.*"))
+        err = NatsError.ServerError("Permissions Violation for Publish to \"events.A.B.*\"")
+        XCTAssertEqual(
+            err, NatsError.ServerError.permissionsViolation(.publish, "events.A.B.*", nil))
+
+        err = NatsError.ServerError(
+            "Permissions Violation for Publish to \"events.A.B.*\" using queue \"q\"")
+        XCTAssertEqual(
+            err, NatsError.ServerError.permissionsViolation(.publish, "events.A.B.*", "q"))
 
         err = NatsError.ServerError("Some other error")
         XCTAssertEqual(err, NatsError.ServerError.proto("some other error"))

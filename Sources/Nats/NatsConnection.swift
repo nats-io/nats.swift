@@ -171,7 +171,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 case .staleConnection, .maxConnectionsExceeded:
                     inputBuffer.clear()
                     context.fireErrorCaught(err)
-                case .permissionsViolation(let operation, let subject):
+                case .permissionsViolation(let operation, let subject, let queue):
                     switch operation {
                     case .subscribe:
                         for (_, s) in subscriptions {

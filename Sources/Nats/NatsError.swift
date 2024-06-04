@@ -23,7 +23,7 @@ public enum NatsError {
         case authenticationExpired
         case authenticationRevoked
         case authenticationTimeout
-        case permissionsViolation(Operation, String)
+        case permissionsViolation(Operation, String, String?)
         case proto(String)
 
         public var description: String {
@@ -40,9 +40,14 @@ public enum NatsError {
                 return "nats: authentication revoked"
             case .authenticationTimeout:
                 return "nats: authentication timeout"
-            case .permissionsViolation(let operation, let subject):
-                return
-                    "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\""
+            case .permissionsViolation(let operation, let subject, let queue):
+                if let queue {
+                    return
+                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\" using queue \"\(queue)\""
+                } else {
+                    return
+                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\""
+                }
             case .proto(let error):
                 return "nats: \(error)"
             }
@@ -65,8 +70,10 @@ public enum NatsError {
             } else if normalizedError.contains("authentication timeout") {
                 self = .authenticationTimeout
             } else if normalizedError.contains("permissions violation") {
-                if let (operation, subject) = NatsError.ServerError.parsePermissions(error: error) {
-                    self = .permissionsViolation(operation, subject)
+                if let (operation, subject, queue) = NatsError.ServerError.parsePermissions(
+                    error: error)
+                {
+                    self = .permissionsViolation(operation, subject, queue)
                 } else {
                     self = .proto(normalizedError)
                 }
@@ -80,7 +87,7 @@ public enum NatsError {
             case subscribe = "Subscription"
         }
 
-        internal static func parsePermissions(error: String) -> (Operation, String)? {
+        internal static func parsePermissions(error: String) -> (Operation, String, String?)? {
             let pattern = "(Publish|Subscription) to \"(\\S+)\""
             let regex = try! NSRegularExpression(pattern: pattern)
             let matches = regex.matches(
@@ -101,8 +108,19 @@ public enum NatsError {
                 subject = String(error[subjectRange])
             }
 
+            let queuePattern = "using queue \"(\\S+)\""
+            let queueRegex = try! NSRegularExpression(pattern: queuePattern)
+            let queueMatches = queueRegex.matches(
+                in: error, options: [], range: NSRange(location: 0, length: error.utf16.count))
+
+            var queue: String?
+            if let match = queueMatches.first, let queueRange = Range(match.range(at: 1), in: error)
+            {
+                queue = String(error[queueRange])
+            }
+
             if let operation, let subject {
-                return (operation, subject)
+                return (operation, subject, queue)
             } else {
                 return nil
             }
@@ -172,6 +190,7 @@ public enum NatsError {
     public enum RequestError: NatsErrorProtocol, Equatable {
         case noResponders
         case timeout
+        case permissionDenied
 
         public var description: String {
             switch self {
@@ -179,6 +198,8 @@ public enum NatsError {
                 return "nats: no responders available for request"
             case .timeout:
                 return "nats: request timed out"
+            case .permissionDenied:
+                return "nats: permission denied"
             }
         }
     }

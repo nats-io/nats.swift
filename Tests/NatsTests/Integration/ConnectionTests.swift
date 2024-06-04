@@ -47,6 +47,7 @@ class CoreNatsTests: XCTestCase {
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
+        ("testRequest_permissionDenied", testRequest_permissionDenied),
         ("testPublishOnClosedConnection", testPublishOnClosedConnection),
         ("testCloseClosedConnection", testCloseClosedConnection),
         ("testSuspendClosedConnection", testSuspendClosedConnection),
@@ -799,6 +800,28 @@ class CoreNatsTests: XCTestCase {
         XCTFail("Expected timeout")
     }
 
+    func testRequest_permissionDenied() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: templateURL,
+            args: ["deny", "_INBOX.*"])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        do {
+            _ = try await client.request("request".data(using: .utf8)!, subject: "service")
+        } catch NatsError.RequestError.permissionDenied {
+            try await client.close()
+            return
+        }
+
+        XCTFail("Expected permission denied")
+    }
+
     func testPublishOnClosedConnection() async throws {
         natsServer.start()
         logger.logLevel = .debug
@@ -892,7 +915,7 @@ class CoreNatsTests: XCTestCase {
         let bundle = Bundle.module
         let cfgFile = try createConfigFileFromTemplate(
             templateURL: bundle.url(forResource: "permissions", withExtension: "conf")!,
-            args: ["deny"])
+            args: ["deny", "events.>"])
         natsServer.start(cfg: cfgFile.relativePath)
 
         let client = NatsClientOptions()
@@ -935,7 +958,7 @@ class CoreNatsTests: XCTestCase {
         let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
         var cfgFile = try createConfigFileFromTemplate(
             templateURL: templateURL,
-            args: ["allow"])
+            args: ["allow", "events.>"])
         natsServer.start(cfg: cfgFile.relativePath)
 
         let client = NatsClientOptions()
@@ -951,7 +974,7 @@ class CoreNatsTests: XCTestCase {
         _ = try await iter.next()
 
         cfgFile = try createConfigFileFromTemplate(
-            templateURL: templateURL, args: ["deny"], destination: cfgFile)
+            templateURL: templateURL, args: ["deny", "events.>"], destination: cfgFile)
 
         // reload config with
         natsServer.sendSignal(.reload)
