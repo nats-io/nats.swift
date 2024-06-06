@@ -23,10 +23,11 @@ public class NatsSubscription: AsyncSequence {
     internal var delivered: UInt64 = 0
     internal let sid: UInt64
 
-    private var buffer: [Element]
+    private var buffer: [Result<Element, NatsError.SubscriptionError>]
     private let capacity: UInt64
     private var closed = false
-    private var continuation: CheckedContinuation<Element?, Never>?
+    private var continuation:
+        CheckedContinuation<Result<Element, NatsError.SubscriptionError>?, Never>?
     private let lock = NSLock()
     private let conn: ConnectionHandler
 
@@ -49,16 +50,28 @@ public class NatsSubscription: AsyncSequence {
         return SubscriptionIterator(subscription: self)
     }
 
-    func receiveMessage(_ message: Element) {
+    func receiveMessage(_ message: NatsMessage) {
         lock.withLock {
             if let continuation = self.continuation {
                 // Immediately use the continuation if it exists
                 self.continuation = nil
-                continuation.resume(returning: message)
+                continuation.resume(returning: .success(message))
             } else if buffer.count < capacity {
                 // Only append to buffer if no continuation is available
                 // TODO(pp): Hadndle SlowConsumer as subscription event
-                buffer.append(message)
+                buffer.append(.success(message))
+            }
+        }
+    }
+
+    func receiveError(_ error: NatsError.SubscriptionError) {
+        lock.withLock {
+            if let continuation = self.continuation {
+                // Immediately use the continuation if it exists
+                self.continuation = nil
+                continuation.resume(returning: .failure(error))
+            } else {
+                buffer.append(.failure(error))
             }
         }
     }
@@ -82,13 +95,14 @@ public class NatsSubscription: AsyncSequence {
             self.subscription = subscription
         }
 
-        public func next() async -> Element? {
-            await subscription.nextMessage()
+        public func next() async throws -> Element? {
+            try await subscription.nextMessage()
         }
     }
 
-    private func nextMessage() async -> Element? {
-        let msg: Element? = await withCheckedContinuation { continuation in
+    private func nextMessage() async throws -> Element? {
+        let result: Result<Element, NatsError.SubscriptionError>? = await withCheckedContinuation {
+            continuation in
             lock.withLock {
                 if closed {
                     continuation.resume(returning: nil)
@@ -107,7 +121,14 @@ public class NatsSubscription: AsyncSequence {
         if let max, delivered >= max {
             conn.removeSub(sub: self)
         }
-        return msg
+        switch result {
+        case .success(let msg):
+            return msg
+        case .failure(let error):
+            throw error
+        default:
+            return nil
+        }
     }
 
     /// Unsubscribes from subscription.

@@ -47,10 +47,14 @@ class CoreNatsTests: XCTestCase {
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
+        ("testRequest_permissionDenied", testRequest_permissionDenied),
         ("testPublishOnClosedConnection", testPublishOnClosedConnection),
         ("testCloseClosedConnection", testCloseClosedConnection),
         ("testSuspendClosedConnection", testSuspendClosedConnection),
         ("testReconnectOnClosedConnection", testReconnectOnClosedConnection),
+        ("testSubscribeMissingPermissions", testSubscribeMissingPermissions),
+        ("testSubscribePermissionsRevoked", testSubscribePermissionsRevoked),
+
     ]
     var natsServer = NatsServer()
 
@@ -86,7 +90,7 @@ class CoreNatsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
             }
@@ -108,7 +112,7 @@ class CoreNatsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
             }
@@ -131,7 +135,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation1.fulfill()
             }
@@ -153,7 +157,7 @@ class CoreNatsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
             }
@@ -175,7 +179,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation1.fulfill()
             }
@@ -200,7 +204,7 @@ class CoreNatsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
             }
@@ -289,7 +293,7 @@ class CoreNatsTests: XCTestCase {
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
         Task {
-            if let msg = await iter.next() {
+            if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 XCTAssertEqual(msg.replySubject, "reply")
                 expectation.fulfill()
@@ -306,7 +310,7 @@ class CoreNatsTests: XCTestCase {
         let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
-        let message = await iter.next()
+        let message = try await iter.next()
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
     }
 
@@ -318,13 +322,13 @@ class CoreNatsTests: XCTestCase {
         let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
-        var message = await iter.next()
+        var message = try await iter.next()
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         try await sub.unsubscribe()
 
-        message = await iter.next()
+        message = try await iter.next()
         XCTAssertNil(message)
 
         do {
@@ -347,7 +351,7 @@ class CoreNatsTests: XCTestCase {
         }
 
         var i = 0
-        for await _ in sub {
+        for try await _ in sub {
             i += 1
         }
         XCTAssertEqual(i, 3, "Expected 3 messages to be delivered")
@@ -390,7 +394,7 @@ class CoreNatsTests: XCTestCase {
         }
 
         // make sure sub receives messages
-        for await _ in sub {
+        for try await _ in sub {
             messagesReceived += 1
             if messagesReceived == 10 {
                 break
@@ -415,7 +419,7 @@ class CoreNatsTests: XCTestCase {
             }
         }
 
-        for await _ in sub {
+        for try await _ in sub {
             messagesReceived += 1
             if messagesReceived == 20 {
                 break
@@ -453,7 +457,7 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
-        } catch NatsError.ServerError.autorization(_) {
+        } catch NatsError.ServerError.authorizationViolation {
             // success
             return
         } catch {
@@ -488,7 +492,7 @@ class CoreNatsTests: XCTestCase {
         do {
             try await badCertsClient.connect()
             XCTFail("Should have thrown an error")
-        } catch NatsError.ServerError.autorization(_) {
+        } catch NatsError.ServerError.authorizationViolation {
             return
         } catch {
             XCTFail("Expected auth error; got: \(error)")
@@ -509,7 +513,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
-        _ = await subscribe.next()
+        _ = try await subscribe.next()
     }
 
     func testNkeyAuth() async throws {
@@ -524,7 +528,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
-        _ = await subscribe.next()
+        _ = try await subscribe.next()
     }
 
     func testNkeyAuthFile() async throws {
@@ -539,7 +543,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
         let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
         try await client.publish("data".data(using: .utf8)!, subject: "foo")
-        _ = await subscribe.next()
+        _ = try await subscribe.next()
 
         // Test if passing both nkey and nkeyPath throws an error
         let badClient = NatsClientOptions()
@@ -673,7 +677,7 @@ class CoreNatsTests: XCTestCase {
         let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
-        let message = await iter.next()
+        let message = try await iter.next()
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
@@ -707,7 +711,7 @@ class CoreNatsTests: XCTestCase {
         let sub = try await client.subscribe(subject: "test")
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let iter = sub.makeAsyncIterator()
-        let message = await iter.next()
+        let message = try await iter.next()
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
@@ -727,7 +731,7 @@ class CoreNatsTests: XCTestCase {
         }
         try await client.connect()
 
-        natsServer.setLameDuckMode()
+        natsServer.sendSignal(.lameDuckMode)
         await fulfillment(of: [expectation], timeout: 1.0)
         try await client.close()
     }
@@ -741,7 +745,7 @@ class CoreNatsTests: XCTestCase {
 
         let service = try await client.subscribe(subject: "service")
         Task {
-            for await msg in service {
+            for try await msg in service {
                 try await client.publish(
                     "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
             }
@@ -778,7 +782,7 @@ class CoreNatsTests: XCTestCase {
 
         let service = try await client.subscribe(subject: "service")
         Task {
-            for await msg in service {
+            for try await msg in service {
                 sleep(2)
                 try await client.publish(
                     "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
@@ -794,6 +798,28 @@ class CoreNatsTests: XCTestCase {
         }
 
         XCTFail("Expected timeout")
+    }
+
+    func testRequest_permissionDenied() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: templateURL,
+            args: ["deny", "_INBOX.*"])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        do {
+            _ = try await client.request("request".data(using: .utf8)!, subject: "service")
+        } catch NatsError.RequestError.permissionDenied {
+            try await client.close()
+            return
+        }
+
+        XCTFail("Expected permission denied")
     }
 
     func testPublishOnClosedConnection() async throws {
@@ -884,13 +910,100 @@ class CoreNatsTests: XCTestCase {
         XCTFail("Expected connection closed error")
     }
 
-    func createConfigFileFromTemplate(templateURL: URL, args: [String]) throws -> URL {
+    func testSubscribeMissingPermissions() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let cfgFile = try createConfigFileFromTemplate(
+            templateURL: bundle.url(forResource: "permissions", withExtension: "conf")!,
+            args: ["deny", "events.>"])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+
+        try await client.connect()
+        var sub = try await client.subscribe(subject: "events.A")
+        var isError = false
+        do {
+            for try await _ in sub {
+                XCTFail("Expected no message)")
+            }
+        } catch NatsError.SubscriptionError.permissionDenied {
+            // success
+            isError = true
+        }
+        if !isError {
+            XCTFail("Expected missing permissions error")
+        }
+
+        sub = try await client.subscribe(subject: "events.*")
+        isError = false
+        do {
+            for try await _ in sub {
+                XCTFail("Expected no message)")
+            }
+        } catch NatsError.SubscriptionError.permissionDenied {
+            // success
+            isError = true
+        }
+        if !isError {
+            XCTFail("Expected missing permissions error")
+        }
+    }
+
+    func testSubscribePermissionsRevoked() async throws {
+        logger.logLevel = .debug
+        let bundle = Bundle.module
+        let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
+        var cfgFile = try createConfigFileFromTemplate(
+            templateURL: templateURL,
+            args: ["allow", "events.>"])
+        natsServer.start(cfg: cfgFile.relativePath)
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "events.A")
+
+        let iter = sub.makeAsyncIterator()
+        try await client.publish("msg".data(using: .utf8)!, subject: "events.A")
+
+        _ = try await iter.next()
+
+        cfgFile = try createConfigFileFromTemplate(
+            templateURL: templateURL, args: ["deny", "events.>"], destination: cfgFile)
+
+        // reload config with
+        natsServer.sendSignal(.reload)
+
+        do {
+            _ = try await iter.next()
+        } catch NatsError.SubscriptionError.permissionDenied {
+            // success
+            return
+        }
+        XCTFail("Expected permission denied error")
+    }
+
+    func createConfigFileFromTemplate(
+        templateURL: URL, args: [String], destination: URL? = nil
+    ) throws -> URL {
         let templateContent = try String(contentsOf: templateURL, encoding: .utf8)
         let config = String(format: templateContent, arguments: args.map { $0 as CVarArg })
 
         let tempDirectoryURL = FileManager.default.temporaryDirectory
-        let tempFileURL = tempDirectoryURL.appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("conf")
+
+        let tempFileURL: URL
+
+        if let destination {
+            tempFileURL = destination
+        } else {
+            tempFileURL = tempDirectoryURL.appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("conf")
+        }
 
         // Write the filled content to the temp file
         try config.write(to: tempFileURL, atomically: true, encoding: .utf8)
@@ -898,5 +1011,4 @@ class CoreNatsTests: XCTestCase {
         // Return the URL of the newly created temp file
         return tempFileURL
     }
-
 }

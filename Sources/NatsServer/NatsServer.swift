@@ -146,14 +146,14 @@ public class NatsServer {
         tlsEnabled = false
     }
 
-    public func setLameDuckMode(file: StaticString = #file, line: UInt = #line) {
+    public func sendSignal(_ signal: Signal, file: StaticString = #file, line: UInt = #line) {
         let process = Process()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["nats-server", "--signal", "ldm=\(self.pidFile!.path)"]
+        process.arguments = ["nats-server", "--signal", "\(signal.rawValue)=\(self.pidFile!.path)"]
 
         XCTAssertNoThrow(
-            try process.run(), "error setting lame duck mode", file: file, line: line)
+            try process.run(), "error setting signal", file: file, line: line)
         self.process = nil
     }
 
@@ -197,5 +197,10 @@ public class NatsServer {
 
     deinit {
         stop()
+    }
+
+    public enum Signal: String {
+        case lameDuckMode = "ldm"
+        case reload = "reload"
     }
 }
