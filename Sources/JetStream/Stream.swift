@@ -14,7 +14,9 @@
 import Foundation
 import Nats
 
-/// Exposes a set of operations performed on a stream:
+/// Representation of a JetStream Stream, exposing ``StreamInfo`` and operations on a stream.
+///
+/// Available operations:
 /// - fetching stream info
 /// - fetching individual messages from the stream
 /// - deleting messages from a stream
@@ -34,13 +36,13 @@ public class Stream {
     }
 
     /// Retrieves information about the stream
-    /// This also refreshes ``Stream/info``
+    /// This also refreshes ``Stream/info``.
     ///
-    /// - Returns ``StreamInfo`` from the server
+    /// - Returns ``StreamInfo`` from the server.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful
-    ///   - ``JetStreamError`` if the server responded with an API error
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func info() async throws -> StreamInfo {
         let subj = "STREAM.INFO.\(info.config.name)"
         let info: Response<StreamInfo> = try await ctx.request(subj)
@@ -60,11 +62,11 @@ public class Stream {
     ///   - subject: The stream subject the message should be retrieved from.
     ///     When combined with `seq` will return the first msg with seq >= of the specified sequence.
     ///
-    /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
+    /// - Returns ``StreamMessage`` containing message payload, headers and metadata or nil if the message was not found.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an API error.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func getMessage(sequence: UInt64, subject: String? = nil) async throws -> StreamMessage?
     {
         let request = GetMessageRequest(seq: sequence, next: subject)
@@ -75,11 +77,11 @@ public class Stream {
     ///
     /// - Parameter firstForSubject: The subject from which the first message should be retrieved.
     ///
-    /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
+    /// - Returns ``StreamMessage`` containing message payload, headers and metadata or nil if the message was not found.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an API error.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func getMessage(firstForSubject: String) async throws -> StreamMessage? {
         let request = GetMessageRequest(next: firstForSubject)
         return try await getMessage(request: request)
@@ -89,11 +91,11 @@ public class Stream {
     ///
     /// - Parameter lastForSubject: The stream subject for which the last available message should be retrieved.
     ///
-    /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
+    /// - Returns ``StreamMessage`` containing message payload, headers and metadata or nil if the message was not found.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an API error.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func getMessage(lastForSubject: String) async throws -> StreamMessage? {
         let request = GetMessageRequest(last: lastForSubject)
         return try await getMessage(request: request)
@@ -111,11 +113,11 @@ public class Stream {
     ///   - subject: The stream subject the message should be retrieved from.
     ///     When combined with `seq` will return the first msg with seq >= of the specified sequence.
     ///
-    /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
+    /// - Returns ``StreamMessage`` containing message payload, headers and metadata or nil if the message was not found.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
+    /// > **Throws:**
+    /// >  - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// >  - ``JetStreamError/DirectGetError`` if the server responded with an error or the response is invalid.
     public func getMessageDirect(
         sequence: UInt64, subject: String? = nil
     ) async throws -> StreamMessage? {
@@ -132,11 +134,11 @@ public class Stream {
     ///
     /// - Parameter firstForSubject: The subject from which the first message should be retrieved.
     ///
-    /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
+    /// - Returns ``StreamMessage`` containing message payload, headers and metadata or nil if the message was not found.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
+    /// > **Throws:**
+    /// >  - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// >  - ``JetStreamError/DirectGetError`` if the server responded with an error or the response is invalid.
     public func getMessageDirect(firstForSubject: String) async throws -> StreamMessage? {
         let request = GetMessageRequest(next: firstForSubject)
         return try await getMessageDirect(request: request)
@@ -153,9 +155,9 @@ public class Stream {
     ///
     /// - Returns ``StreamMessage`` containing message payload, headers and metadata.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamDirectGetError`` if the server responded with an error or the response is invalid
+    /// > **Throws:**
+    /// >  - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// >  - ``JetStreamError/DirectGetError`` if the server responded with an error or the response is invalid.
     public func getMessageDirect(lastForSubject: String) async throws -> StreamMessage? {
         let request = GetMessageRequest(last: lastForSubject)
         return try await getMessageDirect(request: request)
@@ -169,9 +171,10 @@ public class Stream {
     ///   - secure: If set to true, the message will be permanently removed from the stream (overwritten with random data).
     ///     Otherwise, it will be marked as deleted.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an error or the response is invalid
+    /// > **Throws:**
+    /// > - ``JetStreamError/StreamMessageError/deleteSequenceNotFound(_:)`` if a message with provided sequence does not exist.
+    /// > - ``JetStreamError/RequestError`` if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError`` if the server responded with an API error.
     public func deleteMessage(sequence: UInt64, secure: Bool = false) async throws {
         var request: DeleteMessageRequest
         if secure {
@@ -188,8 +191,11 @@ public class Stream {
         switch resp {
         case .success(_):
             return
-        case .error(let err):
-            throw err.error
+        case .error(let apiResponse):
+            if let deleteMsgError = JetStreamError.StreamMessageError(from: apiResponse.error) {
+                throw deleteMsgError
+            }
+            throw apiResponse.error
         }
     }
 
@@ -200,9 +206,9 @@ public class Stream {
     ///
     /// - Returns the number of messages purged.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an error or the response is invalid.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func purge(subject: String? = nil) async throws -> UInt64 {
         let request = PurgeRequest(filter: subject)
 
@@ -218,9 +224,9 @@ public class Stream {
     ///
     /// - Returns the number of messages purged.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an error or the response is invalid.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func purge(sequence: UInt64, subject: String? = nil) async throws -> UInt64 {
         let request = PurgeRequest(seq: sequence, filter: subject)
 
@@ -236,9 +242,9 @@ public class Stream {
     ///
     /// - Returns the number of messages purged.
     ///
-    /// - Throws:
-    ///   - ``JetStreamRequestError`` if the request was unsuccesful.
-    ///   - ``JetStreamError`` if the server responded with an error or the response is invalid.
+    /// > **Throws:**
+    /// > - ``JetStreamRequestError`` if the request was unsuccessful.
+    /// > - ``JetStreamError`` if the server responded with an API error.
     public func purge(keep: UInt64, subject: String? = nil) async throws -> UInt64 {
         let request = PurgeRequest(keep: keep, filter: subject)
 
@@ -272,32 +278,32 @@ public class Stream {
             if status == StatusCode.notFound {
                 return nil
             }
-            throw JetStreamDirectGetError.errorResponse(status, resp.description)
+            throw JetStreamError.DirectGetError.errorResponse(status, resp.description)
         }
 
         guard let headers = resp.headers else {
-            throw JetStreamDirectGetError.invalidResponse("response should contain headers")
+            throw JetStreamError.DirectGetError.invalidResponse("response should contain headers")
         }
 
         guard headers[.natsStream] != nil else {
-            throw JetStreamDirectGetError.invalidResponse("missing Nats-Stream header")
+            throw JetStreamError.DirectGetError.invalidResponse("missing Nats-Stream header")
         }
 
         guard let seqHdr = headers[.natsSequence] else {
-            throw JetStreamDirectGetError.invalidResponse("missing Nats-Sequence header")
+            throw JetStreamError.DirectGetError.invalidResponse("missing Nats-Sequence header")
         }
 
         let seq = UInt64(seqHdr.description)
         if seq == nil {
-            throw JetStreamDirectGetError.invalidResponse("invalid Nats-Sequence header: \(seqHdr)")
+            throw JetStreamError.DirectGetError.invalidResponse("invalid Nats-Sequence header: \(seqHdr)")
         }
 
         guard let timeStamp = headers[.natsTimestamp] else {
-            throw JetStreamDirectGetError.invalidResponse("missing Nats-Timestamp header")
+            throw JetStreamError.DirectGetError.invalidResponse("missing Nats-Timestamp header")
         }
 
         guard let subject = headers[.natsSubject] else {
-            throw JetStreamDirectGetError.invalidResponse("missing Nats-Subject header")
+            throw JetStreamError.DirectGetError.invalidResponse("missing Nats-Subject header")
         }
 
         let payload = resp.payload ?? Data()
@@ -389,48 +395,12 @@ public class Stream {
 
     static func validate(name: String) throws {
         guard !name.isEmpty else {
-            throw StreamValidationError.nameRequired
+            throw JetStreamError.StreamError.nameRequired
         }
 
         let invalidChars = CharacterSet(charactersIn: ">*. /\\")
         if name.rangeOfCharacter(from: invalidChars) != nil {
-            throw StreamValidationError.invalidCharacterFound(name)
-        }
-    }
-}
-
-public enum JetStreamDirectGetError: Error, Equatable {
-    case msgNotFound
-    case invalidResponse(String)
-    case errorResponse(StatusCode, String?)
-
-    public var description: String {
-        switch self {
-        case .msgNotFound:
-            return "message not found"
-        case .invalidResponse(let cause):
-            return "invalid response: \(cause)"
-        case .errorResponse(let code, let description):
-            if let description {
-                return "unable to get message: \(code) \(description)"
-            } else {
-                return "unable to get message: \(code)"
-            }
-        }
-    }
-}
-
-/// Returned when a provided ``StreamConfig`` is not valid.
-public enum StreamValidationError: Error, Equatable {
-    case nameRequired
-    case invalidCharacterFound(String)
-
-    public var description: String {
-        switch self {
-        case .nameRequired:
-            return "Stream name is required."
-        case .invalidCharacterFound(let name):
-            return "Invalid character found in stream name: '\(name)'."
+            throw JetStreamError.StreamError.invalidStreamName(name)
         }
     }
 }

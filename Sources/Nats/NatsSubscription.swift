@@ -14,6 +14,7 @@
 import Foundation
 
 // TODO(pp): Implement slow consumer
+// TODO(pp): Add queue subscribe
 public class NatsSubscription: AsyncSequence {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
@@ -133,12 +134,12 @@ public class NatsSubscription: AsyncSequence {
 
     /// Unsubscribes from subscription.
     ///
-    /// - Parameter after: if set, unsubscribe will be performed after reaching given number of messages.
+    /// - Parameter after: If set, unsubscribe will be performed after reaching given number of messages.
     ///   If it already reached or surpassed the passed value, it will immediately stop.
     ///
-    /// - Throws:
-    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
-    ///   - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
+    /// > **Throws:**
+    /// > - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    /// > - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
     public func unsubscribe(after: UInt64? = nil) async throws {
         logger.info("unsubscribe from subject \(subject)")
         if case .closed = self.conn.state {
