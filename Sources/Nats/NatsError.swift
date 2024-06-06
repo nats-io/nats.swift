@@ -75,10 +75,10 @@ public enum NatsError {
                 {
                     self = .permissionsViolation(operation, subject, queue)
                 } else {
-                    self = .proto(normalizedError)
+                    self = .proto(error)
                 }
             } else {
-                self = .proto(normalizedError)
+                self = .proto(error)
             }
         }
 

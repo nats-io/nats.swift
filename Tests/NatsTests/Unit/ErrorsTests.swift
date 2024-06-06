@@ -37,6 +37,6 @@ class ErrorsTests: XCTestCase {
             err, NatsError.ServerError.permissionsViolation(.publish, "events.A.B.*", "q"))
 
         err = NatsError.ServerError("Some other error")
-        XCTAssertEqual(err, NatsError.ServerError.proto("some other error"))
+        XCTAssertEqual(err, NatsError.ServerError.proto("Some other error"))
     }
 }
