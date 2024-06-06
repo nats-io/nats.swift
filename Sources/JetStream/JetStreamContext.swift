@@ -94,10 +94,12 @@ extension JetStreamContext {
             return try decoder.decode(Response<T>.self, from: payload)
         } catch let err as NatsError.RequestError {
             switch err {
-                case .noResponders:
-                    throw JetStreamError.RequestError.noResponders
-                case .timeout:
-                    throw JetStreamError.RequestError.timeout
+            case .noResponders:
+                throw JetStreamError.RequestError.noResponders
+            case .timeout:
+                throw JetStreamError.RequestError.timeout
+            case .permissionDenied:
+                throw JetStreamError.RequestError.permissionDenied(subject)
             }
         }
     }
@@ -109,10 +111,12 @@ extension JetStreamContext {
                 data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
         } catch let err as NatsError.RequestError {
             switch err {
-                case .noResponders:
-                    throw JetStreamError.RequestError.noResponders
-                case .timeout:
-                    throw JetStreamError.RequestError.timeout
+            case .noResponders:
+                throw JetStreamError.RequestError.noResponders
+            case .timeout:
+                throw JetStreamError.RequestError.timeout
+            case .permissionDenied:
+                throw JetStreamError.RequestError.permissionDenied(subject)
             }
         }
     }

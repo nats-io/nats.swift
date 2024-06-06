@@ -91,7 +91,6 @@ class JetStreamTests: XCTestCase {
             .build()
         try await clientI.connect()
 
-
         let jsA = JetStreamContext(client: clientA)
         let jsI = JetStreamContext(client: clientI, prefix: "fromA")
 
@@ -109,7 +108,6 @@ class JetStreamTests: XCTestCase {
             .url(URL(string: natsServer.clientURL)!)
             .build()
         try await client.connect()
-
 
         let js = JetStreamContext(client: client, domain: "ABC")
         _ = try await js.createStream(cfg: StreamConfig(name: "TEST", subjects: ["foo"]))
@@ -150,7 +148,6 @@ class JetStreamTests: XCTestCase {
             return
         }
     }
-
 
     func testStreamCRUD() async throws {
         let bundle = Bundle.module

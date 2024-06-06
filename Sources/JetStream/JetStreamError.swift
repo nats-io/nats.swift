@@ -33,15 +33,18 @@ public enum JetStreamError {
         case noResponders
         case timeout
         case emptyResponsePayload
+        case permissionDenied(String)
 
         public var description: String {
-            switch self{
-                case .noResponders:
-                    return "nats: no responders available for request"
-                case .timeout:
-                    return "nats: request timed out"
-                case .emptyResponsePayload:
-                    return "nats: empty response payload"
+            switch self {
+            case .noResponders:
+                return "nats: no responders available for request"
+            case .timeout:
+                return "nats: request timed out"
+            case .emptyResponsePayload:
+                return "nats: empty response payload"
+            case .permissionDenied(let subject):
+                return "nats: permission denied on subject \(subject)"
             }
         }
     }
@@ -63,10 +66,10 @@ public enum JetStreamError {
 
         public var description: String {
             switch self {
-                case .nameRequired:
-                    return "nats: stream name is required"
-                case .invalidStreamName(let name):
-                    return "nats: invalid stream name: \(name)"
+            case .nameRequired:
+                return "nats: stream name is required"
+            case .invalidStreamName(let name):
+                return "nats: invalid stream name: \(name)"
             case .streamNotFound(let err),
                 .streamNameExist(let err),
                 .streamMessageExceedsMaximum(let err),
@@ -92,8 +95,8 @@ public enum JetStreamError {
                 self = .streamMessageExceedsMaximum(err)
             case ErrorCode.streamDelete:
                 self = .streamDelete(err)
-                case ErrorCode.streamUpdate:
-                    self = .streamUpdate(err)
+            case ErrorCode.streamUpdate:
+                self = .streamUpdate(err)
             case ErrorCode.streamInvalidExternalDeliverySubject:
                 self = .streamInvalidExternalDeliverySubject(err)
             case ErrorCode.streamMirrorNotUpdatable:
@@ -276,14 +279,14 @@ public enum JetStreamError {
 
         public var description: String {
             switch self {
-                case .invalidResponse(let cause):
-                    return "invalid response: \(cause)"
-                case .errorResponse(let code, let description):
-                    if let description {
-                        return "unable to get message: \(code) \(description)"
-                    } else {
-                        return "unable to get message: \(code)"
-                    }
+            case .invalidResponse(let cause):
+                return "invalid response: \(cause)"
+            case .errorResponse(let code, let description):
+                if let description {
+                    return "unable to get message: \(code) \(description)"
+                } else {
+                    return "unable to get message: \(code)"
+                }
             }
         }
     }

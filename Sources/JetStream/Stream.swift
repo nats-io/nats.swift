@@ -295,7 +295,8 @@ public class Stream {
 
         let seq = UInt64(seqHdr.description)
         if seq == nil {
-            throw JetStreamError.DirectGetError.invalidResponse("invalid Nats-Sequence header: \(seqHdr)")
+            throw JetStreamError.DirectGetError.invalidResponse(
+                "invalid Nats-Sequence header: \(seqHdr)")
         }
 
         guard let timeStamp = headers[.natsTimestamp] else {
