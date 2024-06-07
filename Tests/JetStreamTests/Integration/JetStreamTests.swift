@@ -22,7 +22,8 @@ class JetStreamTests: XCTestCase {
 
     static var allTests = [
         ("testJetStreamContext", testJetStreamContext),
-        ("testRequest", testRequest),
+        ("testJetStreamNotEnabled", testJetStreamNotEnabled),
+        ("testJetStreamNotEnabledForAccount", testJetStreamNotEnabledForAccount),
         ("testStreamCRUD", testStreamCRUD),
         ("testStreamConfig", testStreamConfig),
         ("testStreamInfo", testStreamInfo),
@@ -72,45 +73,80 @@ class JetStreamTests: XCTestCase {
         try await client.close()
     }
 
-    func testRequest() async throws {
-
+    func testJetStreamContextWithPrefix() async throws {
         let bundle = Bundle.module
         natsServer.start(
-            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+            cfg: bundle.url(forResource: "prefix", withExtension: "conf")!.relativePath)
         logger.logLevel = .debug
 
-        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let clientA = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .usernameAndPassword("a", "a")
+            .build()
+        try await clientA.connect()
+
+        let clientI = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .usernameAndPassword("i", "i")
+            .build()
+        try await clientI.connect()
+
+        let jsA = JetStreamContext(client: clientA)
+        let jsI = JetStreamContext(client: clientI, prefix: "fromA")
+
+        _ = try await jsI.createStream(cfg: StreamConfig(name: "TEST", subjects: ["foo"]))
+        _ = try await jsA.getStream(name: "TEST")
+    }
+
+    func testJetStreamContextWithDomain() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "domain", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let js = JetStreamContext(client: client, domain: "ABC")
+        _ = try await js.createStream(cfg: StreamConfig(name: "TEST", subjects: ["foo"]))
+    }
+
+    func testJetStreamNotEnabled() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
         try await client.connect()
 
         let ctx = JetStreamContext(client: client)
 
-        let stream = """
-            {
-                "name": "FOO",
-                "subjects": ["foo"]
-            }
-            """
-        let data = stream.data(using: .utf8)!
-
-        _ = try await client.request(data, subject: "$JS.API.STREAM.CREATE.FOO")
-
-        let info: Response<AccountInfo> = try await ctx.request("INFO", message: Data())
-
-        guard case .success(let info) = info else {
-            XCTFail("request should be successful")
+        do {
+            _ = try await ctx.createStream(cfg: StreamConfig(name: "test"))
+        } catch JetStreamError.RequestError.noResponders {
+            // success
             return
         }
+    }
 
-        XCTAssertEqual(info.streams, 1)
-        let badInfo: Response<AccountInfo> = try await ctx.request(
-            "STREAM.INFO.BAD", message: Data())
-        guard case .error(let jetStreamAPIResponse) = badInfo else {
-            XCTFail("should get error")
+    func testJetStreamNotEnabledForAccount() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        do {
+            _ = try await ctx.createStream(cfg: StreamConfig(name: "test"))
+        } catch JetStreamError.RequestError.noResponders {
+            // success
             return
         }
-
-        XCTAssertEqual(ErrorCode.streamNotFound, jetStreamAPIResponse.error.errorCode)
-
     }
 
     func testStreamCRUD() async throws {
@@ -126,7 +162,7 @@ class JetStreamTests: XCTestCase {
 
         // minimal config
         var cfg = StreamConfig(name: "test", subjects: ["foo"])
-        var stream = try await ctx.createStream(cfg: cfg)
+        let stream = try await ctx.createStream(cfg: cfg)
 
         var expectedConfig = StreamConfig(
             name: "test", description: nil, subjects: ["foo"], retention: .limits, maxConsumers: -1,
@@ -142,22 +178,27 @@ class JetStreamTests: XCTestCase {
         XCTAssertEqual(expectedConfig, stream.info.config)
 
         // attempt overwriting existing stream
+        var errOk = false
         do {
             _ = try await ctx.createStream(
                 cfg: StreamConfig(name: "test", description: "cannot update with create"))
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .streamNameExist)
+        } catch JetStreamError.StreamError.streamNameExist(_) {
+            errOk = true
+            // success
         }
+        XCTAssertTrue(errOk, "Expected stream not found error")
 
         // get a stream
-        stream = try await ctx.getStream(name: "test")
+        guard var stream = try await ctx.getStream(name: "test") else {
+            XCTFail("Expected a stream, got nil")
+            return
+        }
         XCTAssertEqual(expectedConfig, stream.info.config)
 
         // get a non-existing stream
-        do {
-            stream = try await ctx.getStream(name: "bad")
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .streamNotFound)
+        errOk = false
+        if let _ = try await ctx.getStream(name: "bad") {
+            XCTFail("Expected stream not found, go: \(stream)")
         }
 
         // update the stream
@@ -167,21 +208,33 @@ class JetStreamTests: XCTestCase {
 
         XCTAssertEqual(expectedConfig, stream.info.config)
 
+        // attempt to update illegal stream property
+        cfg.storage = .memory
         // attempt updating non-existing stream
+        errOk = false
+        do {
+            _ = try await ctx.updateStream(cfg: cfg)
+        } catch JetStreamError.StreamError.invalidConfig(_) {
+            // success
+            errOk = true
+        }
+
+        // attempt updating non-existing stream
+        errOk = false
         do {
             _ = try await ctx.updateStream(cfg: StreamConfig(name: "bad"))
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .streamNotFound)
+        } catch JetStreamError.StreamError.streamNotFound(_) {
+            // success
+            errOk = true
         }
+        XCTAssertTrue(errOk, "Expected stream not found error")
 
         // delete the stream
         try await ctx.deleteStream(name: "test")
 
         // make sure the stream no longer exists
-        do {
-            stream = try await ctx.getStream(name: "test")
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .streamNotFound)
+        if let _ = try await ctx.getStream(name: "test") {
+            XCTFail("Expected stream not found")
         }
     }
 
@@ -446,11 +499,14 @@ class JetStreamTests: XCTestCase {
         XCTAssertNil(msg)
 
         // try deleting the msg again
+        var errOk = false
         do {
             try await stream.deleteMessage(sequence: 5)
-        } catch let err as JetStreamError {
-            XCTAssertEqual(err.errorCode, .sequenceNotFound)
+        } catch JetStreamError.StreamMessageError.deleteSequenceNotFound(_) {
+            // success
+            errOk = true
         }
+        XCTAssertTrue(errOk, "Expected sequence not found error")
 
         // now do the same with secure delete
         // we cannot easily test whether the operation actually overwritten the value from unit test

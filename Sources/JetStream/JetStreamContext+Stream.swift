@@ -17,7 +17,20 @@ import Foundation
 extension JetStreamContext {
 
     /// Creates a stream with the specified configuration.
-    /// Throws an error if the stream configuration is invalid or a stream with given name already exists and has different configuration.
+    ///
+    /// - Parameter cfg: stream config
+    ///
+    /// - Returns: ``Stream`` object containing ``StreamInfo`` and exposing operations on the stream
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/StreamError``: if there was am error creating the stream. There are several errors which may occur, most common being:
+    /// >   - ``JetStreamError/StreamError/nameRequired``: if the provided stream name is empty.
+    /// >   - ``JetStreamError/StreamError/invalidStreamName(_:)``: if the provided stream name is not valid.
+    /// >   - ``JetStreamError/StreamError/streamNameExist(_:)``: if a stream with provided name exists and has different configuration.
+    /// >   - ``JetStreamError/StreamError/invalidConfig(_:)``: if the stream config is not valid.
+    /// >   - ``JetStreamError/StreamError/maximumStreamsLimit(_:)``: if the maximum number of streams has been reached.
+    /// > - ``JetStreamError/RequestError``: if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError``: if there was a different API error returned from JetStream.
     public func createStream(cfg: StreamConfig) async throws -> Stream {
         try Stream.validate(name: cfg.name)
         let req = try! JSONEncoder().encode(cfg)
@@ -27,13 +40,25 @@ extension JetStreamContext {
         case .success(let info):
             return Stream(ctx: self, info: info)
         case .error(let apiResponse):
+            if let streamErr = JetStreamError.StreamError(from: apiResponse.error) {
+                throw streamErr
+            }
             throw apiResponse.error
         }
     }
 
     /// Retrieves a stream by its name.
-    /// Throws an error if the stream does not exist.
-    public func getStream(name: String) async throws -> Stream {
+    ///
+    /// - Parameter name: name of the stream
+    ///
+    /// - Returns a ``Stream`` object containing ``StreamInfo`` and exposing operations on the stream or nil if stream with given name does not exist.
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/StreamError/nameRequired`` if the provided stream name is empty.
+    /// > - ``JetStreamError/StreamError/invalidStreamName(_:)`` if the provided stream name is not valid.
+    /// > - ``JetStreamError/RequestError`` if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError`` if there was a different JetStreamError returned from JetStream.
+    public func getStream(name: String) async throws -> Stream? {
         try Stream.validate(name: name)
         let subj = "STREAM.INFO.\(name)"
         let info: Response<StreamInfo> = try await request(subj)
@@ -41,12 +66,31 @@ extension JetStreamContext {
         case .success(let info):
             return Stream(ctx: self, info: info)
         case .error(let apiResponse):
+            if apiResponse.error.errorCode == .streamNotFound {
+                return nil
+            }
+            if let streamErr = JetStreamError.StreamError(from: apiResponse.error) {
+                throw streamErr
+            }
             throw apiResponse.error
         }
     }
 
     /// Updates an existing stream with new configuration.
-    /// Throws an error if the stream configuration is invalid or if the stream with provided name does not exist.
+    ///
+    /// - Parameter: cfg: stream config
+    ///
+    /// - Returns: ``Stream`` object containing ``StreamInfo`` and exposing operations on the stream
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/StreamError`` if there was am error creating the stream.
+    /// >   There are several errors which may occur, most common being:
+    /// >   - ``JetStreamError/StreamError/nameRequired`` if the provided stream name is empty.
+    /// >   - ``JetStreamError/StreamError/invalidStreamName(_:)`` if the provided stream name is not valid.
+    /// >   - ``JetStreamError/StreamError/streamNotFound(_:)`` if a stream with provided name exists and has different configuration.
+    /// >   - ``JetStreamError/StreamError/invalidConfig(_:)`` if the stream config is not valid or user attempts to update non-updatable properties.
+    /// > - ``JetStreamError/RequestError`` if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError`` if there was a different API error returned from JetStream.
     public func updateStream(cfg: StreamConfig) async throws -> Stream {
         try Stream.validate(name: cfg.name)
         let req = try! JSONEncoder().encode(cfg)
@@ -56,12 +100,22 @@ extension JetStreamContext {
         case .success(let info):
             return Stream(ctx: self, info: info)
         case .error(let apiResponse):
+            if let streamErr = JetStreamError.StreamError(from: apiResponse.error) {
+                throw streamErr
+            }
             throw apiResponse.error
         }
     }
 
     /// Deletes a stream by its name.
-    /// Throws an error if the stream does not exist.
+    ///
+    /// - Parameter name: name of the stream to be deleted.
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/StreamError/nameRequired`` if the provided stream name is empty.
+    /// > - ``JetStreamError/StreamError/invalidStreamName(_:)`` if the provided stream name is not valid.
+    /// > - ``JetStreamError/RequestError`` if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError`` if there was a different JetStreamError returned from JetStream.
     public func deleteStream(name: String) async throws {
         try Stream.validate(name: name)
         let subj = "STREAM.DELETE.\(name)"
@@ -70,6 +124,9 @@ extension JetStreamContext {
         case .success(_):
             return
         case .error(let apiResponse):
+            if let streamErr = JetStreamError.StreamError(from: apiResponse.error) {
+                throw streamErr
+            }
             throw apiResponse.error
         }
     }
@@ -79,15 +136,19 @@ extension JetStreamContext {
     }
 
     /// Used to list stream infos.
-    /// Returns an AsyncSequence allowing iteration over streams.
-    /// Subject can be provided to filter the response.
+    ///
+    /// - Returns an ``Streams`` which implements AsyncSequence allowing iteration over streams.
+    ///
+    /// - Parameter subject: if provided will be used to filter out returned streams
     public func streams(subject: String? = nil) async -> Streams {
         return Streams(ctx: self, subject: subject)
     }
 
-    /// Used to list stream names.
-    /// Returns an AsyncSequence allowing iteration over streams.
-    /// Subject can be provided to filter the response.
+    /// Used to list stream infos.
+    ///
+    /// - Returns an ``StreamNames`` which implements AsyncSequence allowing iteration over stream names.
+    ///
+    /// - Parameter subject: if provided will be used to filter out returned stream names
     public func streamNames(subject: String? = nil) async -> StreamNames {
         return StreamNames(ctx: self, subject: subject)
     }
@@ -98,6 +159,7 @@ internal struct StreamsPagedRequest: Codable {
     let subject: String?
 }
 
+/// Used to iterate over streams when listing stream infos using ``JetStreamContext/streams(subject:)``
 public struct Streams: AsyncSequence {
     public typealias Element = StreamInfo
     public typealias AsyncIterator = StreamsIterator

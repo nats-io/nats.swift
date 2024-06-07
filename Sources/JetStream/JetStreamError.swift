@@ -12,22 +12,283 @@
 // limitations under the License.
 
 import Foundation
+import Nats
 
-public struct JetStreamAPIResponse: Codable {
-    public let type: String
-    public let error: JetStreamError
-}
+public protocol JetStreamErrorProtocol: Error, CustomStringConvertible {}
 
-public struct JetStreamError: Codable, Error {
-    public var code: UInt
-    //FIXME(jrm): This should be mapped to predefined JetStream errors from the server.
-    public var errorCode: ErrorCode
-    public var description: String?
+public enum JetStreamError {
+    public struct APIError: Codable, Error {
+        public var code: UInt
+        public var errorCode: ErrorCode
+        public var description: String
 
-    enum CodingKeys: String, CodingKey {
-        case code = "code"
-        case errorCode = "err_code"
-        case description = "description"
+        enum CodingKeys: String, CodingKey {
+            case code = "code"
+            case errorCode = "err_code"
+            case description = "description"
+        }
+    }
+
+    public enum RequestError: JetStreamErrorProtocol {
+        case noResponders
+        case timeout
+        case emptyResponsePayload
+        case permissionDenied(String)
+
+        public var description: String {
+            switch self {
+            case .noResponders:
+                return "nats: no responders available for request"
+            case .timeout:
+                return "nats: request timed out"
+            case .emptyResponsePayload:
+                return "nats: empty response payload"
+            case .permissionDenied(let subject):
+                return "nats: permission denied on subject \(subject)"
+            }
+        }
+    }
+
+    public enum StreamError: JetStreamErrorProtocol {
+        case nameRequired
+        case invalidStreamName(String)
+        case streamNotFound(APIError)
+        case streamNameExist(APIError)
+        case streamMessageExceedsMaximum(APIError)
+        case streamDelete(APIError)
+        case streamUpdate(APIError)
+        case streamInvalidExternalDeliverySubject(APIError)
+        case streamMirrorNotUpdatable(APIError)
+        case streamLimitsExceeded(APIError)
+        case invalidConfig(APIError)
+        case maximumStreamsLimit(APIError)
+        case streamSealed(APIError)
+
+        public var description: String {
+            switch self {
+            case .nameRequired:
+                return "nats: stream name is required"
+            case .invalidStreamName(let name):
+                return "nats: invalid stream name: \(name)"
+            case .streamNotFound(let err),
+                .streamNameExist(let err),
+                .streamMessageExceedsMaximum(let err),
+                .streamDelete(let err),
+                .streamUpdate(let err),
+                .streamInvalidExternalDeliverySubject(let err),
+                .streamMirrorNotUpdatable(let err),
+                .streamLimitsExceeded(let err),
+                .invalidConfig(let err),
+                .maximumStreamsLimit(let err),
+                .streamSealed(let err):
+                return "nats: \(err.description)"
+            }
+        }
+
+        internal init?(from err: APIError) {
+            switch err.errorCode {
+            case ErrorCode.streamNotFound:
+                self = .streamNotFound(err)
+            case ErrorCode.streamNameExist:
+                self = .streamNameExist(err)
+            case ErrorCode.streamMessageExceedsMaximum:
+                self = .streamMessageExceedsMaximum(err)
+            case ErrorCode.streamDelete:
+                self = .streamDelete(err)
+            case ErrorCode.streamUpdate:
+                self = .streamUpdate(err)
+            case ErrorCode.streamInvalidExternalDeliverySubject:
+                self = .streamInvalidExternalDeliverySubject(err)
+            case ErrorCode.streamMirrorNotUpdatable:
+                self = .streamMirrorNotUpdatable(err)
+            case ErrorCode.streamLimits:
+                self = .streamLimitsExceeded(err)
+            case ErrorCode.mirrorWithSources,
+                ErrorCode.streamSubjectOverlap,
+                ErrorCode.streamExternalDeletePrefixOverlaps,
+                ErrorCode.mirrorMaxMessageSizeTooBig,
+                ErrorCode.sourceMaxMessageSizeTooBig,
+                ErrorCode.streamInvalidConfig,
+                ErrorCode.mirrorWithSubjects,
+                ErrorCode.streamExternalApiOverlap,
+                ErrorCode.mirrorWithStartSequenceAndTime,
+                ErrorCode.mirrorWithSubjectFilters,
+                ErrorCode.streamReplicasNotSupported,
+                ErrorCode.streamReplicasNotUpdatable,
+                ErrorCode.streamMaxBytesRequired,
+                ErrorCode.streamMaxStreamBytesExceeded,
+                ErrorCode.streamNameContainsPathSeparators,
+                ErrorCode.replicasCountCannotBeNegative,
+                ErrorCode.sourceDuplicateDetected,
+                ErrorCode.sourceInvalidStreamName,
+                ErrorCode.mirrorInvalidStreamName,
+                ErrorCode.sourceMultipleFiltersNotAllowed,
+                ErrorCode.sourceInvalidSubjectFilter,
+                ErrorCode.sourceInvalidTransformDestination,
+                ErrorCode.sourceOverlappingSubjectFilters,
+                ErrorCode.streamExternalDeletePrefixOverlaps:
+                self = .invalidConfig(err)
+            case ErrorCode.maximumStreamsLimit:
+                self = .maximumStreamsLimit(err)
+            case ErrorCode.streamSealed:
+                self = .streamSealed(err)
+            default:
+                return nil
+            }
+        }
+    }
+
+    public enum PublishError: JetStreamErrorProtocol {
+        case streamWrongLastSequence(APIError)
+        case streamWrongLastMessageId(APIError)
+        case streamNotMatch(APIError)
+        case streamNotFound
+
+        public var description: String {
+            switch self {
+            case .streamWrongLastSequence(let err),
+                .streamWrongLastMessageId(let err),
+                .streamNotMatch(let err):
+                return "nats: \(err.description)"
+            case .streamNotFound:
+                return "nats: stream not found"
+            }
+        }
+
+        internal init?(from err: APIError) {
+            switch err.errorCode {
+            case ErrorCode.streamWrongLastSequence:
+                self = .streamWrongLastSequence(err)
+            case ErrorCode.streamWrongLastMessageId:
+                self = .streamWrongLastMessageId(err)
+            case ErrorCode.streamNotMatch:
+                self = .streamNotMatch(err)
+            default:
+                return nil
+            }
+        }
+    }
+
+    public enum ConsumerError: JetStreamErrorProtocol {
+        case consumerNotFound(APIError)
+        case maximumConsumersLimit(APIError)
+        case consumerNameExist(APIError)
+        case consumerDoesNotExist(APIError)
+        case invalidConfig(APIError)
+
+        public var description: String {
+            switch self {
+            case .consumerNotFound(let err),
+                .maximumConsumersLimit(let err),
+                .consumerNameExist(let err),
+                .consumerDoesNotExist(let err),
+                .invalidConfig(let err):
+                return "nats: \(err.description)"
+            }
+        }
+
+        internal init?(from err: APIError) {
+            switch err.errorCode {
+            case ErrorCode.consumerNotFound:
+                self = .consumerNotFound(err)
+            case ErrorCode.maximumConsumersLimit:
+                self = .maximumConsumersLimit(err)
+            case ErrorCode.consumerNameExist,
+                ErrorCode.consumerExistingActive,
+                ErrorCode.consumerAlreadyExists:
+                self = .consumerNameExist(err)
+            case ErrorCode.consumerDoesNotExist:
+                self = .consumerDoesNotExist(err)
+            case ErrorCode.consumerDeliverToWildcards,
+                ErrorCode.consumerPushMaxWaiting,
+                ErrorCode.consumerDeliverCycle,
+                ErrorCode.consumerMaxPendingAckPolicyRequired,
+                ErrorCode.consumerSmallHeartbeat,
+                ErrorCode.consumerPullRequiresAck,
+                ErrorCode.consumerPullNotDurable,
+                ErrorCode.consumerPullWithRateLimit,
+                ErrorCode.consumerPullNotDurable,
+                ErrorCode.consumerMaxWaitingNegative,
+                ErrorCode.consumerHeartbeatRequiresPush,
+                ErrorCode.consumerFlowControlRequiresPush,
+                ErrorCode.consumerDirectRequiresPush,
+                ErrorCode.consumerDirectRequiresEphemeral,
+                ErrorCode.consumerOnMapped,
+                ErrorCode.consumerFilterNotSubset,
+                ErrorCode.consumerInvalidPolicy,
+                ErrorCode.consumerInvalidSampling,
+                ErrorCode.consumerWithFlowControlNeedsHeartbeats,
+                ErrorCode.consumerWqRequiresExplicitAck,
+                ErrorCode.consumerWqMultipleUnfiltered,
+                ErrorCode.consumerWqConsumerNotUnique,
+                ErrorCode.consumerWqConsumerNotDeliverAll,
+                ErrorCode.consumerNameTooLong,
+                ErrorCode.consumerBadDurableName,
+                ErrorCode.consumerDescriptionTooLong,
+                ErrorCode.consumerInvalidDeliverSubject,
+                ErrorCode.consumerMaxRequestBatchNegative,
+                ErrorCode.consumerMaxRequestExpiresToSmall,
+                ErrorCode.consumerMaxDeliverBackoff,
+                ErrorCode.consumerMaxPendingAckExcess,
+                ErrorCode.consumerMaxRequestBatchExceeded,
+                ErrorCode.consumerReplicasExceedsStream,
+                ErrorCode.consumerNameContainsPathSeparators,
+                ErrorCode.consumerCreateFilterSubjectMismatch,
+                ErrorCode.consumerCreateDurableAndNameMismatch,
+                ErrorCode.replicasCountCannotBeNegative,
+                ErrorCode.consumerReplicasShouldMatchStream,
+                ErrorCode.consumerMetadataLength,
+                ErrorCode.consumerDuplicateFilterSubjects,
+                ErrorCode.consumerMultipleFiltersNotAllowed,
+                ErrorCode.consumerOverlappingSubjectFilters,
+                ErrorCode.consumerEmptyFilter,
+                ErrorCode.mirrorMultipleFiltersNotAllowed,
+                ErrorCode.mirrorInvalidSubjectFilter,
+                ErrorCode.mirrorOverlappingSubjectFilters,
+                ErrorCode.consumerInactiveThresholdExcess:
+                self = .invalidConfig(err)
+            default:
+                return nil
+            }
+        }
+    }
+
+    public enum StreamMessageError: JetStreamErrorProtocol {
+        case deleteSequenceNotFound(APIError)
+
+        public var description: String {
+            switch self {
+            case .deleteSequenceNotFound(let err):
+                return "nats: \(err.description)"
+            }
+        }
+
+        internal init?(from err: APIError) {
+            switch err.errorCode {
+            case ErrorCode.sequenceNotFound:
+                self = .deleteSequenceNotFound(err)
+            default:
+                return nil
+            }
+        }
+    }
+
+    public enum DirectGetError: JetStreamErrorProtocol {
+        case invalidResponse(String)
+        case errorResponse(StatusCode, String?)
+
+        public var description: String {
+            switch self {
+            case .invalidResponse(let cause):
+                return "invalid response: \(cause)"
+            case .errorResponse(let code, let description):
+                if let description {
+                    return "unable to get message: \(code) \(description)"
+                } else {
+                    return "unable to get message: \(code)"
+                }
+            }
+        }
     }
 }
 
@@ -70,7 +331,7 @@ public struct ErrorCode: Codable, Equatable {
     public static let mirrorMaxMessageSizeTooBig = ErrorCode(rawValue: 10030)
 
     /// Generic error from stream deletion operation
-    public static let streamDeleteFailed = ErrorCode(rawValue: 10067)
+    public static let streamTemplateDeleteFailed = ErrorCode(rawValue: 10067)
 
     /// Bad request
     public static let badRequest = ErrorCode(rawValue: 10003)
@@ -244,7 +505,7 @@ public struct ErrorCode: Codable, Equatable {
     public static let snapshotDeliverSubjectInvalid = ErrorCode(rawValue: 10015)
 
     /// General stream failure
-    public static let streamGeneralor = ErrorCode(rawValue: 10051)
+    public static let streamGeneralError = ErrorCode(rawValue: 10051)
 
     /// Invalid stream config
     public static let streamInvalidConfig = ErrorCode(rawValue: 10052)

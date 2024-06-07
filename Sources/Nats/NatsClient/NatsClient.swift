@@ -84,14 +84,14 @@ extension NatsClient {
     /// If ``NatsClientOptions/retryOnfailedConnect()`` is used, `connect()`
     /// will not wait until the connection is established but rather return immediatelly.
     ///
-    /// - Throws:
-    ///  - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
-    ///  - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
-    ///  - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
-    ///  - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
-    ///  - ``NatsError/ConnectError/io`` if there was other error establishing connection
-    ///  - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
-    ///  - ``NatsError/ServerError/other(_:)`` if the server responds to client connection with a different error (e.g. max connections exceeded)
+    /// > **Throws:**
+    /// > - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
+    /// > - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
+    /// > - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
+    /// > - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
+    /// > - ``NatsError/ConnectError/io`` if there was other error establishing connection
+    /// > - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
+    /// > - ``NatsError/ServerError/other(_:)`` if the server responds to client connection with a different error (e.g. max connections exceeded)
     public func connect() async throws {
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
@@ -175,9 +175,9 @@ extension NatsClient {
     ///   - reply: optional reply subject when publishing a request.
     ///   - headers: optional message headers.
     ///
-    /// - Throws:
-    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
-    ///   - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
+    /// > **Throws:**
+    /// >  - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    /// >  - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
     public func publish(
         _ payload: Data, subject: String, reply: String? = nil, headers: NatsHeaderMap? = nil
     ) async throws {
@@ -202,11 +202,11 @@ extension NatsClient {
     ///
     /// - Returns a ``NatsMessage`` containing the response.
     ///
-    /// - Throws:
-    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
-    ///   - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
-    ///   - ``NatsError/RequestError/noResponders`` if there are no responders available for the request.
-    ///   - ``NatsError/RequestError/timeout`` if there was a timeout waiting for the response.
+    /// > **Throws:**
+    /// >  - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    /// >  - ``NatsError/ClientError/io(_:)`` if there is an error writing message to a TCP socket (e.g. bloken pipe).
+    /// >  - ``NatsError/RequestError/noResponders`` if there are no responders available for the request.
+    /// >  - ``NatsError/RequestError/timeout`` if there was a timeout waiting for the response.
     public func request(
         _ payload: Data, subject: String, headers: NatsHeaderMap? = nil, timeout: TimeInterval = 5
     ) async throws -> NatsMessage {
@@ -281,9 +281,9 @@ extension NatsClient {
     ///
     /// - Returns a ``NatsSubscription`` allowing iteration over incoming messages.
     ///
-    /// - Throws:
-    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
-    ///   - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
+    /// > **Throws:**
+    /// >  - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    /// >  - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
     public func subscribe(subject: String) async throws -> NatsSubscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
@@ -299,9 +299,9 @@ extension NatsClient {
     ///
     /// - Returns rtt of the request.
     ///
-    /// - Throws:
-    ///   - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
-    ///   - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
+    /// > **Throws:**
+    /// >  - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
+    /// >  - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
     public func rtt() async throws -> TimeInterval {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")

@@ -22,64 +22,122 @@ public class JetStreamContext {
     private var prefix: String = "$JS.API"
     private var timeout: TimeInterval = 5.0
 
+    /// Creates a JetStreamContext from ``NatsClient`` with optional custom prefix and timeout.
+    ///
+    /// - Parameters:
+    ///  - client: NATS client connection.
+    ///  - prefix: Used to comfigure a prefix for JetStream API requests.
+    ///  - timeout: Used to configure a timeout for JetStream API operations.
     public init(client: NatsClient, prefix: String = "$JS.API", timeout: TimeInterval = 5.0) {
         self.client = client
         self.prefix = prefix
         self.timeout = timeout
     }
 
+    /// Creates a JetStreamContext from ``NatsClient`` with custom domain and timeout.
+    ///
+    /// - Parameters:
+    ///  - client: NATS client connection.
+    ///  - domain: Used to comfigure a domain for JetStream API requests.
+    ///  - timeout: Used to configure a timeout for JetStream API operations.
     public init(client: NatsClient, domain: String, timeout: TimeInterval = 5.0) {
         self.client = client
         self.prefix = "$JS.\(domain).API"
         self.timeout = timeout
     }
 
+    /// Creates a JetStreamContext from ``NatsClient``
+    ///
+    /// - Parameters:
+    ///  - client: NATS client connection.
     public init(client: NatsClient) {
         self.client = client
     }
 
+    /// Sets a custom timeout for JetStream API requests.
     public func setTimeout(_ timeout: TimeInterval) {
         self.timeout = timeout
     }
 }
 
 extension JetStreamContext {
-    // fix the error type. Add AckError
+
+    /// Publishes a message on a stream subjec without waiting  for acknowledgment from the server that the message has been successfully delivered.
+    ///
+    /// - Parameters:
+    ///   - subject: Subject on which the message will be published.
+    ///   - message: NATS message payload.
+    ///   - headers:Optional set of message headers.
+    ///
+    /// - Returns: ``AckFuture`` allowing to await for the ack from the server.
     public func publish(
         _ subject: String, message: Data, headers: NatsHeaderMap? = nil
     ) async throws -> AckFuture {
-
+        // TODO(pp): add stream header options (expected seq etc)
         let inbox = nextNuid()
         let sub = try await self.client.subscribe(subject: inbox)
         try await self.client.publish(message, subject: subject, reply: inbox, headers: headers)
         return AckFuture(sub: sub, timeout: self.timeout)
     }
 
-    public func request<T: Codable>(
+    internal func request<T: Codable>(
         _ subject: String, message: Data? = nil
     ) async throws -> Response<T> {
         let data = message ?? Data()
-        let response = try await self.client.request(
-            data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
-
-        let decoder = JSONDecoder()
-        guard let payload = response.payload else {
-            throw JetStreamRequestError("empty response payload")
+        do {
+            let response = try await self.client.request(
+                data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+            let decoder = JSONDecoder()
+            guard let payload = response.payload else {
+                throw JetStreamError.RequestError.emptyResponsePayload
+            }
+            return try decoder.decode(Response<T>.self, from: payload)
+        } catch let err as NatsError.RequestError {
+            switch err {
+            case .noResponders:
+                throw JetStreamError.RequestError.noResponders
+            case .timeout:
+                throw JetStreamError.RequestError.timeout
+            case .permissionDenied:
+                throw JetStreamError.RequestError.permissionDenied(subject)
+            }
         }
-
-        return try decoder.decode(Response<T>.self, from: payload)
     }
 
     internal func request(_ subject: String, message: Data? = nil) async throws -> NatsMessage {
         let data = message ?? Data()
-        return try await self.client.request(
-            data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+        do {
+            return try await self.client.request(
+                data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+        } catch let err as NatsError.RequestError {
+            switch err {
+            case .noResponders:
+                throw JetStreamError.RequestError.noResponders
+            case .timeout:
+                throw JetStreamError.RequestError.timeout
+            case .permissionDenied:
+                throw JetStreamError.RequestError.permissionDenied(subject)
+            }
+        }
     }
 }
 
+public struct JetStreamAPIResponse: Codable {
+    public let type: String
+    public let error: JetStreamError.APIError
+}
+
+/// Used to await for response from ``JetStreamContext/publish(_:message:headers:)``
 public struct AckFuture {
     let sub: NatsSubscription
     let timeout: TimeInterval
+
+    /// Waits for an ACK from JetStream server.
+    ///
+    /// - Returns: Acknowledgement object returned by the server.
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/RequestError`` if the request timed out (client did not receive the ack in time) or
     public func wait() async throws -> Ack {
         let response = try await withThrowingTaskGroup(
             of: NatsMessage?.self,
@@ -98,55 +156,39 @@ public struct AckFuture {
                     // if the result is not empty, return it (or throw status error)
                     if let msg = result {
                         group.cancelAll()
-                        if let status = msg.status, status == StatusCode.noResponders {
-                            throw NatsError.RequestError.noResponders
-                        }
                         return msg
                     } else {
                         group.cancelAll()
                         try await sub.unsubscribe()
                         // if result is empty, time out
-                        throw NatsError.RequestError.timeout
+                        throw JetStreamError.RequestError.timeout
                     }
                 }
 
                 // this should not be reachable
-                throw JetStreamPublishError("internal error; error waiting for response")
+                throw NatsError.ClientError.internalError("error waiting for response")
             })
         if response.status == StatusCode.noResponders {
-            throw JetStreamPublishError("Stream not found")
+            throw JetStreamError.PublishError.streamNotFound
         }
 
         let decoder = JSONDecoder()
         guard let payload = response.payload else {
-            throw JetStreamPublishError("empty ack payload")
+            throw JetStreamError.RequestError.emptyResponsePayload
         }
-        let ack: Response<Ack>
-        do {
-            ack = try decoder.decode(Response<Ack>.self, from: payload)
-        } catch {
-            throw JetStreamPublishError("failed to send request: \(error)")
-        }
+
+        let ack = try decoder.decode(Response<Ack>.self, from: payload)
         switch ack {
         case .success(let ack):
             return ack
         case .error(let err):
-            throw JetStreamPublishError("ack failed: \(err)")
+            if let publishErr = JetStreamError.PublishError(from: err.error) {
+                throw publishErr
+            } else {
+                throw err.error
+            }
         }
 
-    }
-}
-public struct JetStreamPublishError: Error {
-    public var description: String
-    init(_ description: String) {
-        self.description = description
-    }
-}
-
-public struct JetStreamRequestError: Error {
-    public var description: String
-    init(_ description: String) {
-        self.description = description
     }
 }
 
