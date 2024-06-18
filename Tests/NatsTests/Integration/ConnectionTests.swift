@@ -314,6 +314,52 @@ class CoreNatsTests: XCTestCase {
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
     }
 
+    func testQueueGroupSubscribe() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let sub1 = try await client.subscribe(subject: "test", queue: "queueGroup")
+        let sub2 = try await client.subscribe(subject: "test", queue: "queueGroup")
+
+        try await client.publish("msg".data(using: .utf8)!, subject: "test")
+
+        try await withThrowingTaskGroup(of: NatsMessage?.self) { group in
+            group.addTask { try await sub1.makeAsyncIterator().next() }
+            group.addTask { try await sub2.makeAsyncIterator().next() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(1_000_000_000))
+                return nil
+            }
+
+            var msgReceived = false
+            var timeoutReceived = false
+            for try await result in group {
+                if let _ = result {
+                    if msgReceived == true {
+                        XCTFail("received 2 messages")
+                        return
+                    }
+                    msgReceived = true
+                } else {
+                    if !msgReceived {
+                        XCTFail("timeout received before getting any messages")
+                        return
+                    }
+                    timeoutReceived = true
+                }
+                if msgReceived && timeoutReceived {
+                    break
+                }
+            }
+            group.cancelAll()
+            try await sub1.unsubscribe()
+            try await sub2.unsubscribe()
+            return
+        }
+    }
+
     func testUnsubscribe() async throws {
         natsServer.start()
         logger.logLevel = .debug

@@ -205,11 +205,17 @@ public enum NatsError {
     }
 
     public enum SubscriptionError: NatsErrorProtocol, Equatable {
+        case invalidSubject
+        case invalidQueue
         case permissionDenied
         case subscriptionClosed
 
         public var description: String {
             switch self {
+            case .invalidSubject:
+                return "nats: invalid subject name"
+            case .invalidQueue:
+                return "nats: invalid queue group name"
             case .permissionDenied:
                 return "nats: permission denied"
             case .subscriptionClosed:

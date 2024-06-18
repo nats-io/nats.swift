@@ -225,40 +225,40 @@ extension NatsClient {
             operation: ClientOp.publish((subject, inbox, payload, headers)))
 
         return try await withThrowingTaskGroup(
-            of: NatsMessage?.self,
-            body: { group in
-                group.addTask {
-                    do {
-                        return try await sub.makeAsyncIterator().next()
-                    } catch NatsError.SubscriptionError.permissionDenied {
-                        throw NatsError.RequestError.permissionDenied
+            of: NatsMessage?.self
+        ) { group in
+            group.addTask {
+                do {
+                    return try await sub.makeAsyncIterator().next()
+                } catch NatsError.SubscriptionError.permissionDenied {
+                    throw NatsError.RequestError.permissionDenied
+                }
+            }
+
+            // task for the timeout
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+
+            for try await result in group {
+                // if the result is not empty, return it (or throw status error)
+                if let msg = result {
+                    group.cancelAll()
+                    if let status = msg.status, status == StatusCode.noResponders {
+                        throw NatsError.RequestError.noResponders
                     }
+                    return msg
+                } else {
+                    try await sub.unsubscribe()
+                    group.cancelAll()
+                    throw NatsError.RequestError.timeout
                 }
+            }
 
-                // task for the timeout
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                    return nil
-                }
-
-                for try await result in group {
-                    // if the result is not empty, return it (or throw status error)
-                    if let msg = result {
-                        group.cancelAll()
-                        if let status = msg.status, status == StatusCode.noResponders {
-                            throw NatsError.RequestError.noResponders
-                        }
-                        return msg
-                    } else {
-                        try await sub.unsubscribe()
-                        group.cancelAll()
-                        throw NatsError.RequestError.timeout
-                    }
-                }
-
-                // this should not be reachable
-                throw NatsError.ClientError.internalError("error waiting for response")
-            })
+            // this should not be reachable
+            throw NatsError.ClientError.internalError("error waiting for response")
+        }
     }
 
     /// Flushes the internal buffer ensuring that all messages are sent.
@@ -277,14 +277,18 @@ extension NatsClient {
 
     /// Subscribes to a subject to receive messages.
     ///
-    /// - Parameter subject is a subject the client want's to subscribe to.
+    /// - Parameters:
+    ///  - subject:a subject the client want's to subscribe to.
+    ///  - queue: optional queue group name.
     ///
     /// - Returns a ``NatsSubscription`` allowing iteration over incoming messages.
     ///
     /// > **Throws:**
     /// >  - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     /// >  - ``NatsError/ClientError/io(_:)`` if there is an error sending the SUB request to the server.
-    public func subscribe(subject: String) async throws -> NatsSubscription {
+    /// > - ``NatsError/SubscriptionError/invalidSubject`` if the provided subject is invalid.
+    /// > - ``NatsError/SubscriptionError/invalidQueue`` if the provided queue group is invalid.
+    public func subscribe(subject: String, queue: String? = nil) async throws -> NatsSubscription {
         logger.info("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
@@ -292,7 +296,7 @@ extension NatsClient {
         if case .closed = connectionHandler.state {
             throw NatsError.ClientError.connectionClosed
         }
-        return try await connectionHandler.subscribe(subject)
+        return try await connectionHandler.subscribe(subject, queue: queue)
     }
 
     /// Sends a PING to the server, returning the time it took for the server to respond.
