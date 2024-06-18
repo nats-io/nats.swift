@@ -14,12 +14,12 @@
 import Foundation
 
 // TODO(pp): Implement slow consumer
-// TODO(pp): Add queue subscribe
 public class NatsSubscription: AsyncSequence {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
 
     public let subject: String
+    public let queue: String?
     internal var max: UInt64?
     internal var delivered: UInt64 = 0
     internal let sid: UInt64
@@ -34,14 +34,24 @@ public class NatsSubscription: AsyncSequence {
 
     private static let defaultSubCapacity: UInt64 = 512 * 1024
 
-    convenience init(sid: UInt64, subject: String, conn: ConnectionHandler) {
-        self.init(
-            sid: sid, subject: subject, capacity: NatsSubscription.defaultSubCapacity, conn: conn)
+    convenience init(sid: UInt64, subject: String, queue: String?, conn: ConnectionHandler) throws {
+        try self.init(
+            sid: sid, subject: subject, queue: queue, capacity: NatsSubscription.defaultSubCapacity,
+            conn: conn)
     }
 
-    init(sid: UInt64, subject: String, capacity: UInt64, conn: ConnectionHandler) {
+    init(
+        sid: UInt64, subject: String, queue: String?, capacity: UInt64, conn: ConnectionHandler
+    ) throws {
+        if !NatsSubscription.validSubject(subject) {
+            throw NatsError.SubscriptionError.invalidSubject
+        }
+        if let queue, !NatsSubscription.validQueue(queue) {
+            throw NatsError.SubscriptionError.invalidQueue
+        }
         self.sid = sid
         self.subject = subject
+        self.queue = queue
         self.capacity = capacity
         self.buffer = []
         self.conn = conn
@@ -149,5 +159,27 @@ public class NatsSubscription: AsyncSequence {
             throw NatsError.SubscriptionError.subscriptionClosed
         }
         return try await self.conn.unsubscribe(sub: self, max: after)
+    }
+
+    // validateSubject will do a basic subject validation.
+    // Spaces are not allowed and all tokens should be > 0 in length.
+    private static func validSubject(_ subj: String) -> Bool {
+        let whitespaceCharacterSet = CharacterSet.whitespacesAndNewlines
+        if subj.rangeOfCharacter(from: whitespaceCharacterSet) != nil {
+            return false
+        }
+        let tokens = subj.split(separator: ".")
+        for token in tokens {
+            if token.isEmpty {
+                return false
+            }
+        }
+        return true
+    }
+
+    // validQueue will check a queue name for whitespaces.
+    private static func validQueue(_ queue: String) -> Bool {
+        let whitespaceCharacterSet = CharacterSet.whitespacesAndNewlines
+        return queue.rangeOfCharacter(from: whitespaceCharacterSet) == nil
     }
 }
