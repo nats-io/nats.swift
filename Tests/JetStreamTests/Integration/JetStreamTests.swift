@@ -34,6 +34,12 @@ class JetStreamTests: XCTestCase {
         ("testPurge", testPurge),
         ("testPurgeSequence", testPurgeSequence),
         ("testPurgeKeepm", testPurgeKeep),
+        ("testJetStreamContextConsumerCRUD", testJetStreamContextConsumerCRUD),
+        ("testStreamConsumerCRUD", testStreamConsumerCRUD),
+        ("testConsumerConfig", testConsumerConfig),
+        ("testCreateEphemeralConsumer", testCreateEphemeralConsumer),
+        ("testConsumerInfo", testConsumerInfo),
+        ("testListConsumers", testListConsumers),
     ]
 
     var natsServer = NatsServer()
@@ -656,4 +662,311 @@ class JetStreamTests: XCTestCase {
         info = try await stream.info()
         XCTAssertEqual(info.state.messages, 10)
     }
+
+    func testStreamConsumerCRUD() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let streamCfg = StreamConfig(name: "test", subjects: ["foo"])
+        let stream = try await ctx.createStream(cfg: streamCfg)
+
+        var expectedConfig = ConsumerConfig(
+            name: "test", durable: nil, description: nil, deliverPolicy: .all, optStartSeq: nil,
+            optStartTime: nil, ackPolicy: .explicit, ackWait: NanoTimeInterval(30), maxDeliver: -1,
+            backOff: nil, filterSubject: nil, replayPolicy: .instant, rateLimit: nil,
+            sampleFrequency: nil, maxWaiting: 512, maxAckPending: 1000, headersOnly: nil,
+            maxRequestBatch: nil, maxRequestExpires: nil, maxRequestMaxBytes: nil,
+            inactiveThreshold: NanoTimeInterval(5), replicas: 1, memoryStorage: nil,
+            filterSubjects: nil, metadata: nil)
+        // minimal config
+        var cfg = ConsumerConfig(name: "test")
+        _ = try await stream.createConsumer(cfg: cfg)
+
+        // attempt overwriting existing consumer
+        var errOk = false
+        do {
+            _ = try await stream.createConsumer(
+                cfg: ConsumerConfig(name: "test", description: "cannot update with create"))
+        } catch JetStreamError.ConsumerError.consumerNameExist(_) {
+            errOk = true
+            // success
+        }
+        XCTAssertTrue(errOk, "Expected consumer exists error")
+
+        // get a consumer
+        guard var cons = try await stream.getConsumer(name: "test") else {
+            XCTFail("Expected a stream, got nil")
+            return
+        }
+        XCTAssertEqual(expectedConfig, cons.info.config)
+
+        // get a non-existing consumer
+        errOk = false
+        if let cons = try await stream.getConsumer(name: "bad") {
+            XCTFail("Expected consumer not found, got: \(cons)")
+        }
+
+        // update the stream
+        cfg.description = "updated"
+        cons = try await stream.updateConsumer(cfg: cfg)
+        expectedConfig.description = "updated"
+
+        XCTAssertEqual(expectedConfig, cons.info.config)
+
+        // attempt to update illegal consumer property
+        cfg.memoryStorage = true
+        errOk = false
+        do {
+            _ = try await stream.updateConsumer(cfg: cfg)
+        } catch JetStreamError.ConsumerError.invalidConfig(_) {
+            // success
+            errOk = true
+        }
+
+        // attempt updating non-existing consumer
+        errOk = false
+        do {
+            _ = try await stream.updateConsumer(cfg: ConsumerConfig(name: "bad"))
+        } catch JetStreamError.ConsumerError.consumerDoesNotExist(_) {
+            // success
+            errOk = true
+        }
+        XCTAssertTrue(errOk, "Expected consumer not found error")
+
+        // delete the consumer
+        try await stream.deleteConsumer(name: "test")
+
+        // make sure the consumer no longer exists
+        if let _ = try await stream.getConsumer(name: "test") {
+            XCTFail("Expected consumer not found")
+        }
+    }
+
+    func testJetStreamContextConsumerCRUD() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let streamCfg = StreamConfig(name: "test", subjects: ["foo"])
+        _ = try await ctx.createStream(cfg: streamCfg)
+
+        var expectedConfig = ConsumerConfig(
+            name: "test", durable: nil, description: nil, deliverPolicy: .all, optStartSeq: nil,
+            optStartTime: nil, ackPolicy: .explicit, ackWait: NanoTimeInterval(30), maxDeliver: -1,
+            backOff: nil, filterSubject: nil, replayPolicy: .instant, rateLimit: nil,
+            sampleFrequency: nil, maxWaiting: 512, maxAckPending: 1000, headersOnly: nil,
+            maxRequestBatch: nil, maxRequestExpires: nil, maxRequestMaxBytes: nil,
+            inactiveThreshold: NanoTimeInterval(5), replicas: 1, memoryStorage: nil,
+            filterSubjects: nil, metadata: nil)
+        // minimal config
+        var cfg = ConsumerConfig(name: "test")
+        _ = try await ctx.createConsumer(stream: "test", cfg: cfg)
+
+        // attempt overwriting existing consumer
+        var errOk = false
+        do {
+            _ = try await ctx.createConsumer(
+                stream: "test",
+                cfg: ConsumerConfig(name: "test", description: "cannot update with create"))
+        } catch JetStreamError.ConsumerError.consumerNameExist(_) {
+            errOk = true
+            // success
+        }
+        XCTAssertTrue(errOk, "Expected consumer exists error")
+
+        // get a consumer
+        guard var cons = try await ctx.getConsumer(stream: "test", name: "test") else {
+            XCTFail("Expected a stream, got nil")
+            return
+        }
+        XCTAssertEqual(expectedConfig, cons.info.config)
+
+        // get a non-existing consumer
+        errOk = false
+        if let cons = try await ctx.getConsumer(stream: "test", name: "bad") {
+            XCTFail("Expected consumer not found, got: \(cons)")
+        }
+
+        // update the stream
+        cfg.description = "updated"
+        cons = try await ctx.updateConsumer(stream: "test", cfg: cfg)
+        expectedConfig.description = "updated"
+
+        XCTAssertEqual(expectedConfig, cons.info.config)
+
+        // attempt to update illegal consumer property
+        cfg.memoryStorage = true
+        errOk = false
+        do {
+            _ = try await ctx.updateConsumer(stream: "test", cfg: cfg)
+        } catch JetStreamError.ConsumerError.invalidConfig(_) {
+            // success
+            errOk = true
+        }
+
+        // attempt updating non-existing consumer
+        errOk = false
+        do {
+            _ = try await ctx.updateConsumer(stream: "test", cfg: ConsumerConfig(name: "bad"))
+        } catch JetStreamError.ConsumerError.consumerDoesNotExist(_) {
+            // success
+            errOk = true
+        }
+        XCTAssertTrue(errOk, "Expected consumer not found error")
+
+        // delete the consumer
+        try await ctx.deleteConsumer(stream: "test", name: "test")
+
+        // make sure the consumer no longer exists
+        if let _ = try await ctx.getConsumer(stream: "test", name: "test") {
+            XCTFail("Expected consumer not found")
+        }
+    }
+
+    func testConsumerConfig() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = ConsumerConfig(
+            name: "test", durable: nil, description: "consumer", deliverPolicy: .byStartSequence,
+            optStartSeq: 10, optStartTime: nil, ackPolicy: .none, ackWait: NanoTimeInterval(5),
+            maxDeliver: 100, backOff: [NanoTimeInterval(5), NanoTimeInterval(10)],
+            filterSubject: "FOO.A", replayPolicy: .original, rateLimit: nil, sampleFrequency: "50",
+            maxWaiting: 20, maxAckPending: 20, headersOnly: true, maxRequestBatch: 5,
+            maxRequestExpires: NanoTimeInterval(120), maxRequestMaxBytes: 1024,
+            inactiveThreshold: NanoTimeInterval(30), replicas: 1, memoryStorage: true,
+            filterSubjects: nil, metadata: ["a": "b"])
+
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "stream", subjects: ["FOO.*"]))
+
+        let cons = try await stream.createConsumer(cfg: cfg)
+
+        XCTAssertEqual(cfg, cons.info.config)
+    }
+
+    func testCreateEphemeralConsumer() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "stream", subjects: ["FOO.*"]))
+
+        let cons = try await stream.createConsumer(cfg: ConsumerConfig())
+
+        XCTAssertEqual(cons.info.name.count, 8)
+    }
+
+    func testConsumerInfo() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let stream = try await ctx.createStream(cfg: StreamConfig(name: "test", subjects: ["foo"]))
+
+        let cfg = ConsumerConfig(name: "cons")
+        let consumer = try await stream.createConsumer(cfg: cfg)
+
+        let info = try await consumer.info()
+        XCTAssertEqual(info.config.name, "cons")
+
+        // simulate external update of consumer
+        let updateJSON = """
+            {
+                "stream_name": "test",
+                "config": {
+                    "name": "cons",
+                    "description": "updated",
+                    "ack_policy": "explicit"
+                },
+                "action": "update"
+            }
+            """
+        let data = updateJSON.data(using: .utf8)!
+
+        _ = try await client.request(data, subject: "$JS.API.CONSUMER.CREATE.test.cons")
+
+        XCTAssertNil(consumer.info.config.description)
+
+        let newInfo = try await consumer.info()
+        XCTAssertEqual(newInfo.config.description, "updated")
+        XCTAssertEqual(consumer.info.config.description, "updated")
+    }
+
+    func testListConsumers() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+
+        for i in 0..<260 {
+            let cfg = ConsumerConfig(name: "CONSUMER-\(i)")
+            let _ = try await stream.createConsumer(cfg: cfg)
+        }
+
+        // list all consumers
+        var consumers = await stream.consumers()
+
+        var i = 0
+        for try await _ in consumers {
+            i += 1
+        }
+        XCTAssertEqual(i, 260)
+
+        let names = await stream.consumerNames()
+        i = 0
+        for try await _ in names {
+            i += 1
+        }
+        XCTAssertEqual(i, 260)
+
+        // list consumers on non-existing stream
+        consumers = await ctx.consumers(stream: "bad")
+        i = 0
+        for try await _ in consumers {
+            i += 1
+        }
+        XCTAssertEqual(i, 0)
+    }
+
 }
