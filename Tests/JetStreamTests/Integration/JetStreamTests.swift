@@ -181,6 +181,9 @@ class JetStreamTests: XCTestCase {
             consumerLimits: StreamConsumerLimits(inactiveThreshold: nil, maxAckPending: nil),
             metadata: nil)
 
+        // we need to set the metadata to whatever was set by the server as it contains e.g. server version
+        expectedConfig.metadata = stream.info.config.metadata
+
         XCTAssertEqual(expectedConfig, stream.info.config)
 
         // attempt overwriting existing stream
@@ -255,7 +258,7 @@ class JetStreamTests: XCTestCase {
 
         let ctx = JetStreamContext(client: client)
 
-        let cfg = StreamConfig(
+        var cfg = StreamConfig(
             name: "full", description: "desc", subjects: ["bar"], retention: .interest,
             maxConsumers: 50, maxMsgs: 100, maxBytes: 1000, discard: .new,
             discardNewPerSubject: true, maxAge: NanoTimeInterval(300), maxMsgsPerSubject: 50,
@@ -268,6 +271,9 @@ class JetStreamTests: XCTestCase {
             metadata: ["key": "value"])
 
         let stream = try await ctx.createStream(cfg: cfg)
+
+        // we need to set the metadata to whatever was set by the server as it contains e.g. server version
+        cfg.metadata = stream.info.config.metadata
 
         XCTAssertEqual(stream.info.config, cfg)
     }
@@ -705,6 +711,10 @@ class JetStreamTests: XCTestCase {
             XCTFail("Expected a stream, got nil")
             return
         }
+
+        // we need to set the metadata to whatever was set by the server as it contains e.g. server version
+        expectedConfig.metadata = cons.info.config.metadata
+
         XCTAssertEqual(expectedConfig, cons.info.config)
 
         // get a non-existing consumer
@@ -792,6 +802,8 @@ class JetStreamTests: XCTestCase {
             XCTFail("Expected a stream, got nil")
             return
         }
+        // we need to set the metadata to whatever was set by the server as it contains e.g. server version
+        expectedConfig.metadata = cons.info.config.metadata
         XCTAssertEqual(expectedConfig, cons.info.config)
 
         // get a non-existing consumer
@@ -847,7 +859,7 @@ class JetStreamTests: XCTestCase {
 
         let ctx = JetStreamContext(client: client)
 
-        let cfg = ConsumerConfig(
+        var cfg = ConsumerConfig(
             name: "test", durable: nil, description: "consumer", deliverPolicy: .byStartSequence,
             optStartSeq: 10, optStartTime: nil, ackPolicy: .none, ackWait: NanoTimeInterval(5),
             maxDeliver: 100, backOff: [NanoTimeInterval(5), NanoTimeInterval(10)],
@@ -861,6 +873,7 @@ class JetStreamTests: XCTestCase {
             cfg: StreamConfig(name: "stream", subjects: ["FOO.*"]))
 
         let cons = try await stream.createConsumer(cfg: cfg)
+        cfg.metadata = cons.info.config.metadata
 
         XCTAssertEqual(cfg, cons.info.config)
     }
