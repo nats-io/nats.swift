@@ -172,8 +172,13 @@ public struct ConsumerConfig: Codable, Equatable {
     /// Specifies the optional back-off intervals for retrying message delivery after a failed acknowledgment.
     public var backOff: [NanoTimeInterval]?
 
-    /// Can be used to filter messages delivered from the stream.
+    /// Can be used to filter messages delivered from the stream by given subject.
+    /// It is exclusive with ``ConsumerConfig/filterSubjects``
     public var filterSubject: String?
+
+    /// Can be used to filter messages delivered from the stream by given subjects.
+    /// It is exclusive with ``ConsumerConfig/filterSubject``
+    public var filterSubjects: [String]?
 
     /// Defines the rate at which messages are sent to the consumer.
     public var replayPolicy: ReplayPolicy
@@ -211,9 +216,6 @@ public struct ConsumerConfig: Codable, Equatable {
     /// Flag to force the consumer to use memory storage rather than inherit the storage type from the stream.
     public var memoryStorage: Bool?
 
-    /// Allows filtering messages from a stream by subject.
-    public var filterSubjects: [String]?
-
     /// A set of application-defined key-value pairs for associating metadata on the consumer.
     public var metadata: [String: String]?
 
@@ -229,6 +231,7 @@ public struct ConsumerConfig: Codable, Equatable {
         maxDeliver: Int? = nil,
         backOff: [NanoTimeInterval]? = nil,
         filterSubject: String? = nil,
+        filterSubjects: [String]? = nil,
         replayPolicy: ReplayPolicy = .instant,
         rateLimit: UInt64? = nil,
         sampleFrequency: String? = nil,
@@ -241,7 +244,6 @@ public struct ConsumerConfig: Codable, Equatable {
         inactiveThreshold: NanoTimeInterval? = nil,
         replicas: Int = 1,
         memoryStorage: Bool? = nil,
-        filterSubjects: [String]? = nil,
         metadata: [String: String]? = nil
     ) {
         self.name = name

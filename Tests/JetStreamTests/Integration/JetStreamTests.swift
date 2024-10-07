@@ -686,11 +686,11 @@ class JetStreamTests: XCTestCase {
         var expectedConfig = ConsumerConfig(
             name: "test", durable: nil, description: nil, deliverPolicy: .all, optStartSeq: nil,
             optStartTime: nil, ackPolicy: .explicit, ackWait: NanoTimeInterval(30), maxDeliver: -1,
-            backOff: nil, filterSubject: nil, replayPolicy: .instant, rateLimit: nil,
+            backOff: nil, filterSubject: nil, filterSubjects: nil, replayPolicy: .instant,
+            rateLimit: nil,
             sampleFrequency: nil, maxWaiting: 512, maxAckPending: 1000, headersOnly: nil,
             maxRequestBatch: nil, maxRequestExpires: nil, maxRequestMaxBytes: nil,
-            inactiveThreshold: NanoTimeInterval(5), replicas: 1, memoryStorage: nil,
-            filterSubjects: nil, metadata: nil)
+            inactiveThreshold: NanoTimeInterval(5), replicas: 1, memoryStorage: nil, metadata: nil)
         // minimal config
         var cfg = ConsumerConfig(name: "test")
         _ = try await stream.createConsumer(cfg: cfg)
@@ -776,11 +776,12 @@ class JetStreamTests: XCTestCase {
         var expectedConfig = ConsumerConfig(
             name: "test", durable: nil, description: nil, deliverPolicy: .all, optStartSeq: nil,
             optStartTime: nil, ackPolicy: .explicit, ackWait: NanoTimeInterval(30), maxDeliver: -1,
-            backOff: nil, filterSubject: nil, replayPolicy: .instant, rateLimit: nil,
+            backOff: nil, filterSubject: nil, filterSubjects: nil, replayPolicy: .instant,
+            rateLimit: nil,
             sampleFrequency: nil, maxWaiting: 512, maxAckPending: 1000, headersOnly: nil,
             maxRequestBatch: nil, maxRequestExpires: nil, maxRequestMaxBytes: nil,
             inactiveThreshold: NanoTimeInterval(5), replicas: 1, memoryStorage: nil,
-            filterSubjects: nil, metadata: nil)
+            metadata: nil)
         // minimal config
         var cfg = ConsumerConfig(name: "test")
         _ = try await ctx.createConsumer(stream: "test", cfg: cfg)
@@ -863,11 +864,12 @@ class JetStreamTests: XCTestCase {
             name: "test", durable: nil, description: "consumer", deliverPolicy: .byStartSequence,
             optStartSeq: 10, optStartTime: nil, ackPolicy: .none, ackWait: NanoTimeInterval(5),
             maxDeliver: 100, backOff: [NanoTimeInterval(5), NanoTimeInterval(10)],
-            filterSubject: "FOO.A", replayPolicy: .original, rateLimit: nil, sampleFrequency: "50",
+            filterSubject: "FOO.A", filterSubjects: nil, replayPolicy: .original, rateLimit: nil,
+            sampleFrequency: "50",
             maxWaiting: 20, maxAckPending: 20, headersOnly: true, maxRequestBatch: 5,
             maxRequestExpires: NanoTimeInterval(120), maxRequestMaxBytes: 1024,
             inactiveThreshold: NanoTimeInterval(30), replicas: 1, memoryStorage: true,
-            filterSubjects: nil, metadata: ["a": "b"])
+            metadata: ["a": "b"])
 
         let stream = try await ctx.createStream(
             cfg: StreamConfig(name: "stream", subjects: ["FOO.*"]))
