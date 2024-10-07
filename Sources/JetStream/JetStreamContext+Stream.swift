@@ -83,7 +83,7 @@ extension JetStreamContext {
     /// - Returns: ``Stream`` object containing ``StreamInfo`` and exposing operations on the stream
     ///
     /// > **Throws:**
-    /// > - ``JetStreamError/StreamError`` if there was am error creating the stream.
+    /// > - ``JetStreamError/StreamError`` if there was am error updating the stream.
     /// >   There are several errors which may occur, most common being:
     /// >   - ``JetStreamError/StreamError/nameRequired`` if the provided stream name is empty.
     /// >   - ``JetStreamError/StreamError/invalidStreamName(_:)`` if the provided stream name is not valid.
@@ -144,7 +144,7 @@ extension JetStreamContext {
         return Streams(ctx: self, subject: subject)
     }
 
-    /// Used to list stream infos.
+    /// Used to list stream names.
     ///
     /// - Returns an ``StreamNames`` which implements AsyncSequence allowing iteration over stream names.
     ///
@@ -170,7 +170,7 @@ public struct Streams: AsyncSequence {
     private var offset: Int
     private var total: Int?
 
-    struct StreamsInfoPage: Codable {
+    private struct StreamsInfoPage: Codable {
         let total: Int
         let streams: [StreamInfo]?
     }
@@ -235,7 +235,7 @@ public struct StreamNames: AsyncSequence {
     private var offset: Int
     private var total: Int?
 
-    struct StreamNamesPage: Codable {
+    private struct StreamNamesPage: Codable {
         let total: Int
         let streams: [String]?
     }
