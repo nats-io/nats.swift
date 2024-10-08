@@ -49,6 +49,71 @@ public enum JetStreamError {
         }
     }
 
+    public enum MessageMetadataError: JetStreamErrorProtocol {
+        case noReplyInMessage
+        case invalidPrefix
+        case invalidTokenNum
+        case invalidTokenValue
+
+        public var description: String {
+            switch self {
+            case .noReplyInMessage:
+                return "nats: did not fund reply subject in message"
+            case .invalidPrefix:
+                return "nats: invalid reply subject prefix"
+            case .invalidTokenNum:
+                return "nats: invalid token count"
+            case .invalidTokenValue:
+                return "nats: invalid token value"
+            }
+        }
+    }
+
+    public enum FetchError: JetStreamErrorProtocol {
+        case noHeartbeatReceived
+        case consumerDeleted
+        case badRequest
+        case noResponders
+        case consumerIsPush
+        case invalidResponse
+        case unknownStatus(StatusCode, String?)
+
+        public var description: String {
+            switch self {
+            case .noHeartbeatReceived:
+                return "nats: no heartbeat received"
+            case .consumerDeleted:
+                return "nats: consumer deleted"
+            case .badRequest:
+                return "nats: bad request"
+            case .noResponders:
+                return "nats: no responders"
+            case .consumerIsPush:
+                return "nats: consumer is push based"
+            case .invalidResponse:
+                return "nats: no description in status response"
+            case .unknownStatus(let status, let description):
+                if let description {
+                    return "nats: unknown response status: \(status): \(description)"
+                } else {
+                    return "nats: unknown response status: \(status)"
+                }
+            }
+        }
+
+    }
+
+    public enum AckError: JetStreamErrorProtocol {
+        case noReplyInMessage
+
+        public var description: String {
+            switch self {
+            case .noReplyInMessage:
+                return "nats: did not fund reply subject in message"
+            }
+        }
+    }
+
     public enum StreamError: JetStreamErrorProtocol {
         case nameRequired
         case invalidStreamName(String)

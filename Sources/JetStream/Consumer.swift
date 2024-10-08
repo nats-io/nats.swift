@@ -40,7 +40,7 @@ public class Consumer {
     /// > - ``JetStreamRequestError`` if the request was unsuccessful.
     /// > - ``JetStreamError`` if the server responded with an API error.
     public func info() async throws -> ConsumerInfo {
-        let subj = "CONSUMER.INFO.\(info.stream).\(info.config.name!)"
+        let subj = "CONSUMER.INFO.\(info.stream).\(info.name)"
         let info: Response<ConsumerInfo> = try await ctx.request(subj)
         switch info {
         case .success(let info):

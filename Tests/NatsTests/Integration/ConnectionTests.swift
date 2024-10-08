@@ -48,6 +48,7 @@ class CoreNatsTests: XCTestCase {
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_permissionDenied", testRequest_permissionDenied),
+        ("testRequest_timeout", testRequest_timeout),
         ("testPublishOnClosedConnection", testPublishOnClosedConnection),
         ("testCloseClosedConnection", testCloseClosedConnection),
         ("testSuspendClosedConnection", testSuspendClosedConnection),

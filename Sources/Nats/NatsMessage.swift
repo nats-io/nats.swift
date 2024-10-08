@@ -24,14 +24,20 @@ public struct NatsMessage {
 }
 
 public struct StatusCode: Equatable {
-    public static let idleHeartbeat = StatusCode(100)
-    public static let ok = StatusCode(200)
-    public static let notFound = StatusCode(404)
-    public static let timeout = StatusCode(408)
-    public static let noResponders = StatusCode(503)
-    public static let requestTerminated = StatusCode(409)
+    public static let idleHeartbeat = StatusCode(value: 100)
+    public static let ok = StatusCode(value: 200)
+    public static let badRequest = StatusCode(value: 400)
+    public static let notFound = StatusCode(value: 404)
+    public static let timeout = StatusCode(value: 408)
+    public static let noResponders = StatusCode(value: 503)
+    public static let requestTerminated = StatusCode(value: 409)
 
     let value: UInt16
+
+    // non-optional initializer for static status codes
+    private init(value: UInt16) {
+        self.value = value
+    }
 
     init?(_ value: UInt16) {
         if !(100..<1000 ~= value) {
