@@ -41,7 +41,7 @@ public struct JetStreamMessage {
         self.client = client
     }
 
-    /// Sends and acknowledhement of given kind to the server.
+    /// Sends an acknowledgement of given kind to the server.
     ///
     /// - Parameter ackType: the type of acknowledgement being sent (defaults to ``AckKind/ack``. For details, see ``AckKind``.
     /// - Throws:
