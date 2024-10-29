@@ -76,6 +76,7 @@ public enum JetStreamError {
         case noResponders
         case consumerIsPush
         case invalidResponse
+        case leadershipChanged
         case unknownStatus(StatusCode, String?)
 
         public var description: String {
@@ -92,6 +93,8 @@ public enum JetStreamError {
                 return "nats: consumer is push based"
             case .invalidResponse:
                 return "nats: no description in status response"
+            case .leadershipChanged:
+                return "nats: leadership changed"
             case .unknownStatus(let status, let description):
                 if let description {
                     return "nats: unknown response status: \(status): \(description)"

@@ -51,7 +51,7 @@ extension Consumer {
     }
 }
 
-///
+/// Used to iterate over results of ``Consumer/fetch(batch:expires:idleHeartbeat:)``
 public class FetchResult: AsyncSequence {
     public typealias Element = JetStreamMessage
     public typealias AsyncIterator = FetchIterator
@@ -103,7 +103,7 @@ public class FetchResult: AsyncSequence {
 
                 if let idleHeartbeat = idleHeartbeat {
                     let timeout = idleHeartbeat * 2
-                    message = try await fetchWithTimeout(timeout, subIterator)
+                    message = try await nextWithTimeout(timeout, subIterator)
                 } else {
                     message = try await subIterator.next()
                 }
@@ -143,10 +143,10 @@ public class FetchResult: AsyncSequence {
                     }
 
                     let descLower = description.lowercased()
-                    if descLower.contains("message size exceeds maxbytes")
-                        || descLower.contains("leadership changed")
-                    {
+                    if descLower.contains("message size exceeds maxbytes") {
                         return nil
+                    } else if descLower.contains("leadership changed") {
+                        throw JetStreamError.FetchError.leadershipChanged
                     } else if descLower.contains("consumer deleted") {
                         throw JetStreamError.FetchError.consumerDeleted
                     } else if descLower.contains("consumer is push based") {
@@ -163,7 +163,7 @@ public class FetchResult: AsyncSequence {
             }
         }
 
-        func fetchWithTimeout(
+        func nextWithTimeout(
             _ timeout: TimeInterval, _ subIterator: NatsSubscription.AsyncIterator
         ) async throws -> NatsMessage? {
             try await withThrowingTaskGroup(of: NatsMessage?.self) { group in
