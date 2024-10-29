@@ -19,7 +19,7 @@ import Nuid
 extension Consumer {
 
     /// Retrieves up to a provided number of messages from a stream.
-    /// This method will send a single request and deliver either requested messages unless time out is met earlier.
+    /// This method will send a single request and deliver requested messages unless time out is met earlier.
     ///
     ///  - Parameters:
     ///   - batch: maximum number of messages to be retrieved
