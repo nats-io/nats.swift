@@ -24,7 +24,7 @@ extension Consumer {
     ///  - Parameters:
     ///   - batch: maximum number of messages to be retrieved
     ///   - expires: timeout of a pull request
-    ///   - idleHeartbeat: interval in which server should send heartbeat messages (if no user messages are available.
+    ///   - idleHeartbeat: interval in which server should send heartbeat messages (if no user messages are available).
     ///
     ///  - Returns: ``FetchResult`` which implements ``AsyncSequence`` allowing iteration over messages.
     ///
