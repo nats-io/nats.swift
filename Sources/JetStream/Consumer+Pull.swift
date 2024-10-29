@@ -29,7 +29,7 @@ extension Consumer {
     ///  - Returns: ``FetchResult`` which implements ``AsyncSequence`` allowing iteration over messages.
     ///
     ///  - Throws:
-    ///   - ``JetStreamError/FetchError`` if there was an error fetching messages
+    ///   - ``JetStreamError/FetchError`` if there was an error while fetching messages
     public func fetch(
         batch: Int, expires: TimeInterval = 30, idleHeartbeat: TimeInterval? = nil
     ) async throws -> FetchResult {
