@@ -137,7 +137,7 @@ extension JetStreamContext {
 
     /// Used to list stream infos.
     ///
-    /// - Returns an ``Streams`` which implements AsyncSequence allowing iteration over streams.
+    /// - Returns ``Streams`` which implements AsyncSequence allowing iteration over streams.
     ///
     /// - Parameter subject: if provided will be used to filter out returned streams
     public func streams(subject: String? = nil) async -> Streams {
@@ -146,7 +146,7 @@ extension JetStreamContext {
 
     /// Used to list stream names.
     ///
-    /// - Returns an ``StreamNames`` which implements AsyncSequence allowing iteration over stream names.
+    /// - Returns ``StreamNames`` which implements AsyncSequence allowing iteration over stream names.
     ///
     /// - Parameter subject: if provided will be used to filter out returned stream names
     public func streamNames(subject: String? = nil) async -> StreamNames {

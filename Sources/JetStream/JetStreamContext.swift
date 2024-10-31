@@ -18,7 +18,7 @@ import Nuid
 
 /// A context which can perform jetstream scoped requests.
 public class JetStreamContext {
-    private var client: NatsClient
+    internal var client: NatsClient
     private var prefix: String = "$JS.API"
     private var timeout: TimeInterval = 5.0
 
@@ -86,7 +86,7 @@ extension JetStreamContext {
         let data = message ?? Data()
         do {
             let response = try await self.client.request(
-                data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+                data, subject: apiSubject(subject), timeout: self.timeout)
             let decoder = JSONDecoder()
             guard let payload = response.payload else {
                 throw JetStreamError.RequestError.emptyResponsePayload
@@ -108,7 +108,7 @@ extension JetStreamContext {
         let data = message ?? Data()
         do {
             return try await self.client.request(
-                data, subject: "\(self.prefix).\(subject)", timeout: self.timeout)
+                data, subject: apiSubject(subject), timeout: self.timeout)
         } catch let err as NatsError.RequestError {
             switch err {
             case .noResponders:
@@ -119,6 +119,10 @@ extension JetStreamContext {
                 throw JetStreamError.RequestError.permissionDenied(subject)
             }
         }
+    }
+
+    internal func apiSubject(_ subject: String) -> String {
+        return "\(self.prefix).\(subject)"
     }
 }
 
