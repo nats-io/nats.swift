@@ -58,7 +58,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var pingTask: RepeatedTask?
     private var outstandingPings = ManagedAtomic<UInt8>(0)
     private var reconnectAttempts = 0
-    private var reconnectTask: Task<(), Never>? = nil
+    private var reconnectTask: Task<(), Error>? = nil
 
     private var group: MultiThreadedEventLoopGroup
 
@@ -171,7 +171,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 case .staleConnection, .maxConnectionsExceeded:
                     inputBuffer.clear()
                     context.fireErrorCaught(err)
-                case .permissionsViolation(let operation, let subject, let queue):
+                case .permissionsViolation(let operation, let subject, _):
                     switch operation {
                     case .subscribe:
                         for (_, s) in subscriptions {
@@ -246,10 +246,9 @@ class ConnectionHandler: ChannelInboundHandler {
         let shouldSleep = self.reconnectAttempts >= self.urls.count
         for s in servers {
             if let maxReconnects {
-                if reconnectAttempts >= maxReconnects {
+                if reconnectAttempts > 0 && reconnectAttempts >= maxReconnects {
                     throw NatsError.ClientError.maxReconnects
                 }
-
             }
             self.reconnectAttempts += 1
             if shouldSleep {
@@ -323,36 +322,55 @@ class ConnectionHandler: ChannelInboundHandler {
         var infoTask: Task<(), Never>? = nil
         // this continuation can throw NatsError.ServerError if server responds with
         // -ERR to client connect (e.g. auth error)
-        let info = try await withCheckedThrowingContinuation { continuation in
+        let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
             self.serverInfoContinuation = continuation
             infoTask = Task {
-                do {
-                    let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
-                    guard let host = s.host, let port = s.port else {
-                        upgradePromise.succeed()  // avoid promise leaks
-                        throw NatsError.ConnectError.invalidConfig("no url")
-                    }
-                    let connect = bootstrap.connect(host: host, port: port)
-                    connect.cascadeFailure(to: upgradePromise)
-                    self.channel = try await connect.get()
-                    guard let channel = self.channel else {
-                        upgradePromise.succeed()  // avoid promise leaks
-                        throw NatsError.ClientError.internalError("empty channel")
-                    }
+                await withTaskCancellationHandler {
+                    do {
+                        let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
 
-                    try await upgradePromise.futureResult.get()
+                        guard let host = s.host, let port = s.port else {
+                            upgradePromise.succeed()  // avoid promise leaks
+                            throw NatsError.ConnectError.invalidConfig("no url")
+                        }
 
-                    self.batchBuffer = BatchBuffer(channel: channel)
-                } catch {
+                        let connect = bootstrap.connect(host: host, port: port)
+                        connect.cascadeFailure(to: upgradePromise)
+                        self.channel = try await connect.get()
+
+                        guard let channel = self.channel else {
+                            upgradePromise.succeed()  // avoid promise leaks
+                            throw NatsError.ClientError.internalError("empty channel")
+                        }
+
+                        try await upgradePromise.futureResult.get()
+                        self.batchBuffer = BatchBuffer(channel: channel)
+                    } catch {
+                        if let continuation = self.serverInfoContinuation {
+                            self.serverInfoContinuation = nil
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                } onCancel: {
+                    logger.debug("Connection task cancelled")
+                    // Clean up resources
+                    if let channel = self.channel {
+                        channel.close(mode: .all, promise: nil)
+                        self.channel = nil
+                    }
+                    self.batchBuffer = nil
+
                     if let continuation = self.serverInfoContinuation {
                         self.serverInfoContinuation = nil
-                        continuation.resume(throwing: error)
+                        continuation.resume(throwing: NatsError.ClientError.cancelled)
                     }
                 }
             }
         }
+
         await infoTask?.value
         self.serverInfo = info
+        print("got info: \(info)")
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
@@ -452,16 +470,34 @@ class ConnectionHandler: ChannelInboundHandler {
         let connect = initialConnect
         // this continuation can throw NatsError.ServerError if server responds with
         // -ERR to client connect (e.g. auth error)
-        try await withCheckedThrowingContinuation { continuation in
-            self.connectionEstablishedContinuation = continuation
-            Task.detached {
-                do {
-                    try await self.write(operation: ClientOp.connect(connect))
-                    try await self.write(operation: ClientOp.ping)
-                    self.channel?.flush()
-                } catch {
-                    continuation.resume(throwing: error)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.connectionEstablishedContinuation = continuation
+                Task.detached {
+                    do {
+                        try await self.write(operation: ClientOp.connect(connect))
+                        try await self.write(operation: ClientOp.ping)
+                        self.channel?.flush()
+                    } catch {
+                        if let continuation = self.connectionEstablishedContinuation {
+                            self.connectionEstablishedContinuation = nil
+                            continuation.resume(throwing: error)
+                        }
+                    }
                 }
+            }
+        } onCancel: {
+            logger.debug("Client connect initialization cancelled")
+            // Clean up resources
+            if let channel = self.channel {
+                channel.close(mode: .all, promise: nil)
+                self.channel = nil
+            }
+            self.batchBuffer = nil
+
+            if let continuation = self.connectionEstablishedContinuation {
+                self.connectionEstablishedContinuation = nil
+                continuation.resume(throwing: NatsError.ClientError.cancelled)
             }
         }
     }
@@ -603,7 +639,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func close() async throws {
         self.reconnectTask?.cancel()
-        await self.reconnectTask?.value
+        try await self.reconnectTask?.value
 
         guard let eventLoop = self.channel?.eventLoop else {
             throw NatsError.ClientError.internalError("channel should not be nil")
@@ -633,7 +669,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func suspend() async throws {
         self.reconnectTask?.cancel()
-        _ = await self.reconnectTask?.value
+        _ = try await self.reconnectTask?.value
 
         guard let eventLoop = self.channel?.eventLoop else {
             throw NatsError.ClientError.internalError("channel should not be nil")
@@ -761,46 +797,47 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func handleReconnect() {
         reconnectTask = Task {
-            var reconnected = false
+            var connected = false
             while !Task.isCancelled
                 && (maxReconnects == nil || self.reconnectAttempts < maxReconnects!)
             {
                 do {
                     try await self.connect()
-                } catch _ as CancellationError {
-                    // task cancelled
+                    connected = true
+                    break  // Successfully connected
+                } catch is CancellationError {
+                    logger.debug("Reconnect task cancelled")
                     return
                 } catch {
-                    // TODO(pp): add option to set this to exponential backoff (with jitter)
-                    logger.debug("could not reconnect: \(error)")
-                    continue
+                    logger.debug("Could not reconnect: \(error)")
+                    if !Task.isCancelled {
+                        try await Task.sleep(nanoseconds: self.reconnectWait)
+                    }
                 }
-                logger.debug("reconnected")
-                reconnected = true
-                break
             }
-            // if task was cancelled when establishing connection, do not attempt to recreate subscriptions
+
+            // Early return if cancelled
             if Task.isCancelled {
+                logger.debug("Reconnect task cancelled after connection attempts")
                 return
             }
-            if !reconnected && !Task.isCancelled {
-                logger.error("could not reconnect; maxReconnects exceeded")
-                logger.debug("closing connection")
-                do {
-                    try await self.close()
-                } catch {
-                    logger.error("error closing connection: \(error)")
-                    return
-                }
+
+            // If we got here without connecting and weren't cancelled, we hit max reconnects
+            if !connected {
+                logger.error("Could not reconnect; maxReconnects exceeded")
+                try await self.close()
                 return
             }
+
+            // Recreate subscriptions
             for (sid, sub) in self.subscriptions {
                 do {
                     try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
                 } catch {
-                    logger.error("error recreating subscription \(sid): \(error)")
+                    logger.error("Error recreating subscription \(sid): \(error)")
                 }
             }
+
             self.channel?.eventLoop.execute {
                 self.state = .connected
                 self.fire(.connected)
@@ -837,7 +874,7 @@ class ConnectionHandler: ChannelInboundHandler {
             try await write(operation: ClientOp.unsubscribe((sid: sub.sid, max: max)))
             sub.max = max
         } else {
-            // if max is not set or the subscription received at least as meny
+            // if max is not set or the subscription received at least as many
             // messages as max, send unsub command without max and remove sub from connection
             try await write(operation: ClientOp.unsubscribe((sid: sub.sid, max: nil)))
             self.removeSub(sub: sub)

@@ -147,6 +147,7 @@ public enum NatsError {
         case connectionClosed
         case io(Error)
         case invalidConnection(String)
+        case cancelled
 
         public var description: String {
             switch self {
@@ -160,6 +161,8 @@ public enum NatsError {
                 return "nats: IO error: \(error)"
             case .invalidConnection(let error):
                 return "nats: \(error)"
+            case .cancelled:
+                return "nats: operation cancelled"
             }
         }
     }
