@@ -21,6 +21,10 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
+#if canImport(module: FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
     let version = "0.0.1"
