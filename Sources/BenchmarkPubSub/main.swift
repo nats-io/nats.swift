@@ -36,7 +36,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         hm.append(try! NatsHeaderName("foo"), NatsHeaderValue("baz"))
         hm.insert(try! NatsHeaderName("another"), NatsHeaderValue("one"))
         var i = 0
-        for try await msg in sub {
+        for try await msg in await sub {
             let payload = msg.payload!
             if String(data: payload, encoding: .utf8) != "\(i)" {
                 let emptyString = ""
