@@ -21,7 +21,7 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
-#if canImport(module: FoundationNetworking)
+#if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
 
