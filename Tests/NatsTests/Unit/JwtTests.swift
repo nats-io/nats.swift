@@ -16,6 +16,10 @@ import XCTest
 
 @testable import Nats
 
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 class JwtTests: XCTestCase {
 
     static var allTests = [
