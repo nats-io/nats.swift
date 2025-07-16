@@ -212,8 +212,11 @@ class ConsumerTests: XCTestCase {
             for try await _ in batch {}
         } catch JetStreamError.FetchError.noHeartbeatReceived {
             return
+        } catch JetStreamError.FetchError.noResponders {
+            // This is also expected when the consumer has been deleted
+            return
         }
-        XCTFail("should get missing heartbeats")
+        XCTFail("should get missing heartbeats or no responders error")
     }
 
     func testAck() async throws {
