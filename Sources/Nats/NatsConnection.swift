@@ -21,6 +21,7 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
+// URLSession is implemented in FoundationNetworking on Linux OS
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
