@@ -1035,6 +1035,37 @@ class CoreNatsTests: XCTestCase {
         XCTFail("Expected permission denied error")
     }
 
+    /// Test for GitHub issue #92 - race condition in concurrent subscriptions
+    /// This test ensures that creating multiple subscriptions concurrently doesn't cause
+    /// segmentation faults due to race conditions in the subscription map.
+    func testConcurrentSubscriptionCreation() async throws {
+        natsServer.start()
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        
+        try await client.connect()
+        
+        // Create 10 subscriptions concurrently
+        // Before the fix, this would cause intermittent crashes due to race conditions
+        // in subscription map access during concurrent operations
+        let tasks = (0..<10).map { i in
+            Task {
+                try await client.subscribe(subject: "concurrent.test.\(i)")
+            }
+        }
+        
+        // Wait for all subscriptions to complete
+        // This should not crash or timeout
+        for task in tasks {
+            _ = try await task.value
+        }
+        
+        // If we reach this point without crashing, the race condition is fixed
+        try await client.close()
+    }
+
     func createConfigFileFromTemplate(
         templateURL: URL, args: [String], destination: URL? = nil
     ) throws -> URL {
