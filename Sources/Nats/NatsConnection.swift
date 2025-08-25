@@ -64,6 +64,24 @@ class ConnectionHandler: ChannelInboundHandler {
 
     private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
     private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
+    private let continuationLock = NSLock()
+    
+    // Helper methods for thread-safe continuation access
+    private func takeServerInfoContinuation() -> CheckedContinuation<ServerInfo, Error>? {
+        continuationLock.lock()
+        defer { continuationLock.unlock() }
+        let continuation = serverInfoContinuation
+        serverInfoContinuation = nil
+        return continuation
+    }
+    
+    private func takeConnectionEstablishedContinuation() -> CheckedContinuation<Void, Error>? {
+        continuationLock.lock()
+        defer { continuationLock.unlock() }
+        let continuation = connectionEstablishedContinuation
+        connectionEstablishedContinuation = nil
+        return continuation
+    }
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
     private(set) var batchBuffer: BatchBuffer?
@@ -119,8 +137,8 @@ class ConnectionHandler: ChannelInboundHandler {
             self.parseRemainder = remainder
         }
         for op in parseResult.ops {
-            if let continuation = self.serverInfoContinuation {
-                self.serverInfoContinuation = nil
+            // Handle serverInfoContinuation atomically
+            if let continuation = self.takeServerInfoContinuation() {
                 logger.debug("server info")
                 switch op {
                 case .error(let err):
@@ -128,14 +146,19 @@ class ConnectionHandler: ChannelInboundHandler {
                 case .info(let info):
                     continuation.resume(returning: info)
                 default:
-                    // ignore until we get either error or server info
+                    // Re-store the continuation since we didn't handle it
+                    continuationLock.lock()
+                    if self.serverInfoContinuation == nil {
+                        self.serverInfoContinuation = continuation
+                    }
+                    continuationLock.unlock()
                     continue
                 }
                 continue
             }
 
-            if let continuation = self.connectionEstablishedContinuation {
-                self.connectionEstablishedContinuation = nil
+            // Handle connectionEstablishedContinuation atomically
+            if let continuation = self.takeConnectionEstablishedContinuation() {
                 logger.debug("conn established")
                 switch op {
                 case .error(let err):
@@ -276,7 +299,7 @@ class ConnectionHandler: ChannelInboundHandler {
             self.state = .disconnected
             switch lastErr {
             case let error as ChannelError:
-                self.serverInfoContinuation = nil
+                _ = self.takeServerInfoContinuation()
                 var err: NatsError.ConnectError
                 switch error.self {
                 case .connectTimeout(_):
@@ -346,10 +369,7 @@ class ConnectionHandler: ChannelInboundHandler {
                         try await upgradePromise.futureResult.get()
                         self.batchBuffer = BatchBuffer(channel: channel)
                     } catch {
-                        if let continuation = self.serverInfoContinuation {
-                            self.serverInfoContinuation = nil
-                            continuation.resume(throwing: error)
-                        }
+                        self.takeServerInfoContinuation()?.resume(throwing: error)
                     }
                 } onCancel: {
                     logger.debug("Connection task cancelled")
@@ -360,10 +380,7 @@ class ConnectionHandler: ChannelInboundHandler {
                     }
                     self.batchBuffer = nil
 
-                    if let continuation = self.serverInfoContinuation {
-                        self.serverInfoContinuation = nil
-                        continuation.resume(throwing: NatsError.ClientError.cancelled)
-                    }
+                    self.takeServerInfoContinuation()?.resume(throwing: NatsError.ClientError.cancelled)
                 }
             }
         }
@@ -479,10 +496,7 @@ class ConnectionHandler: ChannelInboundHandler {
                         try await self.write(operation: ClientOp.ping)
                         self.channel?.flush()
                     } catch {
-                        if let continuation = self.connectionEstablishedContinuation {
-                            self.connectionEstablishedContinuation = nil
-                            continuation.resume(throwing: error)
-                        }
+                        self.takeConnectionEstablishedContinuation()?.resume(throwing: error)
                     }
                 }
             }
@@ -495,10 +509,7 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             self.batchBuffer = nil
 
-            if let continuation = self.connectionEstablishedContinuation {
-                self.connectionEstablishedContinuation = nil
-                continuation.resume(throwing: NatsError.ClientError.cancelled)
-            }
+            self.takeConnectionEstablishedContinuation()?.resume(throwing: NatsError.ClientError.cancelled)
         }
     }
 
@@ -749,14 +760,12 @@ class ConnectionHandler: ChannelInboundHandler {
         } else {
             logger.error("unexpected error: \(error)")
         }
-        if let continuation = self.serverInfoContinuation {
-            self.serverInfoContinuation = nil
+        if let continuation = self.takeServerInfoContinuation() {
             continuation.resume(throwing: error)
             return
         }
 
-        if let continuation = self.connectionEstablishedContinuation {
-            self.connectionEstablishedContinuation = nil
+        if let continuation = self.takeConnectionEstablishedContinuation() {
             continuation.resume(throwing: error)
             return
         }
