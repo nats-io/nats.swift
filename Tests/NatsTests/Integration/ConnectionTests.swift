@@ -29,6 +29,7 @@ class CoreNatsTests: XCTestCase {
         ("testConnectDNSError", testConnectDNSError),
         ("testRetryOnFailedConnect", testRetryOnFailedConnect),
         ("testPublishWithReply", testPublishWithReply),
+        ("testPublishWithReplyOnCustomInbox", testPublishWithReplyOnCustomInbox),
         ("testSubscribe", testSubscribe),
         ("testUnsubscribe", testUnsubscribe),
         ("testUnsubscribeAfter", testUnsubscribeAfter),
@@ -46,6 +47,7 @@ class CoreNatsTests: XCTestCase {
         ("testWebsocketTLS", testWebsocketTLS),
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
+        ("testRequestCustomInbox", testRequestCustomInbox),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_permissionDenied", testRequest_permissionDenied),
         ("testConcurrentChannelActiveAndRead", testConcurrentChannelActiveAndRead),
@@ -298,6 +300,30 @@ class CoreNatsTests: XCTestCase {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 XCTAssertEqual(msg.replySubject, "reply")
+                expectation.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation], timeout: 5.0)
+    }
+
+    func testPublishWithReplyOnCustomInbox() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .inboxPrefix("_INBOX_foo")
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+
+        try await client.publish(
+            "msg".data(using: .utf8)!, subject: "test", reply: client.newInbox())
+        let expectation = XCTestExpectation(description: "Should receive message in 5 seconds")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let msg = try await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                XCTAssertTrue(msg.replySubject?.starts(with: "_INBOX_foo.") == true)
                 expectation.fulfill()
             }
         }
@@ -789,6 +815,29 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .debug
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let service = try await client.subscribe(subject: "service")
+        Task {
+            for try await msg in service {
+                try await client.publish(
+                    "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
+            }
+        }
+        let response = try await client.request("request".data(using: .utf8)!, subject: "service")
+        XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
+
+        try await client.close()
+    }
+
+    func testRequestCustomInbox() async throws {
+        natsServer.start()
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .inboxPrefix("_INBOX_bar.foo")
+            .build()
         try await client.connect()
 
         let service = try await client.subscribe(subject: "service")
