@@ -15,6 +15,7 @@ import Atomics
 import Dispatch
 import Foundation
 import NIO
+import NIOConcurrencyHelpers
 import NIOFoundationCompat
 import NIOHTTP1
 import NIOSSL
@@ -47,10 +48,18 @@ class ConnectionHandler: ChannelInboundHandler {
     private var clientKey: URL?
 
     typealias InboundIn = ByteBuffer
-    private let stateLock = NSLock()
-    internal var state: NatsState = .pending
-
-    private var subscriptions: [UInt64: NatsSubscription]
+    private let state = NIOLockedValueBox(NatsState.pending)
+    private let subscriptions = NIOLockedValueBox([UInt64: NatsSubscription]())
+    
+    // Helper methods for state access
+    internal var currentState: NatsState {
+        state.withLockedValue { $0 }
+    }
+    
+    internal func setState(_ newState: NatsState) {
+        state.withLockedValue { $0 = newState }
+    }
+    
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
     private var serverInfo: ServerInfo?
     private var auth: Auth?
@@ -79,7 +88,6 @@ class ConnectionHandler: ChannelInboundHandler {
         self.urls = urls
         self.group = .singleton
         self.inputBuffer = allocator.buffer(capacity: 1024)
-        self.subscriptions = [UInt64: NatsSubscription]()
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
         self.retainServersOrder = retainServersOrder
@@ -174,9 +182,11 @@ class ConnectionHandler: ChannelInboundHandler {
                 case .permissionsViolation(let operation, let subject, _):
                     switch operation {
                     case .subscribe:
-                        for (_, s) in subscriptions {
-                            if s.subject == subject {
-                                s.receiveError(NatsError.SubscriptionError.permissionDenied)
+                        subscriptions.withLockedValue { subs in
+                            for (_, s) in subs {
+                                if s.subject == subject {
+                                    s.receiveError(NatsError.SubscriptionError.permissionDenied)
+                                }
                             }
                         }
                     case .publish:
@@ -219,8 +229,10 @@ class ConnectionHandler: ChannelInboundHandler {
         let natsMsg = NatsMessage(
             payload: message.payload, subject: message.subject, replySubject: message.reply,
             length: message.length, headers: nil, status: nil, description: nil)
-        if let sub = self.subscriptions[message.sid] {
-            sub.receiveMessage(natsMsg)
+        subscriptions.withLockedValue { subs in
+            if let sub = subs[message.sid] {
+                sub.receiveMessage(natsMsg)
+            }
         }
     }
 
@@ -229,8 +241,10 @@ class ConnectionHandler: ChannelInboundHandler {
             payload: message.payload, subject: message.subject, replySubject: message.reply,
             length: message.length, headers: message.headers, status: message.status,
             description: message.description)
-        if let sub = self.subscriptions[message.sid] {
-            sub.receiveMessage(natsMsg)
+        subscriptions.withLockedValue { subs in
+            if let sub = subs[message.sid] {
+                sub.receiveMessage(natsMsg)
+            }
         }
     }
 
@@ -273,7 +287,7 @@ class ConnectionHandler: ChannelInboundHandler {
             break
         }
         if let lastErr {
-            self.state = .disconnected
+            self.state.withLockedValue { $0 = .disconnected }
             switch lastErr {
             case let error as ChannelError:
                 self.serverInfoContinuation = nil
@@ -370,7 +384,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
         await infoTask?.value
         self.serverInfo = info
-        print("got info: \(info)")
+        logger.debug("got info: \(info)")
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
@@ -647,7 +661,7 @@ class ConnectionHandler: ChannelInboundHandler {
         let promise = eventLoop.makePromise(of: Void.self)
 
         eventLoop.execute {  // This ensures the code block runs on the event loop
-            self.state = .closed
+            self.state.withLockedValue { $0 = .closed }
             self.pingTask?.cancel()
             self.channel?.close(mode: .all, promise: promise)
         }
@@ -677,12 +691,16 @@ class ConnectionHandler: ChannelInboundHandler {
         let promise = eventLoop.makePromise(of: Void.self)
 
         eventLoop.execute {  // This ensures the code block runs on the event loop
-            if self.state == .connected {
-                self.state = .suspended
+            let shouldClose = self.state.withLockedValue { currentState in
+                let wasConnected = currentState == .connected
+                currentState = .suspended
+                return wasConnected
+            }
+            
+            if shouldClose {
                 self.pingTask?.cancel()
                 self.channel?.close(mode: .all, promise: promise)
             } else {
-                self.state = .suspended
                 promise.succeed()
             }
         }
@@ -696,7 +714,8 @@ class ConnectionHandler: ChannelInboundHandler {
             throw NatsError.ClientError.internalError("channel should not be nil")
         }
         try await eventLoop.submit {
-            guard self.state == .suspended else {
+            let canResume = self.state.withLockedValue { $0 == .suspended }
+            guard canResume else {
                 throw NatsError.ClientError.invalidConnection(
                     "unable to resume connection - connection is not in suspended state")
             }
@@ -736,7 +755,8 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelInactive(context: ChannelHandlerContext) {
         logger.debug("TCP channel inactive")
 
-        if self.state == .connected {
+        let shouldHandleDisconnect = state.withLockedValue { $0 == .connected }
+        if shouldHandleDisconnect {
             handleDisconnect()
         }
     }
@@ -760,15 +780,16 @@ class ConnectionHandler: ChannelInboundHandler {
             continuation.resume(throwing: error)
             return
         }
-        if self.state == .pending {
+        let currentState = state.withLockedValue { $0 }
+        if currentState == .pending {
             handleDisconnect()
-        } else if self.state == .disconnected {
+        } else if currentState == .disconnected {
             handleReconnect()
         }
     }
 
     func handleDisconnect() {
-        self.state = .disconnected
+        state.withLockedValue { $0 = .disconnected }
         if let channel = self.channel {
             let promise = channel.eventLoop.makePromise(of: Void.self)
             Task {
@@ -829,8 +850,9 @@ class ConnectionHandler: ChannelInboundHandler {
                 return
             }
 
-            // Recreate subscriptions
-            for (sid, sub) in self.subscriptions {
+            // Recreate subscriptions - safely copy first
+            let subsToRestore = subscriptions.withLockedValue { Array($0) }
+            for (sid, sub) in subsToRestore {
                 do {
                     try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
                 } catch {
@@ -839,7 +861,7 @@ class ConnectionHandler: ChannelInboundHandler {
             }
 
             self.channel?.eventLoop.execute {
-                self.state = .connected
+                self.state.withLockedValue { $0 = .connected }
                 self.fire(.connected)
             }
         }
@@ -862,8 +884,18 @@ class ConnectionHandler: ChannelInboundHandler {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
         let sub = try NatsSubscription(sid: sid, subject: subject, queue: queue, conn: self)
-        try await write(operation: ClientOp.subscribe((sid, subject, queue)))
-        self.subscriptions[sid] = sub
+        
+        // Add subscription BEFORE sending command to avoid race condition
+        subscriptions.withLockedValue { $0[sid] = sub }
+        
+        do {
+            try await write(operation: ClientOp.subscribe((sid, subject, queue)))
+        } catch {
+            // Remove subscription if subscribe command fails
+            subscriptions.withLockedValue { $0.removeValue(forKey: sid) }
+            throw error
+        }
+        
         return sub
     }
 
@@ -882,7 +914,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     internal func removeSub(sub: NatsSubscription) {
-        self.subscriptions.removeValue(forKey: sub.sid)
+        subscriptions.withLockedValue { $0.removeValue(forKey: sub.sid) }
         sub.complete()
     }
 }
