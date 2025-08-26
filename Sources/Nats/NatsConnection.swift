@@ -71,8 +71,9 @@ class ConnectionHandler: ChannelInboundHandler {
 
     private var group: MultiThreadedEventLoopGroup
 
-    private var serverInfoContinuation: CheckedContinuation<ServerInfo, Error>?
-    private var connectionEstablishedContinuation: CheckedContinuation<Void, Error>?
+    // Thread-safe continuation management to prevent double-resume crashes
+    private let serverInfoContinuation = NIOLockedValueBox<CheckedContinuation<ServerInfo, Error>?>(nil)
+    private let connectionEstablishedContinuation = NIOLockedValueBox<CheckedContinuation<Void, Error>?>(nil)
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
     private(set) var batchBuffer: BatchBuffer?
@@ -127,8 +128,14 @@ class ConnectionHandler: ChannelInboundHandler {
             self.parseRemainder = remainder
         }
         for op in parseResult.ops {
-            if let continuation = self.serverInfoContinuation {
-                self.serverInfoContinuation = nil
+            // Thread-safe continuation access to prevent double-resume
+            let continuationToResume = serverInfoContinuation.withLockedValue { cont in
+                let toResume = cont
+                cont = nil  // Clear atomically
+                return toResume
+            }
+            
+            if let continuation = continuationToResume {
                 logger.debug("server info")
                 switch op {
                 case .error(let err):
@@ -142,8 +149,14 @@ class ConnectionHandler: ChannelInboundHandler {
                 continue
             }
 
-            if let continuation = self.connectionEstablishedContinuation {
-                self.connectionEstablishedContinuation = nil
+            // Thread-safe continuation access to prevent double-resume
+            let connEstablishedCont = connectionEstablishedContinuation.withLockedValue { cont in
+                let toResume = cont
+                cont = nil  // Clear atomically
+                return toResume
+            }
+            
+            if let continuation = connEstablishedCont {
                 logger.debug("conn established")
                 switch op {
                 case .error(let err):
@@ -290,7 +303,7 @@ class ConnectionHandler: ChannelInboundHandler {
             self.state.withLockedValue { $0 = .disconnected }
             switch lastErr {
             case let error as ChannelError:
-                self.serverInfoContinuation = nil
+                serverInfoContinuation.withLockedValue { $0 = nil }
                 var err: NatsError.ConnectError
                 switch error.self {
                 case .connectTimeout(_):
@@ -337,7 +350,7 @@ class ConnectionHandler: ChannelInboundHandler {
         // this continuation can throw NatsError.ServerError if server responds with
         // -ERR to client connect (e.g. auth error)
         let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
-            self.serverInfoContinuation = continuation
+            serverInfoContinuation.withLockedValue { $0 = continuation }
             infoTask = Task {
                 await withTaskCancellationHandler {
                     do {
@@ -360,8 +373,13 @@ class ConnectionHandler: ChannelInboundHandler {
                         try await upgradePromise.futureResult.get()
                         self.batchBuffer = BatchBuffer(channel: channel)
                     } catch {
-                        if let continuation = self.serverInfoContinuation {
-                            self.serverInfoContinuation = nil
+                        // Atomically clear and resume to prevent race
+                        let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self.serverInfoContinuation.withLockedValue { cont in
+                            guard let c = cont else { return nil }
+                            cont = nil
+                            return c
+                        }
+                        if let continuation = continuationToResume {
                             continuation.resume(throwing: error)
                         }
                     }
@@ -374,8 +392,13 @@ class ConnectionHandler: ChannelInboundHandler {
                     }
                     self.batchBuffer = nil
 
-                    if let continuation = self.serverInfoContinuation {
-                        self.serverInfoContinuation = nil
+                    // Atomically clear and resume to prevent race
+                    let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self.serverInfoContinuation.withLockedValue { cont in
+                        guard let c = cont else { return nil }
+                        cont = nil
+                        return c
+                    }
+                    if let continuation = continuationToResume {
                         continuation.resume(throwing: NatsError.ClientError.cancelled)
                     }
                 }
@@ -486,15 +509,20 @@ class ConnectionHandler: ChannelInboundHandler {
         // -ERR to client connect (e.g. auth error)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                self.connectionEstablishedContinuation = continuation
+                connectionEstablishedContinuation.withLockedValue { $0 = continuation }
                 Task.detached {
                     do {
                         try await self.write(operation: ClientOp.connect(connect))
                         try await self.write(operation: ClientOp.ping)
                         self.channel?.flush()
                     } catch {
-                        if let continuation = self.connectionEstablishedContinuation {
-                            self.connectionEstablishedContinuation = nil
+                        // Atomically clear and resume to prevent race  
+                        let continuationToResume: CheckedContinuation<Void, Error>? = self.connectionEstablishedContinuation.withLockedValue { cont in
+                            guard let c = cont else { return nil }
+                            cont = nil
+                            return c
+                        }
+                        if let continuation = continuationToResume {
                             continuation.resume(throwing: error)
                         }
                     }
@@ -509,8 +537,13 @@ class ConnectionHandler: ChannelInboundHandler {
             }
             self.batchBuffer = nil
 
-            if let continuation = self.connectionEstablishedContinuation {
-                self.connectionEstablishedContinuation = nil
+            // Atomically clear and resume to prevent race
+            let continuationToResume: CheckedContinuation<Void, Error>? = self.connectionEstablishedContinuation.withLockedValue { cont in
+                guard let c = cont else { return nil }
+                cont = nil  
+                return c
+            }
+            if let continuation = continuationToResume {
                 continuation.resume(throwing: NatsError.ClientError.cancelled)
             }
         }
@@ -769,14 +802,26 @@ class ConnectionHandler: ChannelInboundHandler {
         } else {
             logger.error("unexpected error: \(error)")
         }
-        if let continuation = self.serverInfoContinuation {
-            self.serverInfoContinuation = nil
+        // Thread-safe handling of server info continuation
+        let serverContinuation = serverInfoContinuation.withLockedValue { cont in
+            let toResume = cont
+            cont = nil
+            return toResume
+        }
+        
+        if let continuation = serverContinuation {
             continuation.resume(throwing: error)
             return
         }
 
-        if let continuation = self.connectionEstablishedContinuation {
-            self.connectionEstablishedContinuation = nil
+        // Thread-safe handling of connection established continuation
+        let connContinuation = connectionEstablishedContinuation.withLockedValue { cont in
+            let toResume = cont
+            cont = nil
+            return toResume
+        }
+        
+        if let continuation = connContinuation {
             continuation.resume(throwing: error)
             return
         }
