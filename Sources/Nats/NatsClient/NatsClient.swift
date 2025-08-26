@@ -23,6 +23,7 @@ public var logger = Logger(label: "Nats")
 /// NatsClient connection states
 public enum NatsState {
     case pending
+    case connecting
     case connected
     case disconnected
     case closed
@@ -97,12 +98,37 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if !connectionHandler.retryOnFailedConnect {
-            try await connectionHandler.connect()
-            connectionHandler.setState(.connected)
-            connectionHandler.fire(.connected)
-        } else {
-            connectionHandler.handleReconnect()
+
+        // Check if already connected or in invalid state for connect()
+        let currentState = connectionHandler.currentState
+        switch currentState {
+        case .connected, .connecting:
+            throw NatsError.ClientError.alreadyConnected
+        case .closed:
+            throw NatsError.ClientError.connectionClosed
+        case .suspended:
+            throw NatsError.ClientError.invalidConnection(
+                "connection is suspended, use resume() instead")
+        case .pending, .disconnected:
+            // These states allow connection/reconnection
+            break
+        }
+
+        // Set state to connecting immediately to prevent concurrent connect() calls
+        connectionHandler.setState(.connecting)
+
+        do {
+            if !connectionHandler.retryOnFailedConnect {
+                try await connectionHandler.connect()
+                connectionHandler.setState(.connected)
+                connectionHandler.fire(.connected)
+            } else {
+                connectionHandler.handleReconnect()
+            }
+        } catch {
+            // Reset state on connection failure
+            connectionHandler.setState(.disconnected)
+            throw error
         }
     }
 
