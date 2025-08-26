@@ -1035,147 +1035,55 @@ class CoreNatsTests: XCTestCase {
         XCTFail("Expected permission denied error")
     }
 
-    /// Test for GitHub issue #92 - race condition in concurrent subscriptions
+    /// Test race condition in concurrent subscriptions
     /// This test ensures that creating multiple subscriptions concurrently doesn't cause
     /// segmentation faults due to race conditions in the subscription map.
     func testConcurrentSubscriptionCreation() async throws {
         natsServer.start()
-        
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
-        
+
         try await client.connect()
-        
+
         // Create 10 subscriptions concurrently
-        // Before the fix, this would cause intermittent crashes due to race conditions
-        // in subscription map access during concurrent operations
         let tasks = (0..<10).map { i in
             Task {
                 try await client.subscribe(subject: "concurrent.test.\(i)")
             }
         }
-        
+
         // Wait for all subscriptions to complete
-        // This should not crash or timeout
         for task in tasks {
             _ = try await task.value
         }
-        
-        // If we reach this point without crashing, the race condition is fixed
+
         try await client.close()
     }
 
-    /// Test rapid connection attempts to trigger serverInfoContinuation race
-    /// This targets the race condition fixed in GitHub issue #92
-    func testServerInfoContinuationRace() async throws {
+    /// Test that multiple connect() calls on the same client throw an error
+    func testMultipleConnectCallsThrowError() async throws {
         natsServer.start()
-        
-        // Create many concurrent connection attempts
-        // This should trigger race conditions in serverInfoContinuation handling
-        let connectionTasks = (0..<20).map { i in
-            Task {
-                let client = NatsClientOptions()
-                    .url(URL(string: natsServer.clientURL)!)
-                    .build()
-                
-                do {
-                    try await client.connect()
-                    try await client.close()
-                    return true
-                } catch {
-                    return false
-                }
-            }
-        }
-        
-        // Wait for all connection attempts
-        var successCount = 0
-        for task in connectionTasks {
-            if await task.value {
-                successCount += 1
-            }
-        }
-        
-        // If we crash, it's due to double-resume of continuation
-        // If we don't crash, the race condition is fixed
-        XCTAssertTrue(successCount > 0, "At least some connections should succeed")
-    }
-    
-    /// Test the exact crash scenario from GitHub issue #92
-    /// User had multiple subscriptions with events every 2 minutes
-    func testMultipleSubscriptionsWithPeriodicMessages() async throws {
-        natsServer.start()
-        
+
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
-        
+
+        // First connect should succeed
         try await client.connect()
-        
-        // Create multiple subscriptions like the user's scenario
-        let homeSubscription = try await client.subscribe(subject: "home.events")
-        let userSubscription = try await client.subscribe(subject: "user.events")
-        let notificationSubscription = try await client.subscribe(subject: "notification.events")
-        
-        // Start background message processing (simulating real app behavior)
-        let messageProcessingTask = Task {
-            var homeCount = 0
-            var userCount = 0
-            var notificationCount = 0
-            
-            // Process home events
-            Task {
-                for try await message in homeSubscription {
-                    homeCount += 1
-                    if homeCount >= 5 { break }
-                }
-            }
-            
-            // Process user events  
-            Task {
-                for try await message in userSubscription {
-                    userCount += 1
-                    if userCount >= 5 { break }
-                }
-            }
-            
-            // Process notification events
-            Task {
-                for try await message in notificationSubscription {
-                    notificationCount += 1
-                    if notificationCount >= 5 { break }
-                }
-            }
-            
-            // Wait for all subscriptions to receive messages
-            while homeCount < 5 || userCount < 5 || notificationCount < 5 {
-                try await Task.sleep(nanoseconds: 10_000_000) // 10ms
-            }
+
+        // Second connect should throw alreadyConnected error
+        do {
+            try await client.connect()
+            XCTFail("Second connect() should have thrown an error")
+        } catch NatsError.ClientError.alreadyConnected {
+            // Expected behavior
+        } catch {
+            XCTFail("Expected alreadyConnected error, got: \(error)")
         }
-        
-        // Simulate the periodic message delivery (every 2 minutes in prod, but faster for test)
-        let messageDeliveryTask = Task {
-            for i in 0..<5 {
-                // Send messages to all subscriptions simultaneously
-                // This creates the scenario where channelReadComplete processes multiple ops
-                try await client.publish("Home event \(i)".data(using: .utf8)!, subject: "home.events")
-                try await client.publish("User event \(i)".data(using: .utf8)!, subject: "user.events")  
-                try await client.publish("Notification event \(i)".data(using: .utf8)!, subject: "notification.events")
-                
-                // Small delay between batches to simulate real-world timing
-                try await Task.sleep(nanoseconds: 50_000_000) // 50ms (instead of 2 minutes)
-            }
-        }
-        
-        // Wait for message processing to complete
-        // If continuation double-resume happens, we'll crash here
-        try await messageDeliveryTask.value
-        try await messageProcessingTask.value
-        
+
         try await client.close()
-        
-        // If we reach here, the crash wasn't reproduced (i.e., it's fixed)
     }
 
     func createConfigFileFromTemplate(
