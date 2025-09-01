@@ -109,21 +109,18 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
-        // Defensive check: ensure buffer has readable bytes before processing
         guard inputBuffer.readableBytes > 0 else {
             return
         }
-        
+
         var inputChunk = Data(buffer: inputBuffer)
 
-        // Thread-safe access to parseRemainder
         let remainder = parseRemainder.withLockedValue { value in
             let current = value
-            value = nil  // Clear atomically
+            value = nil
             return current
         }
-        
-        // Safely prepend remainder only if it exists and isn't empty
+
         if let remainder = remainder, !remainder.isEmpty {
             inputChunk.prepend(remainder)
         }
@@ -702,11 +699,14 @@ class ConnectionHandler: ChannelInboundHandler {
         try await self.reconnectTask?.value
 
         guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsError.ClientError.internalError("channel should not be nil")
+            self.state.withLockedValue { $0 = .closed }
+            self.pingTask?.cancel()
+            self.fire(.closed)
+            return
         }
         let promise = eventLoop.makePromise(of: Void.self)
 
-        eventLoop.execute {  // This ensures the code block runs on the event loop
+        eventLoop.execute {
             self.state.withLockedValue { $0 = .closed }
             self.pingTask?.cancel()
             self.channel?.close(mode: .all, promise: promise)
@@ -731,8 +731,11 @@ class ConnectionHandler: ChannelInboundHandler {
         self.reconnectTask?.cancel()
         _ = try await self.reconnectTask?.value
 
+        // Handle case where channel is already nil (e.g., during rapid reconnections)
         guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsError.ClientError.internalError("channel should not be nil")
+            // Set state to suspended even if channel is nil
+            self.state.withLockedValue { $0 = .suspended }
+            return
         }
         let promise = eventLoop.makePromise(of: Void.self)
 
@@ -795,11 +798,8 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
 
-        // Thread-safe buffer reinitialization - ensure any existing parseRemainder is cleared
-        // when we reinitialize the buffer to prevent stale remainder data from being used
         parseRemainder.withLockedValue { $0 = nil }
-        
-        // Reinitialize the buffer for the new channel
+
         inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
     }
 
