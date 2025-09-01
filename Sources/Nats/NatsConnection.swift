@@ -63,7 +63,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var subscriptionCounter = ManagedAtomic<UInt64>(0)
     private var serverInfo: ServerInfo?
     private var auth: Auth?
-    private var parseRemainder: Data?
+    private let parseRemainder = NIOLockedValueBox<Data?>(nil)
     private var pingTask: RepeatedTask?
     private var outstandingPings = ManagedAtomic<UInt8>(0)
     private var reconnectAttempts = 0
@@ -87,7 +87,6 @@ class ConnectionHandler: ChannelInboundHandler {
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
-        self.inputBuffer = self.allocator.buffer(capacity: 1024)
         self.urls = urls
         self.group = .singleton
         self.inputBuffer = allocator.buffer(capacity: 1024)
@@ -110,24 +109,37 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
+        // Defensive check: ensure buffer has readable bytes before processing
+        guard inputBuffer.readableBytes > 0 else {
+            return
+        }
+        
         var inputChunk = Data(buffer: inputBuffer)
 
-        if let remainder = self.parseRemainder {
+        // Thread-safe access to parseRemainder
+        let remainder = parseRemainder.withLockedValue { value in
+            let current = value
+            value = nil  // Clear atomically
+            return current
+        }
+        
+        // Safely prepend remainder only if it exists and isn't empty
+        if let remainder = remainder, !remainder.isEmpty {
             inputChunk.prepend(remainder)
         }
 
-        self.parseRemainder = nil
         let parseResult: (ops: [ServerOp], remainder: Data?)
         do {
             parseResult = try inputChunk.parseOutMessages()
         } catch {
-            // if parsing throws an error, return and reconnect
+            // if parsing throws an error, clear buffer and remainder, then reconnect
             inputBuffer.clear()
+            parseRemainder.withLockedValue { $0 = nil }
             context.fireErrorCaught(error)
             return
         }
         if let remainder = parseResult.remainder {
-            self.parseRemainder = remainder
+            parseRemainder.withLockedValue { $0 = remainder }
         }
         for op in parseResult.ops {
             let continuationToResume = serverInfoContinuation.withLockedValue { cont in
@@ -191,6 +203,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 switch err {
                 case .staleConnection, .maxConnectionsExceeded:
                     inputBuffer.clear()
+                    parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 case .permissionsViolation(let operation, let subject, _):
                     switch operation {
@@ -215,6 +228,7 @@ class ConnectionHandler: ChannelInboundHandler {
                     || normalizedError == "maximum connections exceeded"
                 {
                     inputBuffer.clear()
+                    parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 } else {
                     self.fire(.error(err))
@@ -781,6 +795,11 @@ class ConnectionHandler: ChannelInboundHandler {
     func channelActive(context: ChannelHandlerContext) {
         logger.debug("TCP channel active")
 
+        // Thread-safe buffer reinitialization - ensure any existing parseRemainder is cleared
+        // when we reinitialize the buffer to prevent stale remainder data from being used
+        parseRemainder.withLockedValue { $0 = nil }
+        
+        // Reinitialize the buffer for the new channel
         inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
     }
 

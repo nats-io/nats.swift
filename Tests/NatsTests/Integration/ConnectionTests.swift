@@ -48,6 +48,10 @@ class CoreNatsTests: XCTestCase {
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_permissionDenied", testRequest_permissionDenied),
+        ("testByteBufferReinitializationRace", testByteBufferReinitializationRace),
+        ("testDataPrependRemainderRace", testDataPrependRemainderRace),
+        ("testConcurrentChannelActiveAndRead", testConcurrentChannelActiveAndRead),
+        ("testBufferLifecycleUnderHighLoad", testBufferLifecycleUnderHighLoad),
         ("testRequest_timeout", testRequest_timeout),
         ("testPublishOnClosedConnection", testPublishOnClosedConnection),
         ("testCloseClosedConnection", testCloseClosedConnection),
@@ -1083,6 +1087,313 @@ class CoreNatsTests: XCTestCase {
             XCTFail("Expected alreadyConnected error, got: \(error)")
         }
 
+        try await client.close()
+    }
+
+    /// Test ByteBuffer reinitialization race condition
+    /// This test attempts to reproduce the crash where channelActive() reinitializes
+    /// the buffer while channelReadComplete() is still using it
+    func testByteBufferReinitializationRace() async throws {
+        natsServer.start()
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(0.01) // Very short reconnect wait
+            .maxReconnects(100)
+            .build()
+        
+        try await client.connect()
+        
+        // Subscribe to receive messages
+        let sub = try await client.subscribe(subject: "test.buffer.race")
+        
+        // Create concurrent tasks that will stress the buffer
+        let publishTask = Task {
+            for i in 0..<1000 {
+                // Send messages with varying sizes to stress buffer
+                let payload = String(repeating: "X", count: i % 1000 + 1)
+                try? await client.publish(payload.data(using: .utf8)!, subject: "test.buffer.race")
+                if i % 10 == 0 {
+                    // Add small delays occasionally to change timing
+                    try? await Task.sleep(nanoseconds: 1000)
+                }
+            }
+        }
+        
+        let reconnectTask = Task {
+            for _ in 0..<20 {
+                // Force reconnections while messages are being processed
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                try? await client.reconnect()
+            }
+        }
+        
+        // Try to consume messages during reconnections
+        let consumeTask = Task {
+            var count = 0
+            for try await _ in sub {
+                count += 1
+                if count > 100 {
+                    break
+                }
+            }
+        }
+        
+        // Wait for tasks with timeout
+        let timeoutTask = Task {
+            try await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+        }
+        
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await publishTask.value }
+            group.addTask { try await reconnectTask.value }
+            group.addTask { try await consumeTask.value }
+            group.addTask { try await timeoutTask.value }
+            
+            // Wait for first to complete (timeout or tasks)
+            _ = try await group.next()
+            group.cancelAll()
+        }
+        
+        try await client.close()
+    }
+    
+    /// Test Data.prepend remainder race condition
+    /// This test attempts to reproduce the crash where parseRemainder is accessed
+    /// concurrently causing Data.prepend to crash
+    func testDataPrependRemainderRace() async throws {
+        natsServer.start()
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .build()
+        
+        try await client.connect()
+        
+        // Subscribe to multiple subjects to increase message processing
+        var subscriptions: [NatsSubscription] = []
+        for i in 0..<5 {
+            let sub = try await client.subscribe(subject: "test.prepend.\(i)")
+            subscriptions.append(sub)
+        }
+        
+        // Send partial messages that will trigger parseRemainder
+        // NATS protocol messages should be split to create remainder scenarios
+        let largePayload = String(repeating: "A", count: 16384) // 16KB message
+        
+        // Create concurrent publishers sending to different subjects
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for i in 0..<5 {
+                group.addTask {
+                    for j in 0..<100 {
+                        // Send messages that might get fragmented
+                        let subject = "test.prepend.\(i)"
+                        let payload = "\(largePayload)-\(j)"
+                        try await client.publish(payload.data(using: .utf8)!, subject: subject)
+                        
+                        // Occasionally send very small messages to change buffer patterns
+                        if j % 10 == 0 {
+                            try await client.publish("X".data(using: .utf8)!, subject: subject)
+                        }
+                    }
+                }
+            }
+            
+            // Consume messages concurrently
+            for (_, sub) in subscriptions.enumerated() {
+                group.addTask {
+                    var count = 0
+                    for try await _ in sub {
+                        count += 1
+                        if count >= 50 {
+                            break
+                        }
+                    }
+                }
+            }
+            
+            // Add timeout
+            group.addTask {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+            
+            // Wait for first to complete
+            _ = try await group.next()
+            group.cancelAll()
+        }
+        
+        try await client.close()
+    }
+    
+    /// Test concurrent channelActive and channelReadComplete
+    /// This simulates the scenario where channel lifecycle methods are called concurrently
+    func testConcurrentChannelActiveAndRead() async throws {
+        natsServer.start()
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(0.01)
+            .maxReconnects(50)
+            .build()
+        
+        try await client.connect()
+        
+        // Create high throughput scenario
+        let sub = try await client.subscribe(subject: "test.concurrent.>")
+        
+        // Task 1: Rapid publishing
+        let publishTask = Task {
+            for i in 0..<500 {
+                let subjects = ["test.concurrent.a", "test.concurrent.b", "test.concurrent.c"]
+                let subject = subjects[i % subjects.count]
+                let payload = String(repeating: "D", count: (i * 7) % 2048 + 100)
+                try? await client.publish(payload.data(using: .utf8)!, subject: subject)
+            }
+        }
+        
+        // Task 2: Force disconnections/reconnections
+        let reconnectTask = Task {
+            for i in 0..<10 {
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                // Force reconnect which triggers channelInactive/channelActive
+                try? await client.reconnect()
+                
+                // Immediately send more data after reconnect
+                for j in 0..<10 {
+                    try? await client.publish("RECONNECT-\(i)-\(j)".data(using: .utf8)!, 
+                                            subject: "test.concurrent.reconnect")
+                }
+            }
+        }
+        
+        // Task 3: Consume messages
+        let consumeTask = Task {
+            var count = 0
+            for try await _ in sub {
+                count += 1
+                if count > 200 {
+                    break
+                }
+                // Add occasional small delays to vary timing
+                if count % 50 == 0 {
+                    try? await Task.sleep(nanoseconds: 1_000_000)
+                }
+            }
+        }
+        
+        // Wait for all tasks
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await publishTask.value }
+            group.addTask { try await reconnectTask.value }
+            group.addTask { try await consumeTask.value }
+            
+            // Timeout after 10 seconds
+            group.addTask {
+                try await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+            
+            // Wait for first to complete
+            _ = try await group.next()
+            group.cancelAll()
+        }
+        
+        try await client.close()
+    }
+    
+    /// Test buffer lifecycle under extreme load
+    /// This test creates conditions similar to the production crash scenario
+    func testBufferLifecycleUnderHighLoad() async throws {
+        natsServer.start()
+        
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(0.001) // Extremely short reconnect
+            .maxReconnects(200)
+            .build()
+        
+        try await client.connect()
+        
+        // Create multiple subscriptions
+        var subscriptions: [NatsSubscription] = []
+        for i in 0..<10 {
+            let sub = try await client.subscribe(subject: "load.test.\(i)")
+            subscriptions.append(sub)
+        }
+        
+        // Generate high load with various message patterns
+        let loadTask = Task {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                // Multiple concurrent publishers
+                for publisherId in 0..<5 {
+                    group.addTask {
+                        for msgId in 0..<200 {
+                            let subject = "load.test.\(msgId % 10)"
+                            
+                            // Vary message sizes to stress buffer management
+                            let size = (msgId * 17 + publisherId * 31) % 8192 + 10
+                            let payload = String(repeating: "\(publisherId)", count: size)
+                            
+                            try? await client.publish(payload.data(using: .utf8)!, subject: subject)
+                            
+                            // Occasionally inject very large messages
+                            if msgId % 50 == 0 {
+                                let largePayload = String(repeating: "L", count: 65536)
+                                try? await client.publish(largePayload.data(using: .utf8)!, subject: subject)
+                            }
+                        }
+                    }
+                }
+                
+                try await group.waitForAll()
+            }
+        }
+        
+        // Stress reconnection during high load
+        let stressTask = Task {
+            for i in 0..<15 {
+                try? await Task.sleep(nanoseconds: 50_000_000 * UInt64(i % 3 + 1))
+                try? await client.reconnect()
+                
+                // Send burst of messages right after reconnect
+                for j in 0..<20 {
+                    let burstPayload = "BURST-\(i)-\(j)"
+                    try? await client.publish(burstPayload.data(using: .utf8)!, 
+                                            subject: "load.test.\(j % 10)")
+                }
+            }
+        }
+        
+        // Consume messages from all subscriptions
+        let consumeTasks = subscriptions.map { sub in
+            Task {
+                var count = 0
+                for try await _ in sub {
+                    count += 1
+                    if count > 50 {
+                        break
+                    }
+                }
+            }
+        }
+        
+        // Run everything with timeout
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await loadTask.value }
+            group.addTask { try await stressTask.value }
+            for task in consumeTasks {
+                group.addTask { try await task.value }
+            }
+            
+            // Timeout
+            group.addTask {
+                try await Task.sleep(nanoseconds: 8_000_000_000)
+            }
+            
+            // Wait for first to complete
+            _ = try await group.next()
+            group.cancelAll()
+        }
+        
         try await client.close()
     }
 
