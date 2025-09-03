@@ -74,7 +74,7 @@ extension JetStreamContext {
         _ subject: String, message: Data, headers: NatsHeaderMap? = nil
     ) async throws -> AckFuture {
         // TODO(pp): add stream header options (expected seq etc)
-        let inbox = nextNuid()
+        let inbox = client.newInbox()
         let sub = try await self.client.subscribe(subject: inbox)
         try await self.client.publish(message, subject: subject, reply: inbox, headers: headers)
         return AckFuture(sub: sub, timeout: self.timeout)

@@ -73,9 +73,15 @@ public class NatsClient {
     internal let allocator = ByteBufferAllocator()
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
+    internal var inboxPrefix: String = "_INBOX."
 
     internal init() {
         self.buffer = allocator.buffer(capacity: 1024)
+    }
+
+    /// Returns a new inbox subject using the configured prefix and a generated NUID.
+    public func newInbox() -> String {
+        return inboxPrefix + nextNuid()
     }
 }
 
@@ -243,7 +249,7 @@ extension NatsClient {
         if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
-        let inbox = "_INBOX.\(nextNuid())"
+        let inbox = newInbox()
 
         let sub = try await connectionHandler.subscribe(inbox)
         try await sub.unsubscribe(after: 1)
