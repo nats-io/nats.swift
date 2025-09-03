@@ -48,6 +48,7 @@ class CoreNatsTests: XCTestCase {
         ("testRequest", testRequest),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_permissionDenied", testRequest_permissionDenied),
+        ("testConcurrentChannelActiveAndRead", testConcurrentChannelActiveAndRead),
         ("testRequest_timeout", testRequest_timeout),
         ("testPublishOnClosedConnection", testPublishOnClosedConnection),
         ("testCloseClosedConnection", testCloseClosedConnection),
@@ -1081,6 +1082,130 @@ class CoreNatsTests: XCTestCase {
             // Expected behavior
         } catch {
             XCTFail("Expected alreadyConnected error, got: \(error)")
+        }
+
+        try await client.close()
+    }
+
+    /// Test ByteBuffer reinitialization
+    func testByteBufferReinitialization() async throws {
+        natsServer.start()
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(0.01)  // Very short reconnect wait
+            .maxReconnects(100)
+            .build()
+
+        try await client.connect()
+
+        let sub = try await client.subscribe(subject: "test.buffer.race")
+
+        // Create concurrent tasks that will stress the buffer
+        let publishTask = Task {
+            for i in 0..<1000 {
+                // Send messages with varying sizes to stress buffer
+                let payload = String(repeating: "X", count: i % 1000 + 1)
+                try? await client.publish(payload.data(using: .utf8)!, subject: "test.buffer.race")
+                if i % 10 == 0 {
+                    // Add small delays occasionally to change timing
+                    try? await Task.sleep(nanoseconds: 1000)
+                }
+            }
+        }
+
+        let reconnectTask = Task {
+            for _ in 0..<20 {
+                // Force reconnects while messages are being processed
+                try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+                try? await client.reconnect()
+            }
+        }
+
+        // Try to consume messages during reconnect
+        let consumeTask = Task {
+            var count = 0
+            for try await _ in sub {
+                count += 1
+                if count > 100 {
+                    break
+                }
+            }
+        }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { await publishTask.value }
+            group.addTask { await reconnectTask.value }
+            group.addTask { try await consumeTask.value }
+
+            _ = try await group.waitForAll()
+            group.cancelAll()
+        }
+
+        try await client.close()
+    }
+
+    /// Test concurrent channelActive and channelReadComplete
+    func testConcurrentChannelActiveAndRead() async throws {
+        natsServer.start()
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(0.01)
+            .maxReconnects(50)
+            .build()
+
+        try await client.connect()
+
+        let sub = try await client.subscribe(subject: "test.concurrent.>")
+
+        // Task 1: Rapid publishing
+        let publishTask = Task {
+            for i in 0..<500 {
+                let subjects = ["test.concurrent.a", "test.concurrent.b", "test.concurrent.c"]
+                let subject = subjects[i % subjects.count]
+                let payload = String(repeating: "D", count: (i * 7) % 2048 + 100)
+                try? await client.publish(payload.data(using: .utf8)!, subject: subject)
+            }
+        }
+
+        // Task 2: Force disconnections/reconnections
+        let reconnectTask = Task {
+            for i in 0..<10 {
+                try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+                try await client.reconnect()
+
+                for j in 0..<10 {
+                    try? await client.publish(
+                        "RECONNECT-\(i)-\(j)".data(using: .utf8)!,
+                        subject: "test.concurrent.reconnect")
+                }
+            }
+        }
+
+        // Task 3: Consume messages
+        let consumeTask = Task {
+            var count = 0
+            for try await _ in sub {
+                count += 1
+                if count > 200 {
+                    break
+                }
+                // Add occasional small delays to vary timing
+                if count % 50 == 0 {
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                }
+            }
+        }
+
+        // Wait for all tasks
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { await publishTask.value }
+            group.addTask { try await reconnectTask.value }
+            group.addTask { try await consumeTask.value }
+
+            _ = try await group.waitForAll()
+            group.cancelAll()
         }
 
         try await client.close()
