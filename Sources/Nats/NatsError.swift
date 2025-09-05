@@ -82,7 +82,7 @@ public enum NatsError {
             }
         }
 
-        public enum Operation: String, Equatable {
+        public enum Operation: String, Equatable, Sendable {
             case publish = "Publish"
             case subscribe = "Subscription"
         }

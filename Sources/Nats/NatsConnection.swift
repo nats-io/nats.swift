@@ -22,11 +22,15 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
-class ConnectionHandler: ChannelInboundHandler {
+final class ConnectionHandler: ChannelInboundHandler, Sendable {
     let lang = "Swift"
     let version = "0.0.1"
 
-    internal var connectedUrl: URL?
+    private let _connectedUrl = NIOLockedValueBox<URL?>(nil)
+    internal var connectedUrl: URL? {
+        get { _connectedUrl.withLockedValue { $0 } }
+        set { _connectedUrl.withLockedValue { $0 = newValue } }
+    }
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
     internal var channel: Channel?
