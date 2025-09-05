@@ -68,6 +68,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var outstandingPings = ManagedAtomic<UInt8>(0)
     private var reconnectAttempts = 0
     private var reconnectTask: Task<(), Error>? = nil
+    private let capturedConnectionError = NIOLockedValueBox<Error?>(nil)
 
     private var group: MultiThreadedEventLoopGroup
 
@@ -344,6 +345,8 @@ class ConnectionHandler: ChannelInboundHandler {
             case let err as BoringSSLError:
                 throw NatsError.ConnectError.tlsFailure(err)
             case let err as NatsError.ServerError:
+                throw err
+            case let err as NatsError.ConnectError:
                 throw err
             default:
                 throw NatsError.ConnectError.io(lastErr)
@@ -816,12 +819,23 @@ class ConnectionHandler: ChannelInboundHandler {
 
         // If we lost the channel before we delivered server INFO or connection
         // establishment, make sure to fail any pending continuations to avoid leaks.
+        // Use captured error if available (e.g., TLS failure), otherwise use connectionClosed.
+        let errorToUse: Error = capturedConnectionError.withLockedValue({ err in
+            let captured = err
+            err = nil  // Clear after using
+            if let capturedError = captured {
+                return NatsError.ConnectError.tlsFailure(capturedError)
+            } else {
+                return NatsError.ClientError.connectionClosed
+            }
+        })
+
         if let continuation = serverInfoContinuation.withLockedValue({ cont in
             let toResume = cont
             cont = nil
             return toResume
         }) {
-            continuation.resume(throwing: NatsError.ClientError.connectionClosed)
+            continuation.resume(throwing: errorToUse)
         }
 
         if let continuation = connectionEstablishedContinuation.withLockedValue({ cont in
@@ -829,7 +843,7 @@ class ConnectionHandler: ChannelInboundHandler {
             cont = nil
             return toResume
         }) {
-            continuation.resume(throwing: NatsError.ClientError.connectionClosed)
+            continuation.resume(throwing: errorToUse)
         }
 
         let shouldHandleDisconnect = state.withLockedValue { $0 == .connected }
@@ -840,32 +854,19 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         logger.debug("Encountered error on the channel: \(error)")
+
+        // Capture connection-stage errors (especially TLS) for proper error reporting BEFORE closing
+        let isConnecting = state.withLockedValue { $0 == .pending || $0 == .connecting }
+        if isConnecting {
+            capturedConnectionError.withLockedValue { $0 = error }
+        }
+
         context.close(promise: nil)
+
         if let natsErr = error as? NatsErrorProtocol {
             self.fire(.error(natsErr))
         } else {
             logger.error("unexpected error: \(error)")
-        }
-        let serverContinuation = serverInfoContinuation.withLockedValue { cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }
-
-        if let continuation = serverContinuation {
-            continuation.resume(throwing: error)
-            return
-        }
-
-        let connContinuation = connectionEstablishedContinuation.withLockedValue { cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }
-
-        if let continuation = connContinuation {
-            continuation.resume(throwing: error)
-            return
         }
         let currentState = state.withLockedValue { $0 }
         if currentState == .pending || currentState == .connecting {
