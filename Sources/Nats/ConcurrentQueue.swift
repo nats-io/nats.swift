@@ -13,20 +13,19 @@
 
 import NIOConcurrencyHelpers
 
-internal class ConcurrentQueue<T> {
-    private var elements: [T] = []
-    private let lock = NIOLock()
+internal final class ConcurrentQueue<T: Sendable>: Sendable {
+    private let elements = NIOLockedValueBox<[T]>([])
 
     func enqueue(_ element: T) {
-        lock.lock()
-        defer { lock.unlock() }
-        elements.append(element)
+        elements.withLockedValue { array in
+            array.append(element)
+        }
     }
 
     func dequeue() -> T? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !elements.isEmpty else { return nil }
-        return elements.removeFirst()
+        elements.withLockedValue { array in
+            guard !array.isEmpty else { return nil }
+            return array.removeFirst()
+        }
     }
 }

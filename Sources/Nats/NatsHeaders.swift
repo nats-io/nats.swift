@@ -14,7 +14,7 @@
 import Foundation
 
 // Represents NATS header field value in Swift.
-public struct NatsHeaderValue: Equatable, CustomStringConvertible {
+public struct NatsHeaderValue: Equatable, CustomStringConvertible, Sendable {
     private var inner: String
 
     public init(_ value: String) {
@@ -27,7 +27,7 @@ public struct NatsHeaderValue: Equatable, CustomStringConvertible {
 }
 
 // Custom header representation in Swift
-public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
+public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible, Sendable {
     private var inner: String
 
     public init(_ value: String) throws {
@@ -50,7 +50,7 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
 }
 
 // Represents a NATS header map in Swift.
-public struct NatsHeaderMap: Equatable {
+public struct NatsHeaderMap: Equatable, Sendable {
     private var inner: [NatsHeaderName: [NatsHeaderValue]]
     internal var status: StatusCode? = nil
     internal var description: String? = nil
