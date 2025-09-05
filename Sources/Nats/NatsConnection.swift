@@ -992,7 +992,7 @@ extension ConnectionHandler {
     }
 
     internal func addListeners(
-        for events: [NatsEventKind], using handler: @escaping (NatsEvent) -> Void
+        for events: [NatsEventKind], using handler: @escaping @Sendable (NatsEvent) -> Void
     ) -> String {
 
         let id = String.hash()
@@ -1025,7 +1025,7 @@ extension ConnectionHandler {
 }
 
 /// Nats events
-public enum NatsEventKind: String {
+public enum NatsEventKind: String, Sendable {
     case connected = "connected"
     case disconnected = "disconnected"
     case closed = "closed"
@@ -1035,7 +1035,7 @@ public enum NatsEventKind: String {
     static let all = [connected, disconnected, closed, lameDuckMode, error]
 }
 
-public enum NatsEvent {
+public enum NatsEvent: Sendable {
     case connected
     case disconnected
     case suspended
@@ -1061,10 +1061,10 @@ public enum NatsEvent {
     }
 }
 
-internal struct NatsEventHandler {
+internal struct NatsEventHandler: Sendable {
     let listenerId: String
-    let handler: (NatsEvent) -> Void
-    init(lid: String, handler: @escaping (NatsEvent) -> Void) {
+    let handler: @Sendable (NatsEvent) -> Void
+    init(lid: String, handler: @escaping @Sendable (NatsEvent) -> Void) {
         self.listenerId = lid
         self.handler = handler
     }

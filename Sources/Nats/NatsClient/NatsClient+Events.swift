@@ -23,7 +23,7 @@ extension NatsClient {
     ///
     /// - Returns an ID of the registered listener which can be used to disable it.
     @discardableResult
-    public func on(_ events: [NatsEventKind], _ handler: @escaping (NatsEvent) -> Void) -> String {
+    public func on(_ events: [NatsEventKind], _ handler: @escaping @Sendable (NatsEvent) -> Void) -> String {
         guard let connectionHandler = self.connectionHandler else {
             return ""
         }
@@ -38,7 +38,7 @@ extension NatsClient {
     ///
     /// - Returns an ID of the registered listener which can be used to disable it.
     @discardableResult
-    public func on(_ event: NatsEventKind, _ handler: @escaping (NatsEvent) -> Void) -> String {
+    public func on(_ event: NatsEventKind, _ handler: @escaping @Sendable (NatsEvent) -> Void) -> String {
         guard let connectionHandler = self.connectionHandler else {
             return ""
         }

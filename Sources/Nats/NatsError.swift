@@ -13,7 +13,7 @@
 
 import Foundation
 
-public protocol NatsErrorProtocol: Error, CustomStringConvertible {}
+public protocol NatsErrorProtocol: Error, CustomStringConvertible, Sendable {}
 
 public enum NatsError {
     public enum ServerError: NatsErrorProtocol, Equatable {
