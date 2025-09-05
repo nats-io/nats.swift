@@ -32,14 +32,26 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         set { _connectedUrl.withLockedValue { $0 = newValue } }
     }
     internal let allocator = ByteBufferAllocator()
-    internal var inputBuffer: ByteBuffer
-    internal var channel: Channel?
+    private let _inputBuffer: NIOLockedValueBox<ByteBuffer>
+    internal var inputBuffer: ByteBuffer {
+        get { _inputBuffer.withLockedValue { $0 } }
+        set { _inputBuffer.withLockedValue { $0 = newValue } }
+    }
+    private let _channel = NIOLockedValueBox<Channel?>(nil)
+    internal var channel: Channel? {
+        get { _channel.withLockedValue { $0 } }
+        set { _channel.withLockedValue { $0 = newValue } }
+    }
 
-    private var eventHandlerStore: [NatsEventKind: [NatsEventHandler]] = [:]
+    private let eventHandlerStore = NIOLockedValueBox<[NatsEventKind: [NatsEventHandler]]>([:])
 
     // Connection options
-    internal var retryOnFailedConnect = false
-    private var urls: [URL]
+    internal let retryOnFailedConnect: Bool
+    private let _urls: NIOLockedValueBox<[URL]>
+    private var urls: [URL] {
+        get { _urls.withLockedValue { $0 } }
+        set { _urls.withLockedValue { $0 = newValue } }
+    }
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
     private let maxReconnects: Int?
@@ -47,9 +59,23 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let pingInterval: TimeInterval
     private let requireTls: Bool
     private let tlsFirst: Bool
-    private var rootCertificate: URL?
-    private var clientCertificate: URL?
-    private var clientKey: URL?
+    private let _rootCertificate = NIOLockedValueBox<URL?>(nil)
+    private var rootCertificate: URL? {
+        get { _rootCertificate.withLockedValue { $0 } }
+        set { _rootCertificate.withLockedValue { $0 = newValue } }
+    }
+    
+    private let _clientCertificate = NIOLockedValueBox<URL?>(nil)
+    private var clientCertificate: URL? {
+        get { _clientCertificate.withLockedValue { $0 } }
+        set { _clientCertificate.withLockedValue { $0 = newValue } }
+    }
+    
+    private let _clientKey = NIOLockedValueBox<URL?>(nil)
+    private var clientKey: URL? {
+        get { _clientKey.withLockedValue { $0 } }
+        set { _clientKey.withLockedValue { $0 = newValue } }
+    }
 
     typealias InboundIn = ByteBuffer
     private let state = NIOLockedValueBox(NatsState.pending)
@@ -64,16 +90,38 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         state.withLockedValue { $0 = newState }
     }
 
-    private var subscriptionCounter = ManagedAtomic<UInt64>(0)
-    private var serverInfo: ServerInfo?
-    private var auth: Auth?
+    private let subscriptionCounter = ManagedAtomic<UInt64>(0)
+    private let _serverInfo = NIOLockedValueBox<ServerInfo?>(nil)
+    private var serverInfo: ServerInfo? {
+        get { _serverInfo.withLockedValue { $0 } }
+        set { _serverInfo.withLockedValue { $0 = newValue } }
+    }
+    
+    private let _auth = NIOLockedValueBox<Auth?>(nil)
+    private var auth: Auth? {
+        get { _auth.withLockedValue { $0 } }
+        set { _auth.withLockedValue { $0 = newValue } }
+    }
     private let parseRemainder = NIOLockedValueBox<Data?>(nil)
-    private var pingTask: RepeatedTask?
-    private var outstandingPings = ManagedAtomic<UInt8>(0)
-    private var reconnectAttempts = 0
-    private var reconnectTask: Task<(), Error>? = nil
+    private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
+    private var pingTask: RepeatedTask? {
+        get { _pingTask.withLockedValue { $0 } }
+        set { _pingTask.withLockedValue { $0 = newValue } }
+    }
+    private let outstandingPings = ManagedAtomic<UInt8>(0)
+    private let _reconnectAttempts = ManagedAtomic<Int>(0)
+    private var reconnectAttempts: Int {
+        get { _reconnectAttempts.load(ordering: .relaxed) }
+        set { _reconnectAttempts.store(newValue, ordering: .relaxed) }
+    }
+    
+    private let _reconnectTask = NIOLockedValueBox<Task<(), Error>?>(nil)
+    private var reconnectTask: Task<(), Error>? {
+        get { _reconnectTask.withLockedValue { $0 } }
+        set { _reconnectTask.withLockedValue { $0 = newValue } }
+    }
 
-    private var group: MultiThreadedEventLoopGroup
+    private let group: MultiThreadedEventLoopGroup
 
     private let serverInfoContinuation = NIOLockedValueBox<CheckedContinuation<ServerInfo, Error>?>(
         nil)
@@ -82,7 +130,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     >(nil)
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
-    private(set) var batchBuffer: BatchBuffer?
+    private let _batchBuffer = NIOLockedValueBox<BatchBuffer?>(nil)
+    private(set) var batchBuffer: BatchBuffer? {
+        get { _batchBuffer.withLockedValue { $0 } }
+        set { _batchBuffer.withLockedValue { $0 = newValue } }
+    }
 
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
@@ -91,19 +143,19 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
-        self.urls = urls
+        self._urls = NIOLockedValueBox(urls)
         self.group = .singleton
-        self.inputBuffer = allocator.buffer(capacity: 1024)
+        self._inputBuffer = NIOLockedValueBox(allocator.buffer(capacity: 1024))
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
         self.retainServersOrder = retainServersOrder
-        self.auth = auth
+        self._auth.withLockedValue { $0 = auth }
         self.pingInterval = pingInterval
         self.requireTls = requireTls
         self.tlsFirst = tlsFirst
-        self.clientCertificate = clientCertificate
-        self.clientKey = clientKey
-        self.rootCertificate = rootCertificate
+        self._clientCertificate.withLockedValue { $0 = clientCertificate }
+        self._clientKey.withLockedValue { $0 = clientKey }
+        self._rootCertificate.withLockedValue { $0 = rootCertificate }
         self.retryOnFailedConnect = retryOnFailedConnect
     }
 
@@ -804,7 +856,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
         parseRemainder.withLockedValue { $0 = nil }
 
-        inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
+        self._inputBuffer.withLockedValue { $0 = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8) }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
@@ -988,7 +1040,8 @@ extension ConnectionHandler {
 
     internal func fire(_ event: NatsEvent) {
         let eventKind = event.kind()
-        guard let handlerStore = self.eventHandlerStore[eventKind] else { return }
+        let handlerStore = self.eventHandlerStore.withLockedValue { $0[eventKind] }
+        guard let handlerStore = handlerStore else { return }
 
         for handler in handlerStore {
             handler.handler(event)
@@ -1002,11 +1055,12 @@ extension ConnectionHandler {
         let id = String.hash()
 
         for event in events {
-            if self.eventHandlerStore[event] == nil {
-                self.eventHandlerStore[event] = []
+            self.eventHandlerStore.withLockedValue { store in
+                if store[event] == nil {
+                    store[event] = []
+                }
+                store[event]?.append(NatsEventHandler(lid: id, handler: handler))
             }
-            self.eventHandlerStore[event]?.append(
-                NatsEventHandler(lid: id, handler: handler))
         }
 
         return id
@@ -1016,12 +1070,11 @@ extension ConnectionHandler {
     internal func removeListener(_ id: String) {
 
         for event in NatsEventKind.all {
-
-            let handlerStore = self.eventHandlerStore[event]
-            if let store = handlerStore {
-                self.eventHandlerStore[event] = store.filter { $0.listenerId != id }
+            self.eventHandlerStore.withLockedValue { store in
+                if let handlerStore = store[event] {
+                    store[event] = handlerStore.filter { $0.listenerId != id }
+                }
             }
-
         }
 
     }

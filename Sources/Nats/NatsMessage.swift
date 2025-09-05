@@ -13,7 +13,7 @@
 
 import Foundation
 
-public struct NatsMessage {
+public struct NatsMessage: Sendable {
     public let payload: Data?
     public let subject: String
     public let replySubject: String?

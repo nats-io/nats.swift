@@ -12,24 +12,37 @@
 // limitations under the License.
 
 import Foundation
+import NIOCore
+import NIOConcurrencyHelpers
 
 // TODO(pp): Implement slow consumer
-public class NatsSubscription: AsyncSequence {
+public final class NatsSubscription: AsyncSequence, Sendable {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
 
     public let subject: String
     public let queue: String?
-    internal var max: UInt64?
-    internal var delivered: UInt64 = 0
+    private let _max = NIOLockedValueBox<UInt64?>(nil)
+    internal var max: UInt64? {
+        get { _max.withLockedValue { $0 } }
+        set { _max.withLockedValue { $0 = newValue } }
+    }
+    
+    private let _delivered = NIOLockedValueBox<UInt64>(0)
+    internal var delivered: UInt64 {
+        get { _delivered.withLockedValue { $0 } }
+        set { _delivered.withLockedValue { $0 = newValue } }
+    }
     internal let sid: UInt64
 
-    private var buffer: [Result<Element, NatsError.SubscriptionError>]
+    private struct State: Sendable {
+        var buffer: [Result<NatsMessage, NatsError.SubscriptionError>] = []
+        var closed = false
+        var continuation: CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = nil
+    }
+    
+    private let state = NIOLockedValueBox(State())
     private let capacity: UInt64
-    private var closed = false
-    private var continuation:
-        CheckedContinuation<Result<Element, NatsError.SubscriptionError>?, Never>?
-    private let lock = NSLock()
     private let conn: ConnectionHandler
 
     private static let defaultSubCapacity: UInt64 = 512 * 1024
@@ -53,7 +66,6 @@ public class NatsSubscription: AsyncSequence {
         self.subject = subject
         self.queue = queue
         self.capacity = capacity
-        self.buffer = []
         self.conn = conn
     }
 
@@ -62,45 +74,44 @@ public class NatsSubscription: AsyncSequence {
     }
 
     func receiveMessage(_ message: NatsMessage) {
-        lock.withLock {
-            if let continuation = self.continuation {
+        state.withLockedValue { state in
+            if let continuation = state.continuation {
                 // Immediately use the continuation if it exists
-                self.continuation = nil
+                state.continuation = nil
                 continuation.resume(returning: .success(message))
-            } else if buffer.count < capacity {
+            } else if state.buffer.count < capacity {
                 // Only append to buffer if no continuation is available
                 // TODO(pp): Hadndle SlowConsumer as subscription event
-                buffer.append(.success(message))
+                state.buffer.append(.success(message))
             }
         }
     }
 
     func receiveError(_ error: NatsError.SubscriptionError) {
-        lock.withLock {
-            if let continuation = self.continuation {
+        state.withLockedValue { state in
+            if let continuation = state.continuation {
                 // Immediately use the continuation if it exists
-                self.continuation = nil
+                state.continuation = nil
                 continuation.resume(returning: .failure(error))
             } else {
-                buffer.append(.failure(error))
+                state.buffer.append(.failure(error))
             }
         }
     }
 
     internal func complete() {
-        lock.withLock {
-            closed = true
-            if let continuation {
-                self.continuation = nil
+        state.withLockedValue { state in
+            state.closed = true
+            if let continuation = state.continuation {
+                state.continuation = nil
                 continuation.resume(returning: nil)
             }
-
         }
     }
 
     // AsyncIterator implementation
-    public class SubscriptionIterator: AsyncIteratorProtocol {
-        private var subscription: NatsSubscription
+    public final class SubscriptionIterator: AsyncIteratorProtocol, Sendable {
+        private let subscription: NatsSubscription
 
         init(subscription: NatsSubscription) {
             self.subscription = subscription
@@ -114,18 +125,18 @@ public class NatsSubscription: AsyncSequence {
     private func nextMessage() async throws -> Element? {
         let result: Result<Element, NatsError.SubscriptionError>? = await withCheckedContinuation {
             continuation in
-            lock.withLock {
-                if closed {
+            state.withLockedValue { state in
+                if state.closed {
                     continuation.resume(returning: nil)
                     return
                 }
 
-                delivered += 1
-                if let message = buffer.first {
-                    buffer.removeFirst()
+                _delivered.withLockedValue { $0 += 1 }
+                if let message = state.buffer.first {
+                    state.buffer.removeFirst()
                     continuation.resume(returning: message)
                 } else {
-                    self.continuation = continuation
+                    state.continuation = continuation
                 }
             }
         }
@@ -155,7 +166,8 @@ public class NatsSubscription: AsyncSequence {
         if case .closed = self.conn.currentState {
             throw NatsError.ClientError.connectionClosed
         }
-        if self.closed {
+        let isClosed = state.withLockedValue { $0.closed }
+        if isClosed {
             throw NatsError.SubscriptionError.subscriptionClosed
         }
         return try await self.conn.unsubscribe(sub: self, max: after)

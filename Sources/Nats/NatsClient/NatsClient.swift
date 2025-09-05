@@ -21,7 +21,7 @@ import Nuid
 public var logger = Logger(label: "Nats")
 
 /// NatsClient connection states
-public enum NatsState {
+public enum NatsState: Sendable {
     case pending
     case connecting
     case connected
@@ -30,7 +30,7 @@ public enum NatsState {
     case suspended
 }
 
-public struct Auth {
+public struct Auth: Sendable {
     var user: String?
     var password: String?
     var token: String?
