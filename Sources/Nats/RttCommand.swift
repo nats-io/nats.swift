@@ -14,7 +14,7 @@
 import Foundation
 import NIOCore
 
-internal class RttCommand {
+internal final class RttCommand: Sendable {
     let startTime = DispatchTime.now()
     let promise: EventLoopPromise<TimeInterval>?
 

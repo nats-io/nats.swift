@@ -22,20 +22,36 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
-class ConnectionHandler: ChannelInboundHandler {
+final class ConnectionHandler: ChannelInboundHandler, Sendable {
     let lang = "Swift"
     let version = "0.0.1"
 
-    internal var connectedUrl: URL?
+    private let _connectedUrl = NIOLockedValueBox<URL?>(nil)
+    internal var connectedUrl: URL? {
+        get { _connectedUrl.withLockedValue { $0 } }
+        set { _connectedUrl.withLockedValue { $0 = newValue } }
+    }
     internal let allocator = ByteBufferAllocator()
-    internal var inputBuffer: ByteBuffer
-    internal var channel: Channel?
+    private let _inputBuffer: NIOLockedValueBox<ByteBuffer>
+    internal var inputBuffer: ByteBuffer {
+        get { _inputBuffer.withLockedValue { $0 } }
+        set { _inputBuffer.withLockedValue { $0 = newValue } }
+    }
+    private let _channel = NIOLockedValueBox<Channel?>(nil)
+    internal var channel: Channel? {
+        get { _channel.withLockedValue { $0 } }
+        set { _channel.withLockedValue { $0 = newValue } }
+    }
 
-    private var eventHandlerStore: [NatsEventKind: [NatsEventHandler]] = [:]
+    private let eventHandlerStore = NIOLockedValueBox<[NatsEventKind: [NatsEventHandler]]>([:])
 
     // Connection options
-    internal var retryOnFailedConnect = false
-    private var urls: [URL]
+    internal let retryOnFailedConnect: Bool
+    private let _urls: NIOLockedValueBox<[URL]>
+    private var urls: [URL] {
+        get { _urls.withLockedValue { $0 } }
+        set { _urls.withLockedValue { $0 = newValue } }
+    }
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
     private let maxReconnects: Int?
@@ -43,9 +59,9 @@ class ConnectionHandler: ChannelInboundHandler {
     private let pingInterval: TimeInterval
     private let requireTls: Bool
     private let tlsFirst: Bool
-    private var rootCertificate: URL?
-    private var clientCertificate: URL?
-    private var clientKey: URL?
+    private let rootCertificate: URL?
+    private let clientCertificate: URL?
+    private let clientKey: URL?
 
     typealias InboundIn = ByteBuffer
     private let state = NIOLockedValueBox(NatsState.pending)
@@ -60,17 +76,35 @@ class ConnectionHandler: ChannelInboundHandler {
         state.withLockedValue { $0 = newState }
     }
 
-    private var subscriptionCounter = ManagedAtomic<UInt64>(0)
-    private var serverInfo: ServerInfo?
-    private var auth: Auth?
+    private let subscriptionCounter = ManagedAtomic<UInt64>(0)
+    private let _serverInfo = NIOLockedValueBox<ServerInfo?>(nil)
+    private var serverInfo: ServerInfo? {
+        get { _serverInfo.withLockedValue { $0 } }
+        set { _serverInfo.withLockedValue { $0 = newValue } }
+    }
+
+    private let auth: Auth?
     private let parseRemainder = NIOLockedValueBox<Data?>(nil)
-    private var pingTask: RepeatedTask?
-    private var outstandingPings = ManagedAtomic<UInt8>(0)
-    private var reconnectAttempts = 0
-    private var reconnectTask: Task<(), Error>? = nil
+    private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
+    private var pingTask: RepeatedTask? {
+        get { _pingTask.withLockedValue { $0 } }
+        set { _pingTask.withLockedValue { $0 = newValue } }
+    }
+    private let outstandingPings = ManagedAtomic<UInt8>(0)
+    private let _reconnectAttempts = ManagedAtomic<Int>(0)
+    private var reconnectAttempts: Int {
+        get { _reconnectAttempts.load(ordering: .relaxed) }
+        set { _reconnectAttempts.store(newValue, ordering: .relaxed) }
+    }
     private let capturedConnectionError = NIOLockedValueBox<Error?>(nil)
 
-    private var group: MultiThreadedEventLoopGroup
+    private let _reconnectTask = NIOLockedValueBox<Task<(), Error>?>(nil)
+    private var reconnectTask: Task<(), Error>? {
+        get { _reconnectTask.withLockedValue { $0 } }
+        set { _reconnectTask.withLockedValue { $0 = newValue } }
+    }
+
+    private let group: MultiThreadedEventLoopGroup
 
     private let serverInfoContinuation = NIOLockedValueBox<CheckedContinuation<ServerInfo, Error>?>(
         nil)
@@ -79,7 +113,11 @@ class ConnectionHandler: ChannelInboundHandler {
     >(nil)
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
-    private(set) var batchBuffer: BatchBuffer?
+    private let _batchBuffer = NIOLockedValueBox<BatchBuffer?>(nil)
+    private(set) var batchBuffer: BatchBuffer? {
+        get { _batchBuffer.withLockedValue { $0 } }
+        set { _batchBuffer.withLockedValue { $0 = newValue } }
+    }
 
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
@@ -88,9 +126,9 @@ class ConnectionHandler: ChannelInboundHandler {
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
-        self.urls = urls
+        self._urls = NIOLockedValueBox(urls)
         self.group = .singleton
-        self.inputBuffer = allocator.buffer(capacity: 1024)
+        self._inputBuffer = NIOLockedValueBox(allocator.buffer(capacity: 1024))
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
         self.retainServersOrder = retainServersOrder
@@ -434,7 +472,17 @@ class ConnectionHandler: ChannelInboundHandler {
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
                 context: sslContext, serverHostname: s.host)
-            try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
+            if let channel = self.channel {
+                // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
+                // (takes ownership via `sending`), unlike NIOLoopBound which requires
+                // already being on the event loop at construction time.
+                let sslHandlerBox = NIOLoopBoundBox.makeBoxSendingValue(
+                    sslHandler, eventLoop: channel.eventLoop)
+                try await channel.eventLoop.submit {
+                    try channel.pipeline.syncOperations.addHandler(
+                        sslHandlerBox.value, position: .first)
+                }.get()
+            }
         }
 
         try await sendClientConnectInit()
@@ -589,18 +637,13 @@ class ConnectionHandler: ChannelInboundHandler {
                             configuration: tlsConfig)
                         let sslHandler = try NIOSSLClientHandler(
                             context: sslContext, serverHostname: server.host!)
-                        //Fixme(jrm): do not ignore error from addHandler future.
-                        channel.pipeline.addHandler(sslHandler).flatMap { _ in
-                            channel.pipeline.addHandler(self)
-                        }.whenComplete { result in
-                            switch result {
-                            case .success():
-                                print("success")
-                            case .failure(let error):
-                                print("error: \(error)")
-                            }
+                        do {
+                            try channel.pipeline.syncOperations.addHandler(sslHandler)
+                        } catch {
+                            let tlsError = NatsError.ConnectError.tlsFailure(error)
+                            return channel.eventLoop.makeFailedFuture(tlsError)
                         }
-                        return channel.eventLoop.makeSucceededFuture(())
+                        return channel.pipeline.addHandler(self)
                     } catch {
                         let tlsError = NatsError.ConnectError.tlsFailure(error)
                         return channel.eventLoop.makeFailedFuture(tlsError)
@@ -625,12 +668,14 @@ class ConnectionHandler: ChannelInboundHandler {
                                     maxAccumulatedFrameCount: Int.max,
                                     maxAccumulatedFrameSize: Int.max
                                 )
-                                return channel.pipeline.addHandler(wsh).flatMap {
-                                    channel.pipeline.addHandler(WebSocketByteBufferCodec()).flatMap
-                                    {
-                                        channel.pipeline.addHandler(self)
-                                    }
+                                do {
+                                    try channel.pipeline.syncOperations.addHandler(wsh)
+                                    try channel.pipeline.syncOperations.addHandler(
+                                        WebSocketByteBufferCodec())
+                                } catch {
+                                    return channel.eventLoop.makeFailedFuture(error)
                                 }
+                                return channel.pipeline.addHandler(self)
                             }
                         )
 
@@ -638,7 +683,7 @@ class ConnectionHandler: ChannelInboundHandler {
                             upgraders: [websocketUpgrader],
                             completionHandler: { context in
                                 upgradePromise.succeed(())
-                                channel.pipeline.removeHandler(
+                                channel.pipeline.syncOperations.removeHandler(
                                     httpUpgradeRequestHandlerBox.value, promise: nil)
                             }
                         )
@@ -660,12 +705,17 @@ class ConnectionHandler: ChannelInboundHandler {
                             }
                         }
 
-                        //Fixme(jrm): do not ignore error from addHandler future.
                         channel.pipeline.addHTTPClientHandlers(
                             leftOverBytesStrategy: .forwardBytes,
                             withClientUpgrade: config
                         ).flatMap {
-                            channel.pipeline.addHandler(httpUpgradeRequestHandlerBox.value)
+                            do {
+                                try channel.pipeline.syncOperations.addHandler(
+                                    httpUpgradeRequestHandlerBox.value)
+                                return channel.eventLoop.makeSucceededFuture(())
+                            } catch {
+                                return channel.eventLoop.makeFailedFuture(error)
+                            }
                         }.whenComplete { result in
                             switch result {
                             case .success():
@@ -811,7 +861,9 @@ class ConnectionHandler: ChannelInboundHandler {
 
         parseRemainder.withLockedValue { $0 = nil }
 
-        inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
+        self._inputBuffer.withLockedValue {
+            $0 = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
+        }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
@@ -980,7 +1032,7 @@ class ConnectionHandler: ChannelInboundHandler {
             try await write(operation: ClientOp.subscribe((sid, subject, queue)))
         } catch {
             // Remove subscription if subscribe command fails
-            subscriptions.withLockedValue { $0.removeValue(forKey: sid) }
+            _ = subscriptions.withLockedValue { $0.removeValue(forKey: sid) }
             throw error
         }
 
@@ -1002,7 +1054,7 @@ class ConnectionHandler: ChannelInboundHandler {
     }
 
     internal func removeSub(sub: NatsSubscription) {
-        subscriptions.withLockedValue { $0.removeValue(forKey: sub.sid) }
+        _ = subscriptions.withLockedValue { $0.removeValue(forKey: sub.sid) }
         sub.complete()
     }
 }
@@ -1011,7 +1063,8 @@ extension ConnectionHandler {
 
     internal func fire(_ event: NatsEvent) {
         let eventKind = event.kind()
-        guard let handlerStore = self.eventHandlerStore[eventKind] else { return }
+        let handlerStore = self.eventHandlerStore.withLockedValue { $0[eventKind] }
+        guard let handlerStore = handlerStore else { return }
 
         for handler in handlerStore {
             handler.handler(event)
@@ -1019,17 +1072,18 @@ extension ConnectionHandler {
     }
 
     internal func addListeners(
-        for events: [NatsEventKind], using handler: @escaping (NatsEvent) -> Void
+        for events: [NatsEventKind], using handler: @escaping @Sendable (NatsEvent) -> Void
     ) -> String {
 
         let id = String.hash()
 
         for event in events {
-            if self.eventHandlerStore[event] == nil {
-                self.eventHandlerStore[event] = []
+            self.eventHandlerStore.withLockedValue { store in
+                if store[event] == nil {
+                    store[event] = []
+                }
+                store[event]?.append(NatsEventHandler(lid: id, handler: handler))
             }
-            self.eventHandlerStore[event]?.append(
-                NatsEventHandler(lid: id, handler: handler))
         }
 
         return id
@@ -1039,12 +1093,11 @@ extension ConnectionHandler {
     internal func removeListener(_ id: String) {
 
         for event in NatsEventKind.all {
-
-            let handlerStore = self.eventHandlerStore[event]
-            if let store = handlerStore {
-                self.eventHandlerStore[event] = store.filter { $0.listenerId != id }
+            self.eventHandlerStore.withLockedValue { store in
+                if let handlerStore = store[event] {
+                    store[event] = handlerStore.filter { $0.listenerId != id }
+                }
             }
-
         }
 
     }
@@ -1052,7 +1105,7 @@ extension ConnectionHandler {
 }
 
 /// Nats events
-public enum NatsEventKind: String {
+public enum NatsEventKind: String, Sendable {
     case connected = "connected"
     case disconnected = "disconnected"
     case closed = "closed"
@@ -1062,7 +1115,7 @@ public enum NatsEventKind: String {
     static let all = [connected, disconnected, closed, lameDuckMode, error]
 }
 
-public enum NatsEvent {
+public enum NatsEvent: Sendable {
     case connected
     case disconnected
     case suspended
@@ -1088,10 +1141,10 @@ public enum NatsEvent {
     }
 }
 
-internal struct NatsEventHandler {
+internal struct NatsEventHandler: Sendable {
     let listenerId: String
-    let handler: (NatsEvent) -> Void
-    init(lid: String, handler: @escaping (NatsEvent) -> Void) {
+    let handler: @Sendable (NatsEvent) -> Void
+    init(lid: String, handler: @escaping @Sendable (NatsEvent) -> Void) {
         self.listenerId = lid
         self.handler = handler
     }

@@ -13,7 +13,7 @@
 
 import Foundation
 
-public struct NatsMessage {
+public struct NatsMessage: Sendable {
     public let payload: Data?
     public let subject: String
     public let replySubject: String?
@@ -23,7 +23,7 @@ public struct NatsMessage {
     public let description: String?
 }
 
-public struct StatusCode: Equatable {
+public struct StatusCode: Equatable, Sendable {
     public static let idleHeartbeat = StatusCode(value: 100)
     public static let ok = StatusCode(value: 200)
     public static let badRequest = StatusCode(value: 400)

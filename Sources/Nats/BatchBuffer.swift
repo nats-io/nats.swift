@@ -16,7 +16,7 @@ import NIO
 import NIOConcurrencyHelpers
 
 extension BatchBuffer {
-    struct State {
+    struct State: Sendable {
         private var buffer: ByteBuffer
         private var allocator: ByteBufferAllocator
         var waitingPromises: [(ClientOp, UnsafeContinuation<Void, Error>)] = []
@@ -49,7 +49,7 @@ extension BatchBuffer {
     }
 }
 
-internal class BatchBuffer {
+internal final class BatchBuffer: Sendable {
     private let batchSize: Int
     private let channel: Channel
     private let state: NIOLockedValueBox<State>

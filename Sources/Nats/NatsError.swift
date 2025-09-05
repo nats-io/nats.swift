@@ -13,7 +13,7 @@
 
 import Foundation
 
-public protocol NatsErrorProtocol: Error, CustomStringConvertible {}
+public protocol NatsErrorProtocol: Error, CustomStringConvertible, Sendable {}
 
 public enum NatsError {
     public enum ServerError: NatsErrorProtocol, Equatable {
@@ -82,7 +82,7 @@ public enum NatsError {
             }
         }
 
-        public enum Operation: String, Equatable {
+        public enum Operation: String, Equatable, Sendable {
             case publish = "Publish"
             case subscribe = "Subscription"
         }
