@@ -303,6 +303,11 @@ class ConsumerTests: XCTestCase {
         XCTAssertEqual(meta.consumerSequence, 1)
         try await msg.ack(ackType: .nak())
 
+        // Give the server time to process the NAK and requeue the message before fetching.
+        // Without this, the fetch can race ahead and receive the next undelivered message
+        // instead of the redelivered NAK'd one.
+        try await Task.sleep(nanoseconds: 200_000_000)
+
         // now fetch the message again, it should be redelivered
         batch = try await consumer.fetch(batch: 1)
         iter = batch.makeAsyncIterator()

@@ -59,7 +59,7 @@ public class NatsServer {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [
             "nats-server", "-p", "\(port)", "-P", pidFile!.path, "--store_dir",
-            "\(tempDir.absoluteString)",
+            tempDir.path,
         ]
         if let cfg {
             process.arguments?.append(contentsOf: ["-c", cfg])
