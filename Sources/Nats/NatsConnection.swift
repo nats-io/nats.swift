@@ -22,6 +22,11 @@ import NIOSSL
 import NIOWebSocket
 import NKeys
 
+// URLSession is implemented in FoundationNetworking on Linux OS
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 class ConnectionHandler: ChannelInboundHandler {
     let lang = "Swift"
     let version = "0.0.1"

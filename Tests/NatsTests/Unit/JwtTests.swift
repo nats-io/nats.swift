@@ -16,6 +16,11 @@ import XCTest
 
 @testable import Nats
 
+// URLSession is implemented in FoundationNetworking on Linux OS
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 class JwtTests: XCTestCase {
 
     static var allTests = [
