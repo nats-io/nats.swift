@@ -192,7 +192,7 @@ class ParserTests: XCTestCase {
         ]
 
         for (tn, tc) in testCases.enumerated() {
-            logger.logLevel = .debug
+            logger.logLevel = .critical
             var ops = [ServerOp]()
             var prevRemainder: Data?
             for chunk in tc.givenChunks {

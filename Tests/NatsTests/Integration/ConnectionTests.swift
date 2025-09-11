@@ -29,6 +29,7 @@ class CoreNatsTests: XCTestCase {
         ("testConnectDNSError", testConnectDNSError),
         ("testRetryOnFailedConnect", testRetryOnFailedConnect),
         ("testPublishWithReply", testPublishWithReply),
+        ("testPublishWithReplyOnCustomInbox", testPublishWithReplyOnCustomInbox),
         ("testSubscribe", testSubscribe),
         ("testUnsubscribe", testUnsubscribe),
         ("testUnsubscribeAfter", testUnsubscribeAfter),
@@ -46,6 +47,7 @@ class CoreNatsTests: XCTestCase {
         ("testWebsocketTLS", testWebsocketTLS),
         ("testLameDuckMode", testLameDuckMode),
         ("testRequest", testRequest),
+        ("testRequestCustomInbox", testRequestCustomInbox),
         ("testRequest_noResponders", testRequest_noResponders),
         ("testRequest_permissionDenied", testRequest_permissionDenied),
         ("testConcurrentChannelActiveAndRead", testConcurrentChannelActiveAndRead),
@@ -67,7 +69,7 @@ class CoreNatsTests: XCTestCase {
 
     func testRtt() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -81,7 +83,7 @@ class CoreNatsTests: XCTestCase {
 
     func testPublish() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -103,7 +105,7 @@ class CoreNatsTests: XCTestCase {
 
     func testSuspendAndResume() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -148,7 +150,7 @@ class CoreNatsTests: XCTestCase {
 
     func testForceReconnect() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -192,7 +194,7 @@ class CoreNatsTests: XCTestCase {
 
     func testConnectMultipleURLsOneIsValid() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .urls([
                 URL(string: natsServer.clientURL)!, URL(string: "nats://localhost:4344")!,
@@ -219,7 +221,7 @@ class CoreNatsTests: XCTestCase {
         natsServer.start()
         let natsServer2 = NatsServer()
         natsServer2.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         for _ in 0..<10 {
             let client = NatsClientOptions()
                 .urls([URL(string: natsServer2.clientURL)!, URL(string: natsServer.clientURL)!])
@@ -232,7 +234,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testConnectDNSError() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .urls([URL(string: "nats://invalid:1234")!])
             .build()
@@ -247,7 +249,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testConnectNIOError() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .urls([URL(string: "nats://localhost:4321")!])
             .build()
@@ -284,7 +286,7 @@ class CoreNatsTests: XCTestCase {
 
     func testPublishWithReply() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -304,9 +306,33 @@ class CoreNatsTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: 5.0)
     }
 
-    func testSubscribe() async throws {
+    func testPublishWithReplyOnCustomInbox() async throws {
         natsServer.start()
         logger.logLevel = .debug
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .inboxPrefix("_INBOX_foo")
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+
+        try await client.publish(
+            "msg".data(using: .utf8)!, subject: "test", reply: client.newInbox())
+        let expectation = XCTestExpectation(description: "Should receive message in 5 seconds")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let msg = try await iter.next() {
+                XCTAssertEqual(msg.subject, "test")
+                XCTAssertTrue(msg.replySubject?.starts(with: "_INBOX_foo.") == true)
+                expectation.fulfill()
+            }
+        }
+        await fulfillment(of: [expectation], timeout: 5.0)
+    }
+
+    func testSubscribe() async throws {
+        natsServer.start()
+        logger.logLevel = .critical
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(subject: "test")
@@ -318,7 +344,7 @@ class CoreNatsTests: XCTestCase {
 
     func testQueueGroupSubscribe() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
 
@@ -364,7 +390,7 @@ class CoreNatsTests: XCTestCase {
 
     func testUnsubscribe() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(subject: "test")
@@ -389,7 +415,7 @@ class CoreNatsTests: XCTestCase {
 
     func testUnsubscribeAfter() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
         let sub = try await client.subscribe(subject: "test")
@@ -408,7 +434,7 @@ class CoreNatsTests: XCTestCase {
 
     func testConnect() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -419,7 +445,7 @@ class CoreNatsTests: XCTestCase {
     func testReconnect() async throws {
         natsServer.start()
         let port = natsServer.port!
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
@@ -480,7 +506,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testUsernameAndPassword() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "creds", withExtension: "conf")!.relativePath)
 
@@ -515,7 +541,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testTokenAuth() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "token", withExtension: "conf")!.relativePath)
 
@@ -549,7 +575,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testCredentialsAuth() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "jwt", withExtension: "conf")!.relativePath)
 
@@ -565,7 +591,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testNkeyAuth() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
 
@@ -580,7 +606,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testNkeyAuthFile() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "nkey", withExtension: "conf")!.relativePath)
 
@@ -619,7 +645,7 @@ class CoreNatsTests: XCTestCase {
 
     func testMutualTls() async throws {
         let bundle = Bundle.module
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
@@ -650,7 +676,7 @@ class CoreNatsTests: XCTestCase {
 
     func testTlsFirst() async throws {
         let bundle = Bundle.module
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
@@ -682,7 +708,7 @@ class CoreNatsTests: XCTestCase {
 
     func testInvalidCertificate() async throws {
         let bundle = Bundle.module
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
         let rootCA = bundle.url(forResource: "rootCA", withExtension: "pem")!.relativePath
@@ -715,7 +741,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testWebsocket() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "ws", withExtension: "conf")!.relativePath)
 
@@ -732,7 +758,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testWebsocketTLS() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         let serverCert = bundle.url(forResource: "server-cert", withExtension: "pem")!.relativePath
         let serverKey = bundle.url(forResource: "server-key", withExtension: "pem")!.relativePath
@@ -767,7 +793,7 @@ class CoreNatsTests: XCTestCase {
 
     func testLameDuckMode() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
@@ -786,7 +812,7 @@ class CoreNatsTests: XCTestCase {
 
     func testRequest() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -804,9 +830,32 @@ class CoreNatsTests: XCTestCase {
         try await client.close()
     }
 
-    func testRequest_noResponders() async throws {
+    func testRequestCustomInbox() async throws {
         natsServer.start()
         logger.logLevel = .debug
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .inboxPrefix("_INBOX_bar.foo")
+            .build()
+        try await client.connect()
+
+        let service = try await client.subscribe(subject: "service")
+        Task {
+            for try await msg in service {
+                try await client.publish(
+                    "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
+            }
+        }
+        let response = try await client.request("request".data(using: .utf8)!, subject: "service")
+        XCTAssertEqual(response.payload, "reply".data(using: .utf8)!)
+
+        try await client.close()
+    }
+
+    func testRequest_noResponders() async throws {
+        natsServer.start()
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -823,7 +872,7 @@ class CoreNatsTests: XCTestCase {
 
     func testRequest_timeout() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -849,7 +898,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testRequest_permissionDenied() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
         let cfgFile = try createConfigFileFromTemplate(
@@ -872,7 +921,7 @@ class CoreNatsTests: XCTestCase {
 
     func testPublishOnClosedConnection() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -894,7 +943,7 @@ class CoreNatsTests: XCTestCase {
 
     func testCloseClosedConnection() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -916,7 +965,7 @@ class CoreNatsTests: XCTestCase {
 
     func testSuspendClosedConnection() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -938,7 +987,7 @@ class CoreNatsTests: XCTestCase {
 
     func testReconnectOnClosedConnection() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -959,7 +1008,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testSubscribeMissingPermissions() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         let cfgFile = try createConfigFileFromTemplate(
             templateURL: bundle.url(forResource: "permissions", withExtension: "conf")!,
@@ -1001,7 +1050,7 @@ class CoreNatsTests: XCTestCase {
     }
 
     func testSubscribePermissionsRevoked() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let bundle = Bundle.module
         let templateURL = bundle.url(forResource: "permissions", withExtension: "conf")!
         var cfgFile = try createConfigFileFromTemplate(
