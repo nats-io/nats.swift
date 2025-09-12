@@ -476,7 +476,9 @@ class ConnectionHandler: ChannelInboundHandler {
         if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
             throw NatsError.ConnectError.invalidConfig("cannot use both nkey and nkeyPath")
         }
-        if let auth = self.auth, let credentialsPath = auth.credentialsPath {
+        if let auth = self.auth, let credentialsPath = auth.credentialsPath,
+            let nonce = self.serverInfo?.nonce
+        {
             let credentials = try await URLSession.shared.data(from: credentialsPath).0
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
                 throw NatsError.ConnectError.invalidConfig(
@@ -486,17 +488,15 @@ class ConnectionHandler: ChannelInboundHandler {
                 throw NatsError.ConnectError.invalidConfig(
                     "failed to extract NKEY from credentials file")
             }
-            guard let nonce = self.serverInfo?.nonce else {
-                throw NatsError.ConnectError.invalidConfig("missing nonce")
-            }
+            initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
+
             let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
             let nonceData = nonce.data(using: .utf8)!
             let sig = try keypair.sign(input: nonceData)
             let base64sig = sig.base64EncodedURLSafeNotPadded()
             initialConnect.signature = base64sig
-            initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
         }
-        if let nkey = self.auth?.nkeyPath {
+        if let nkey = self.auth?.nkeyPath, let nonce = self.serverInfo?.nonce {
             let nkeyData = try await URLSession.shared.data(from: nkey).0
 
             guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
@@ -505,20 +505,14 @@ class ConnectionHandler: ChannelInboundHandler {
             let keypair = try KeyPair(
                 seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+            initialConnect.nkey = keypair.publicKeyEncoded
 
-            guard let nonce = self.serverInfo?.nonce else {
-                throw NatsError.ConnectError.invalidConfig("missing nonce")
-            }
             let sig = try keypair.sign(input: nonce.data(using: .utf8)!)
             let base64sig = sig.base64EncodedURLSafeNotPadded()
             initialConnect.signature = base64sig
-            initialConnect.nkey = keypair.publicKeyEncoded
         }
-        if let nkey = self.auth?.nkey {
+        if let nkey = self.auth?.nkey, let nonce = self.serverInfo?.nonce {
             let keypair = try KeyPair(seed: nkey)
-            guard let nonce = self.serverInfo?.nonce else {
-                throw NatsError.ConnectError.invalidConfig("missing nonce")
-            }
             let nonceData = nonce.data(using: .utf8)!
             let sig = try keypair.sign(input: nonceData)
             let base64sig = sig.base64EncodedURLSafeNotPadded()
