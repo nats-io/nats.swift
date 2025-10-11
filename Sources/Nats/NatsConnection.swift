@@ -39,6 +39,8 @@ class ConnectionHandler: ChannelInboundHandler {
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
     private let maxReconnects: Int?
+    private let connectionName: String?
+    private let noEcho: Bool
     private let retainServersOrder: Bool
     private let pingInterval: TimeInterval
     private let requireTls: Bool
@@ -83,6 +85,8 @@ class ConnectionHandler: ChannelInboundHandler {
 
     init(
         inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
+        connectionName: String?,
+        noEcho: Bool,
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
@@ -93,6 +97,8 @@ class ConnectionHandler: ChannelInboundHandler {
         self.inputBuffer = allocator.buffer(capacity: 1024)
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
         self.maxReconnects = maxReconnects
+        self.connectionName = connectionName
+        self.noEcho = noEcho
         self.retainServersOrder = retainServersOrder
         self.auth = auth
         self.pingInterval = pingInterval
@@ -468,7 +474,8 @@ class ConnectionHandler: ChannelInboundHandler {
 
     private func sendClientConnectInit() async throws {
         var initialConnect = ConnectInfo(
-            verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
+            verbose: false, pedantic: false, userJwt: nil, nkey: "",
+            name: self.connectionName ?? "", echo: !self.noEcho,
             lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
             user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
             authToken: self.auth?.token ?? "", headers: true, noResponders: true)
