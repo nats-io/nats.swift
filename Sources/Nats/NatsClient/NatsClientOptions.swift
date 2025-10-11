@@ -22,6 +22,8 @@ public class NatsClientOptions {
     private var pingInterval: TimeInterval = 60.0
     private var reconnectWait: TimeInterval = 2.0
     private var maxReconnects: Int?
+    private var connectionName: String?
+    private var noEcho = false
     private var initialReconnect = false
     private var noRandomize = false
     private var auth: Auth? = nil
@@ -79,6 +81,20 @@ public class NatsClientOptions {
     /// Defaults to unlimited.
     public func maxReconnects(_ maxReconnects: Int) -> NatsClientOptions {
         self.maxReconnects = maxReconnects
+        return self
+    }
+
+    /// Connection name.
+    public func connectionName(_ connectionName: String) -> NatsClientOptions {
+        self.connectionName = connectionName
+        return self
+    }
+
+    /// NoEcho server option.
+    /// If set to `true`, the server (version 1.2.0+) will not send originating
+    /// messages from this connection to its own subscriptions.
+    public func noEcho(_ noEcho: Bool) -> NatsClientOptions {
+        self.noEcho = noEcho
         return self
     }
 
@@ -187,6 +203,8 @@ public class NatsClientOptions {
             urls: urls,
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
+            connectionName: connectionName,
+            noEcho: noEcho,
             retainServersOrder: noRandomize,
             pingInterval: pingInterval,
             auth: auth,
