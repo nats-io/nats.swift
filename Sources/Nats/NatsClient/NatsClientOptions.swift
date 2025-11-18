@@ -30,8 +30,24 @@ public class NatsClientOptions {
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
+    private var inboxPrefix: String = "_INBOX."
 
     public init() {}
+
+    /// Sets the prefix for inbox subjects used for request/reply.
+    /// Defaults to "_INBOX."
+    public func inboxPrefix(_ prefix: String) -> NatsClientOptions {
+        if prefix.isEmpty {
+            self.inboxPrefix = "_INBOX."
+            return self
+        }
+        if prefix.last != "." {
+            self.inboxPrefix = prefix + "."
+            return self
+        }
+        self.inboxPrefix = prefix
+        return self
+    }
 
     /// A list of server urls that a client can connect to.
     public func urls(_ urls: [URL]) -> NatsClientOptions {
@@ -165,6 +181,7 @@ public class NatsClientOptions {
 
     public func build() -> NatsClient {
         let client = NatsClient()
+        client.inboxPrefix = inboxPrefix
         client.connectionHandler = ConnectionHandler(
             inputBuffer: client.buffer,
             urls: urls,
@@ -180,7 +197,6 @@ public class NatsClientOptions {
             rootCertificate: rootCertificate,
             retryOnFailedConnect: initialReconnect
         )
-
         return client
     }
 }

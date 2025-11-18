@@ -152,7 +152,7 @@ public class NatsSubscription: AsyncSequence {
     /// > - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
     public func unsubscribe(after: UInt64? = nil) async throws {
         logger.info("unsubscribe from subject \(subject)")
-        if case .closed = self.conn.state {
+        if case .closed = self.conn.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         if self.closed {

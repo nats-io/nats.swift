@@ -43,7 +43,7 @@ extension Consumer {
         }
 
         let subject = ctx.apiSubject("CONSUMER.MSG.NEXT.\(info.stream).\(info.name)")
-        let inbox = "_INBOX.\(nextNuid())"
+        let inbox = ctx.client.newInbox()
         let sub = try await ctx.client.subscribe(subject: inbox)
         try await self.ctx.client.publish(
             JSONEncoder().encode(request), subject: subject, reply: inbox)

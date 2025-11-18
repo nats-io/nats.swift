@@ -23,6 +23,7 @@ public var logger = Logger(label: "Nats")
 /// NatsClient connection states
 public enum NatsState {
     case pending
+    case connecting
     case connected
     case disconnected
     case closed
@@ -72,9 +73,15 @@ public class NatsClient {
     internal let allocator = ByteBufferAllocator()
     internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
+    internal var inboxPrefix: String = "_INBOX."
 
     internal init() {
         self.buffer = allocator.buffer(capacity: 1024)
+    }
+
+    /// Returns a new inbox subject using the configured prefix and a generated NUID.
+    public func newInbox() -> String {
+        return inboxPrefix + nextNuid()
     }
 }
 
@@ -97,12 +104,37 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if !connectionHandler.retryOnFailedConnect {
-            try await connectionHandler.connect()
-            connectionHandler.state = .connected
-            connectionHandler.fire(.connected)
-        } else {
-            connectionHandler.handleReconnect()
+
+        // Check if already connected or in invalid state for connect()
+        let currentState = connectionHandler.currentState
+        switch currentState {
+        case .connected, .connecting:
+            throw NatsError.ClientError.alreadyConnected
+        case .closed:
+            throw NatsError.ClientError.connectionClosed
+        case .suspended:
+            throw NatsError.ClientError.invalidConnection(
+                "connection is suspended, use resume() instead")
+        case .pending, .disconnected:
+            // These states allow connection/reconnection
+            break
+        }
+
+        // Set state to connecting immediately to prevent concurrent connect() calls
+        connectionHandler.setState(.connecting)
+
+        do {
+            if !connectionHandler.retryOnFailedConnect {
+                try await connectionHandler.connect()
+                connectionHandler.setState(.connected)
+                connectionHandler.fire(.connected)
+            } else {
+                connectionHandler.handleReconnect()
+            }
+        } catch {
+            // Reset state on connection failure
+            connectionHandler.setState(.disconnected)
+            throw error
         }
     }
 
@@ -114,7 +146,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.close()
@@ -130,7 +162,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.suspend()
@@ -146,7 +178,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.resume()
@@ -161,7 +193,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.reconnect()
@@ -185,7 +217,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.write(
@@ -214,10 +246,10 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
-        let inbox = "_INBOX.\(nextNuid())"
+        let inbox = newInbox()
 
         let sub = try await connectionHandler.subscribe(inbox)
         try await sub.unsubscribe(after: 1)
@@ -269,7 +301,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         connectionHandler.channel?.flush()
@@ -293,7 +325,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         return try await connectionHandler.subscribe(subject, queue: queue)
@@ -310,7 +342,7 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.state {
+        if case .closed = connectionHandler.currentState {
             throw NatsError.ClientError.connectionClosed
         }
         let ping = RttCommand.makeFrom(channel: connectionHandler.channel)
