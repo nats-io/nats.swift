@@ -46,6 +46,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var rootCertificate: URL?
     private var clientCertificate: URL?
     private var clientKey: URL?
+    private var certificateVerification: CertificateVerification
 
     typealias InboundIn = ByteBuffer
     private let state = NIOLockedValueBox(NatsState.pending)
@@ -86,7 +87,8 @@ class ConnectionHandler: ChannelInboundHandler {
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
-        rootCertificate: URL?, retryOnFailedConnect: Bool
+        rootCertificate: URL?, retryOnFailedConnect: Bool,
+        certificateVerification: CertificateVerification
     ) {
         self.urls = urls
         self.group = .singleton
@@ -102,6 +104,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
         self.retryOnFailedConnect = retryOnFailedConnect
+        self.certificateVerification = certificateVerification
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -444,6 +447,10 @@ class ConnectionHandler: ChannelInboundHandler {
     private func makeTLSConfig() throws -> TLSConfiguration {
         var tlsConfiguration =
             TLSConfiguration.makeClientConfiguration()
+        
+        // Set certificate verification mode
+        tlsConfiguration.certificateVerification = self.certificateVerification
+        
         if let rootCertificate = self.rootCertificate {
             tlsConfiguration.trustRoots = .file(
                 rootCertificate.path)

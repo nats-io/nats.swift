@@ -15,6 +15,7 @@ import Dispatch
 import Foundation
 import Logging
 import NIO
+import NIOSSL
 import NIOFoundationCompat
 
 public class NatsClientOptions {
@@ -30,6 +31,7 @@ public class NatsClientOptions {
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
+    private var certificateVerification: CertificateVerification = .fullVerification
     private var inboxPrefix: String = "_INBOX."
 
     public init() {}
@@ -162,6 +164,14 @@ public class NatsClientOptions {
         return self
     }
 
+    /// Sets the certificate verification mode for TLS connections.
+    /// Use .noHostnameVerification or .none for custom CA certificates that are not in the system trust store.
+    /// Default is .fullVerification.
+    public func certificateVerification(_ verification: CertificateVerification) -> NatsClientOptions {
+        self.certificateVerification = verification
+        return self
+    }
+
     /// Indicates whether the client will retain the order of URLs to connect to provided in ``NatsClientOptions/urls(_:)``
     /// If not set, the client will randomize the server pool.
     public func retainServersOrder() -> NatsClientOptions {
@@ -195,7 +205,8 @@ public class NatsClientOptions {
             clientCertificate: clientCertificate,
             clientKey: clientKey,
             rootCertificate: rootCertificate,
-            retryOnFailedConnect: initialReconnect
+            retryOnFailedConnect: initialReconnect,
+            certificateVerification: certificateVerification
         )
         return client
     }
