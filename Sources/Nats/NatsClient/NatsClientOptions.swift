@@ -32,6 +32,7 @@ public class NatsClientOptions {
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
     private var certificateVerification: CertificateVerification = .fullVerification
+    private var serverNameIndicator: String? = nil
     private var inboxPrefix: String = "_INBOX."
 
     public init() {}
@@ -172,6 +173,14 @@ public class NatsClientOptions {
         return self
     }
 
+    /// Sets the Server Name Indication (SNI) hostname for TLS connections.
+    /// This is automatically derived from the connection URL, but can be overridden.
+    /// Pass an empty string to disable SNI (required when connecting to IP addresses).
+    public func serverNameIndicator(_ hostname: String?) -> NatsClientOptions {
+        self.serverNameIndicator = hostname
+        return self
+    }
+
     /// Indicates whether the client will retain the order of URLs to connect to provided in ``NatsClientOptions/urls(_:)``
     /// If not set, the client will randomize the server pool.
     public func retainServersOrder() -> NatsClientOptions {
@@ -206,7 +215,8 @@ public class NatsClientOptions {
             clientKey: clientKey,
             rootCertificate: rootCertificate,
             retryOnFailedConnect: initialReconnect,
-            certificateVerification: certificateVerification
+            certificateVerification: certificateVerification,
+            serverNameIndicator: serverNameIndicator
         )
         return client
     }

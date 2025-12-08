@@ -47,6 +47,7 @@ class ConnectionHandler: ChannelInboundHandler {
     private var clientCertificate: URL?
     private var clientKey: URL?
     private var certificateVerification: CertificateVerification
+    private var serverNameIndicator: String?
 
     typealias InboundIn = ByteBuffer
     private let state = NIOLockedValueBox(NatsState.pending)
@@ -88,7 +89,8 @@ class ConnectionHandler: ChannelInboundHandler {
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool,
-        certificateVerification: CertificateVerification
+        certificateVerification: CertificateVerification,
+        serverNameIndicator: String?
     ) {
         self.urls = urls
         self.group = .singleton
@@ -105,6 +107,7 @@ class ConnectionHandler: ChannelInboundHandler {
         self.rootCertificate = rootCertificate
         self.retryOnFailedConnect = retryOnFailedConnect
         self.certificateVerification = certificateVerification
+        self.serverNameIndicator = serverNameIndicator
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -436,12 +439,19 @@ class ConnectionHandler: ChannelInboundHandler {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
-                context: sslContext, serverHostname: s.host)
+                context: sslContext, serverHostname: getServerNameIndicator(for: s.host))
             try await self.channel?.pipeline.addHandler(sslHandler, position: .first)
         }
 
         try await sendClientConnectInit()
         self.connectedUrl = s
+    }
+
+    private func getServerNameIndicator(for hostname: String?) -> String? {
+        if let customSNI = self.serverNameIndicator {
+            return customSNI.isEmpty ? nil : customSNI
+        }
+        return hostname
     }
 
     private func makeTLSConfig() throws -> TLSConfiguration {
@@ -595,7 +605,7 @@ class ConnectionHandler: ChannelInboundHandler {
                         let sslContext = try NIOSSLContext(
                             configuration: tlsConfig)
                         let sslHandler = try NIOSSLClientHandler(
-                            context: sslContext, serverHostname: server.host!)
+                            context: sslContext, serverHostname: self.getServerNameIndicator(for: server.host))
                         //Fixme(jrm): do not ignore error from addHandler future.
                         channel.pipeline.addHandler(sslHandler).flatMap { _ in
                             channel.pipeline.addHandler(self)
@@ -656,7 +666,7 @@ class ConnectionHandler: ChannelInboundHandler {
                                 let sslContext = try NIOSSLContext(
                                     configuration: tlsConfig)
                                 let sslHandler = try NIOSSLClientHandler(
-                                    context: sslContext, serverHostname: server.host!)
+                                    context: sslContext, serverHostname: self.getServerNameIndicator(for: server.host))
                                 // The sync methods here are safe because we're on the channel event loop
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandler(sslHandler)
