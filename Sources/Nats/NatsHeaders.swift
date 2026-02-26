@@ -31,8 +31,13 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible {
     private var inner: String
 
     public init(_ value: String) throws {
-        if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
-            throw NatsError.ParseHeaderError.invalidCharacter
+        for ch in value {
+            guard let ascii = ch.asciiValue else {
+                throw NatsError.ParseHeaderError.invalidCharacter
+            }
+            if ch == ":" || ascii < 33 || ascii > 126 {
+                throw NatsError.ParseHeaderError.invalidCharacter
+            }
         }
         self.inner = value
     }
@@ -54,6 +59,8 @@ public struct NatsHeaderMap: Equatable {
     private var inner: [NatsHeaderName: [NatsHeaderValue]]
     internal var status: StatusCode? = nil
     internal var description: String? = nil
+    private static let maxHeaderBlockSize = 64 * 1024
+    private static let maxHeaderLineSize = 8 * 1024
 
     public init() {
         self.inner = [:]
@@ -61,7 +68,14 @@ public struct NatsHeaderMap: Equatable {
 
     public init(from headersString: String) throws {
         self.inner = [:]
+        guard headersString.utf8.count <= Self.maxHeaderBlockSize else {
+            throw NatsError.ProtocolError.parserFailure("header block too large")
+        }
+
         let headersArray = headersString.split(separator: "\r\n")
+        guard !headersArray.isEmpty else {
+            throw NatsError.ProtocolError.parserFailure("empty header block")
+        }
         let versionLine = headersArray[0]
         guard versionLine.hasPrefix(Data.versionLinePrefix) else {
             throw NatsError.ProtocolError.parserFailure(
@@ -86,11 +100,22 @@ public struct NatsHeaderMap: Equatable {
         }
 
         for header in headersArray.dropFirst() {
+            if header.isEmpty {
+                continue
+            }
+            guard header.utf8.count <= Self.maxHeaderLineSize else {
+                throw NatsError.ProtocolError.parserFailure("header line too large")
+            }
             let headerParts = header.split(separator: ":", maxSplits: 1)
             if headerParts.count == 2 {
+                let key = String(headerParts[0])
+                let rawValue = String(headerParts[1])
+                guard rawValue.utf8.count <= Self.maxHeaderLineSize else {
+                    throw NatsError.ProtocolError.parserFailure("header value too large")
+                }
                 self.append(
-                    try NatsHeaderName(String(headerParts[0])),
-                    NatsHeaderValue(String(headerParts[1]).trimmingCharacters(in: .whitespaces)))
+                    try NatsHeaderName(key),
+                    NatsHeaderValue(rawValue.trimmingCharacters(in: .whitespaces)))
             } else {
                 logger.error("Error parsing header: \(header)")
             }
