@@ -52,12 +52,14 @@ enum ServerOp {
     case hMessage(HMessageInbound)
 
     static func parse(from msg: Data) throws -> ServerOp {
+        let safeMsg = String(data: msg, encoding: .utf8) ?? "<non-utf8-bytes>"
+
         guard msg.count > 2 else {
             throw NatsError.ProtocolError.parserFailure(
-                "unable to parse inbound message: \(String(data: msg, encoding: .utf8)!)")
+                "unable to parse inbound message: \(safeMsg)")
         }
         guard let msgType = msg.getMessageType() else {
-            throw NatsError.ProtocolError.invalidOperation(String(data: msg, encoding: .utf8)!)
+            throw NatsError.ProtocolError.invalidOperation(safeMsg)
         }
         switch msgType {
         case .message:
@@ -79,7 +81,7 @@ enum ServerOp {
             return pong
         default:
             throw NatsError.ProtocolError.invalidOperation(
-                "unknown server op: \(String(data: msg, encoding: .utf8)!)")
+                "unknown server op: \(safeMsg)")
         }
     }
 }

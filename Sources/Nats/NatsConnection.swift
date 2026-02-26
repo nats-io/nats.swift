@@ -489,12 +489,18 @@ class ConnectionHandler: ChannelInboundHandler {
             guard let nonce = self.serverInfo?.nonce else {
                 throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
-            let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
+            guard let seed = String(data: nkey, encoding: .utf8) else {
+                throw NatsError.ConnectError.invalidConfig("invalid NKEY encoding in credentials")
+            }
+            let keypair = try KeyPair(seed: seed)
             let nonceData = nonce.data(using: .utf8)!
             let sig = try keypair.sign(input: nonceData)
             let base64sig = sig.base64EncodedURLSafeNotPadded()
             initialConnect.signature = base64sig
-            initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
+            guard let jwtString = String(data: jwt, encoding: .utf8) else {
+                throw NatsError.ConnectError.invalidConfig("invalid JWT encoding in credentials")
+            }
+            initialConnect.userJwt = jwtString
         }
         if let nkey = self.auth?.nkeyPath {
             let nkeyData = try await URLSession.shared.data(from: nkey).0
