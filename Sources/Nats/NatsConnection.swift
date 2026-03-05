@@ -29,6 +29,7 @@ class ConnectionHandler: ChannelInboundHandler {
     internal var connectedUrl: URL?
     internal let allocator = ByteBufferAllocator()
     internal var inputBuffer: ByteBuffer
+    private let inputBufferLock = NIOLock()
     internal var channel: Channel?
 
     private var eventHandlerStore: [NatsEventKind: [NatsEventHandler]] = [:]
@@ -106,15 +107,13 @@ class ConnectionHandler: ChannelInboundHandler {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var byteBuffer = self.unwrapInboundIn(data)
-        inputBuffer.writeBuffer(&byteBuffer)
+        appendToInputBuffer(&byteBuffer)
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
-        guard inputBuffer.readableBytes > 0 else {
+        guard var inputChunk = drainInputBufferData() else {
             return
         }
-
-        var inputChunk = Data(buffer: inputBuffer)
 
         let remainder = parseRemainder.withLockedValue { value in
             let current = value
@@ -131,7 +130,7 @@ class ConnectionHandler: ChannelInboundHandler {
             parseResult = try inputChunk.parseOutMessages()
         } catch {
             // if parsing throws an error, clear buffer and remainder, then reconnect
-            inputBuffer.clear()
+            clearInputBuffer()
             parseRemainder.withLockedValue { $0 = nil }
             context.fireErrorCaught(error)
             return
@@ -207,7 +206,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
                 switch err {
                 case .staleConnection, .maxConnectionsExceeded:
-                    inputBuffer.clear()
+                    clearInputBuffer()
                     parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 case .permissionsViolation(let operation, let subject, _):
@@ -232,7 +231,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 if normalizedError == "stale connection"
                     || normalizedError == "maximum connections exceeded"
                 {
-                    inputBuffer.clear()
+                    clearInputBuffer()
                     parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 } else {
@@ -254,7 +253,7 @@ class ConnectionHandler: ChannelInboundHandler {
                 logger.debug("unknown operation type: \(op)")
             }
         }
-        inputBuffer.clear()
+        clearInputBuffer()
     }
 
     private func handleIncomingMessage(_ message: MessageInbound) {
@@ -817,7 +816,7 @@ class ConnectionHandler: ChannelInboundHandler {
 
         parseRemainder.withLockedValue { $0 = nil }
 
-        inputBuffer = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
+        resetInputBuffer(capacity: 1024 * 1024 * 8, allocator: context.channel.allocator)
     }
 
     func channelInactive(context: ChannelHandlerContext) {
@@ -1010,6 +1009,40 @@ class ConnectionHandler: ChannelInboundHandler {
     internal func removeSub(sub: NatsSubscription) {
         subscriptions.withLockedValue { $0.removeValue(forKey: sub.sid) }
         sub.complete()
+    }
+}
+
+private extension ConnectionHandler {
+    func appendToInputBuffer(_ source: inout ByteBuffer) {
+        guard let bytes = source.readBytes(length: source.readableBytes), !bytes.isEmpty else {
+            return
+        }
+        inputBufferLock.withLock {
+            inputBuffer.writeBytes(bytes)
+        }
+    }
+
+    func drainInputBufferData() -> Data? {
+        inputBufferLock.withLock {
+            guard inputBuffer.readableBytes > 0 else {
+                return nil
+            }
+            let chunk = Data(buffer: inputBuffer)
+            inputBuffer.clear()
+            return chunk
+        }
+    }
+
+    func clearInputBuffer() {
+        inputBufferLock.withLock {
+            inputBuffer.clear()
+        }
+    }
+
+    func resetInputBuffer(capacity: Int, allocator: ByteBufferAllocator) {
+        inputBufferLock.withLock {
+            inputBuffer = allocator.buffer(capacity: capacity)
+        }
     }
 }
 
