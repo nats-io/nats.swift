@@ -72,11 +72,11 @@ public struct NatsHeaderMap: Equatable {
             throw NatsError.ProtocolError.parserFailure("header block too large")
         }
 
-        let headersArray = headersString.split(separator: "\r\n")
-        guard !headersArray.isEmpty else {
+        let headerLines = headersString.components(separatedBy: "\r\n")
+        guard !headerLines.isEmpty else {
             throw NatsError.ProtocolError.parserFailure("empty header block")
         }
-        let versionLine = headersArray[0]
+        let versionLine = headerLines[0]
         guard versionLine.hasPrefix(Data.versionLinePrefix) else {
             throw NatsError.ProtocolError.parserFailure(
                 "header version line does not begin with `NATS/1.0`")
@@ -90,7 +90,7 @@ public struct NatsHeaderMap: Equatable {
         if versionLineSuffix.count > 0 {
             let statusAndDesc = versionLineSuffix.split(
                 separator: " ", maxSplits: 1)
-            guard let status = StatusCode(statusAndDesc[0]) else {
+            guard let rawStatus = statusAndDesc.first, let status = StatusCode(rawStatus) else {
                 throw NatsError.ProtocolError.parserFailure("could not parse status parameter")
             }
             self.status = status
@@ -99,7 +99,7 @@ public struct NatsHeaderMap: Equatable {
             }
         }
 
-        for header in headersArray.dropFirst() {
+        for header in headerLines.dropFirst() {
             if header.isEmpty {
                 continue
             }
