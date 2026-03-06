@@ -33,10 +33,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
     internal let allocator = ByteBufferAllocator()
     private let _inputBuffer: NIOLockedValueBox<ByteBuffer>
-    internal var inputBuffer: ByteBuffer {
-        get { _inputBuffer.withLockedValue { $0 } }
-        set { _inputBuffer.withLockedValue { $0 = newValue } }
-    }
     private let _channel = NIOLockedValueBox<Channel?>(nil)
     internal var channel: Channel? {
         get { _channel.withLockedValue { $0 } }
@@ -120,7 +116,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     init(
-        inputBuffer: ByteBuffer, urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
+        urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
@@ -144,15 +140,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var byteBuffer = self.unwrapInboundIn(data)
-        inputBuffer.writeBuffer(&byteBuffer)
+        _ = _inputBuffer.withLockedValue { $0.writeBuffer(&byteBuffer) }
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
-        guard inputBuffer.readableBytes > 0 else {
-            return
+        let inputChunkOrNil: Data? = _inputBuffer.withLockedValue { buffer in
+            guard buffer.readableBytes > 0 else { return nil }
+            return Data(buffer: buffer)
         }
-
-        var inputChunk = Data(buffer: inputBuffer)
+        guard var inputChunk = inputChunkOrNil else { return }
 
         let remainder = parseRemainder.withLockedValue { value in
             let current = value
@@ -169,7 +165,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseResult = try inputChunk.parseOutMessages()
         } catch {
             // if parsing throws an error, clear buffer and remainder, then reconnect
-            inputBuffer.clear()
+            _inputBuffer.withLockedValue { $0.clear() }
             parseRemainder.withLockedValue { $0 = nil }
             context.fireErrorCaught(error)
             return
@@ -245,7 +241,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
                 switch err {
                 case .staleConnection, .maxConnectionsExceeded:
-                    inputBuffer.clear()
+                    _inputBuffer.withLockedValue { $0.clear() }
                     parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 case .permissionsViolation(let operation, let subject, _):
@@ -270,7 +266,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 if normalizedError == "stale connection"
                     || normalizedError == "maximum connections exceeded"
                 {
-                    inputBuffer.clear()
+                    _inputBuffer.withLockedValue { $0.clear() }
                     parseRemainder.withLockedValue { $0 = nil }
                     context.fireErrorCaught(err)
                 } else {
@@ -286,13 +282,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 if serverInfo.lameDuckMode {
                     self.fire(.lameDuckMode)
                 }
-                self.serverInfo = serverInfo
                 updateServersList(info: serverInfo)
             default:
                 logger.debug("unknown operation type: \(op)")
             }
         }
-        inputBuffer.clear()
+        _inputBuffer.withLockedValue { $0.clear() }
     }
 
     private func handleIncomingMessage(_ message: MessageInbound) {

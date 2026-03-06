@@ -81,7 +81,7 @@ public final class NatsSubscription: AsyncSequence, Sendable {
                 continuation.resume(returning: .success(message))
             } else if state.buffer.count < capacity {
                 // Only append to buffer if no continuation is available
-                // TODO(pp): Hadndle SlowConsumer as subscription event
+                // TODO(pp): Handle SlowConsumer as subscription event
                 state.buffer.append(.success(message))
             }
         }
@@ -131,6 +131,10 @@ public final class NatsSubscription: AsyncSequence, Sendable {
                     return
                 }
 
+                // delivered tracks "slots consumed", not "messages returned".
+                // It is incremented here — before the message is in hand — so that
+                // removeSub is called promptly after withCheckedContinuation returns
+                // regardless of whether the message was buffered or awaited.
                 state.delivered += 1
                 if let message = state.buffer.first {
                     state.buffer.removeFirst()

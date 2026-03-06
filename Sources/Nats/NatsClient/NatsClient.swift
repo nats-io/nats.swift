@@ -70,13 +70,10 @@ public class NatsClient {
     public var connectedUrl: URL? {
         connectionHandler?.connectedUrl
     }
-    internal let allocator = ByteBufferAllocator()
-    internal var buffer: ByteBuffer
     internal var connectionHandler: ConnectionHandler?
     internal var inboxPrefix: String = "_INBOX."
 
     internal init() {
-        self.buffer = allocator.buffer(capacity: 1024)
     }
 
     /// Returns a new inbox subject using the configured prefix and a generated NUID.

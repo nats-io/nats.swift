@@ -183,7 +183,6 @@ public class NatsClientOptions {
         let client = NatsClient()
         client.inboxPrefix = inboxPrefix
         client.connectionHandler = ConnectionHandler(
-            inputBuffer: client.buffer,
             urls: urls,
             reconnectWait: reconnectWait,
             maxReconnects: maxReconnects,
