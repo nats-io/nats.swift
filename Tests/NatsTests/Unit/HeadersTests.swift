@@ -29,6 +29,7 @@ class HeadersTests: XCTestCase {
             "testInvalidNatsHeaderNameWithSpecialCharacters",
             testInvalidNatsHeaderNameWithSpecialCharacters
         ),
+        ("testParseHeaderBlockWithStatusAndDescription", testParseHeaderBlockWithStatusAndDescription),
 
     ]
 
@@ -93,5 +94,15 @@ class HeadersTests: XCTestCase {
         // Test removal of a value
         hm[try! NatsHeaderName("foo")] = nil
         XCTAssertNil(hm[try! NatsHeaderName("foo")])
+    }
+
+    func testParseHeaderBlockWithStatusAndDescription() {
+        let raw = "NATS/1.0 503 No Responders\r\nFoo: bar\r\nBaz:qux\r\n\r\n"
+        let headers = try! NatsHeaderMap(from: raw)
+
+        XCTAssertEqual(headers.status, .noResponders)
+        XCTAssertEqual(headers.description, "No Responders")
+        XCTAssertEqual(headers[try! NatsHeaderName("Foo")], NatsHeaderValue("bar"))
+        XCTAssertEqual(headers[try! NatsHeaderName("Baz")], NatsHeaderValue("qux"))
     }
 }

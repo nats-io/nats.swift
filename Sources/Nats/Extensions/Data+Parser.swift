@@ -17,6 +17,7 @@ extension Data {
     private static let cr = UInt8(ascii: "\r")
     private static let lf = UInt8(ascii: "\n")
     private static let crlf = Data([cr, lf])
+    private static let maxHeaderBytes = 64 * 1024
     private static var currentNum = 0
     private static var errored = false
     internal static let versionLinePrefix = "NATS/1.0"
@@ -132,6 +133,16 @@ extension Data {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
                 } else {
+                    guard msg.headersLength >= Data.versionLinePrefix.count else {
+                        throw NatsError.ProtocolError.parserFailure("invalid header length")
+                    }
+                    guard msg.headersLength <= msg.length else {
+                        throw NatsError.ProtocolError.parserFailure("header length exceeds payload length")
+                    }
+                    guard msg.headersLength <= Data.maxHeaderBytes else {
+                        throw NatsError.ProtocolError.parserFailure("header block too large")
+                    }
+
                     let headersStartIndex = nextLineStartIndex
                     let headersEndIndex = nextLineStartIndex + msg.headersLength
                     let payloadStartIndex = headersEndIndex
