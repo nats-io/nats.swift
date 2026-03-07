@@ -139,11 +139,27 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+     
+        let state: NatsState = self.currentState
+        
+        guard state == .connected || state == .pending || state == .connecting else {
+            logger.debug("Ignoring channelRead. Current state (\(state)) does not allow reading.")
+            return 
+        }
+
         var byteBuffer = self.unwrapInboundIn(data)
         _ = _inputBuffer.withLockedValue { $0.writeBuffer(&byteBuffer) }
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
+
+        let state: NatsState = self.currentState
+        guard state == .connected || state == .pending || state == .connecting else {
+            _inputBuffer.withLockedValue { $0.clear() }
+            parseRemainder.withLockedValue { $0 = nil }
+            return
+        }
+
         let inputChunkOrNil: Data? = _inputBuffer.withLockedValue { buffer in
             guard buffer.readableBytes > 0 else { return nil }
             return Data(buffer: buffer)
@@ -167,7 +183,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             // if parsing throws an error, clear buffer and remainder, then reconnect
             _inputBuffer.withLockedValue { $0.clear() }
             parseRemainder.withLockedValue { $0 = nil }
-            context.fireErrorCaught(error)
+            
+            if self.currentState != .closed && self.currentState != .suspended {
+                context.fireErrorCaught(error)
+            }
+            
             return
         }
         if let remainder = parseResult.remainder {
@@ -902,7 +922,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         logger.debug("Encountered error on the channel: \(error)")
 
-        // Capture connection-stage errors (especially TLS) for proper error reporting BEFORE closing
         let isConnecting = state.withLockedValue { $0 == .pending || $0 == .connecting }
         if isConnecting {
             capturedConnectionError.withLockedValue { $0 = error }
@@ -914,12 +933,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             self.fire(.error(natsErr))
         } else {
             logger.error("unexpected error: \(error)")
-        }
-        let currentState = state.withLockedValue { $0 }
-        if currentState == .pending || currentState == .connecting {
-            handleDisconnect()
-        } else if currentState == .disconnected {
-            handleReconnect()
         }
     }
 
@@ -952,7 +965,23 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func handleReconnect() {
+        
+        let isAlreadyReconnecting = _reconnectTask.withLockedValue { task -> Bool in
+            guard let activeTask = task else { return false }
+            return !activeTask.isCancelled
+        }
+        
+        guard !isAlreadyReconnecting else {
+            logger.debug("Reconnect already in progress. Ignoring duplicate trigger.")
+            return
+        }
+
         reconnectTask = Task {
+         
+            defer {
+                _reconnectTask.withLockedValue { $0 = nil }
+            }
+
             var connected = false
             while !Task.isCancelled
                 && (maxReconnects == nil || self.reconnectAttempts < maxReconnects!)
