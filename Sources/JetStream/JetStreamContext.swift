@@ -143,6 +143,8 @@ public struct AckFuture {
     /// > **Throws:**
     /// > - ``JetStreamError/RequestError`` if the request timed out (client did not receive the ack in time) or
     public func wait() async throws -> Ack {
+        defer { Task { try? await sub.unsubscribe() } }
+        
         let response = try await withThrowingTaskGroup(
             of: NatsMessage?.self,
             body: { group in
