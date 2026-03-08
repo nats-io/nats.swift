@@ -293,10 +293,9 @@ public class Stream {
             throw JetStreamError.DirectGetError.invalidResponse("missing Nats-Sequence header")
         }
 
-        let seq = UInt64(seqHdr.description)
-        if seq == nil {
-            throw JetStreamError.DirectGetError.invalidResponse(
-                "invalid Nats-Sequence header: \(seqHdr)")
+        guard let seq = UInt64(seqHdr.description) else {
+           throw JetStreamError.DirectGetError.invalidResponse(
+            "invalid Nats-Sequence header: \(seqHdr)")
         }
 
         guard let timeStamp = headers[.natsTimestamp] else {
@@ -310,7 +309,7 @@ public class Stream {
         let payload = resp.payload ?? Data()
 
         return StreamMessage(
-            subject: subject.description, sequence: seq!, payload: payload, headers: resp.headers,
+            subject: subject.description, sequence: seq, payload: payload, headers: resp.headers,
             time: timeStamp.description)
     }
 
