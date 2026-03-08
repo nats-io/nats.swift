@@ -18,9 +18,9 @@ import Nuid
 
 /// A context which can perform jetstream scoped requests.
 public class JetStreamContext {
-    internal var client: NatsClient
-    private var prefix: String = "$JS.API"
-    private var timeout: TimeInterval = 5.0
+    internal let client: NatsClient
+    internal let prefix: String
+    internal let timeout: TimeInterval
 
     /// Creates a JetStreamContext from ``NatsClient`` with optional custom prefix and timeout.
     ///
@@ -46,18 +46,6 @@ public class JetStreamContext {
         self.timeout = timeout
     }
 
-    /// Creates a JetStreamContext from ``NatsClient``
-    ///
-    /// - Parameters:
-    ///  - client: NATS client connection.
-    public init(client: NatsClient) {
-        self.client = client
-    }
-
-    /// Sets a custom timeout for JetStream API requests.
-    public func setTimeout(_ timeout: TimeInterval) {
-        self.timeout = timeout
-    }
 }
 
 extension JetStreamContext {
@@ -144,7 +132,7 @@ public struct AckFuture {
     /// > - ``JetStreamError/RequestError`` if the request timed out (client did not receive the ack in time) or
     public func wait() async throws -> Ack {
         defer { Task { try? await sub.unsubscribe() } }
-        
+
         let response = try await withThrowingTaskGroup(
             of: NatsMessage?.self,
             body: { group in
