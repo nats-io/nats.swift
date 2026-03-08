@@ -12,13 +12,13 @@
 // limitations under the License.
 
 import XCTest
-
 @testable import Nats
 
 class NatsClientOptionsTests: XCTestCase {
     static var allTests = [
         ("testDefaultInboxPrefix", testDefaultInboxPrefix),
         ("testCustomInboxPrefix", testCustomInboxPrefix),
+        ("testDefaultPortsInjection", testDefaultPortsInjection),
     ]
 
     func testDefaultInboxPrefix() {
@@ -35,5 +35,31 @@ class NatsClientOptionsTests: XCTestCase {
         XCTAssertTrue(inbox.hasPrefix(customPrefix), "Inbox should use custom prefix")
         XCTAssertEqual(
             inbox.count, customPrefix.count + 22, "Inbox should have custom prefix plus NUID")
+    }
+
+    func testDefaultPortsInjection() {
+        let options = NatsClientOptions()
+        
+        let natsUrl = URL(string: "nats://localhost")!
+        let tlsUrl = URL(string: "tls://demo.nats.io")!
+        let wsUrl = URL(string: "ws://127.0.0.1")!
+        let wssUrl = URL(string: "wss://echo.websocket.org")!
+        let customPortUrl = URL(string: "nats://localhost:9999")!
+        
+        // Apply the URLs
+        _ = options.urls([natsUrl, tlsUrl, wsUrl, wssUrl, customPortUrl])
+        
+        // Swift's Reflection (Mirror) allows us to read private variables (like 'urls') during tests
+        let mirror = Mirror(reflecting: options)
+        guard let internalUrls = mirror.children.first(where: { $0.label == "urls" })?.value as? [URL] else {
+            XCTFail("Could not extract urls from options")
+            return
+        }
+        
+        XCTAssertEqual(internalUrls[0].port, 4222, "nats:// should default to 4222")
+        XCTAssertEqual(internalUrls[1].port, 4222, "tls:// should default to 4222")
+        XCTAssertEqual(internalUrls[2].port, 80, "ws:// should default to 80")
+        XCTAssertEqual(internalUrls[3].port, 443, "wss:// should default to 443")
+        XCTAssertEqual(internalUrls[4].port, 9999, "Custom ports should not be overwritten")
     }
 }
