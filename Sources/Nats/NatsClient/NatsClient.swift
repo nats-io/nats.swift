@@ -84,6 +84,16 @@ public class NatsClient {
 
 extension NatsClient {
 
+    /// Creates a new NATS client and establishes a connection using the provided configuration.
+    ///
+    /// - Parameter options: ``NatsClientOptions`` configuration. Defaults to an empty configuration.
+    /// - Returns: A connected ``NatsClient`` instance.
+    public static func connect(options: NatsClientOptions = NatsClientOptions()) async throws -> NatsClient {
+        let client = options.build()
+        try await client.connect()
+        return client
+    }
+
     /// Connects to a NATS server using configuration provided via ``NatsClientOptions``.
     /// If ``NatsClientOptions/retryOnfailedConnect()`` is used, `connect()`
     /// will not wait until the connection is established but rather return immediatelly.

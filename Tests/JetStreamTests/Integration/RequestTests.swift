@@ -7,7 +7,7 @@
 
 import Logging
 import NIO
-import Nats
+@testable import Nats
 import NatsServer
 import XCTest
 

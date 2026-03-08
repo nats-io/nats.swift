@@ -179,7 +179,7 @@ public class NatsClientOptions {
         return self
     }
 
-    public func build() -> NatsClient {
+    internal func build() -> NatsClient {
         let client = NatsClient()
         client.inboxPrefix = inboxPrefix
         client.connectionHandler = ConnectionHandler(

@@ -29,9 +29,11 @@ guard let msgs = Int(CommandLine.arguments[3]) else {
     exit(usage())
 }
 
-let nats = NatsClientOptions()
-    .url(URL(string: ProcessInfo.processInfo.environment["NATS_URL"] ?? "nats://localhost:4222")!)
-    .build()
+
+let nats = try await NatsClient.connect(
+    options: NatsClientOptions()
+        .url(URL(string: ProcessInfo.processInfo.environment["NATS_URL"] ?? "nats://localhost:4222")!)
+)
 
 print("connect")
 try await nats.connect()

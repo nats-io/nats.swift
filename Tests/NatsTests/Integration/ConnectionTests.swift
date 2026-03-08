@@ -13,7 +13,7 @@
 
 import Logging
 import NIO
-import Nats
+@testable import Nats
 import NatsServer
 import XCTest
 
@@ -1282,5 +1282,17 @@ class CoreNatsTests: XCTestCase {
 
         // Return the URL of the newly created temp file
         return tempFileURL
+    }
+
+    func testStaticClientConnectMethod() async throws {
+    
+        let options = NatsClientOptions()
+        
+        let client = try await NatsClient.connect(options: options)
+        
+        let state = client.connectionHandler?.currentState
+        XCTAssertEqual(state, .connected, "Client should be in connected state after static connect()")
+        
+        try await client.close()
     }
 }

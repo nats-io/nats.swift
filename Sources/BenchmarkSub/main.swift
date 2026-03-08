@@ -14,7 +14,11 @@
 import Foundation
 import Nats
 
-let nats = NatsClientOptions().url(URL(string: "nats://localhost:4222")!).build()
+let nats = try await NatsClient.connect(
+    options: NatsClientOptions()
+        .url(URL(string: ProcessInfo.processInfo.environment["NATS_URL"] ?? "nats://localhost:4222")!)
+)
+
 print("Connecting...")
 try! await nats.connect()
 print("Connected!")
