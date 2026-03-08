@@ -112,6 +112,17 @@ extension JetStreamContext {
     internal func apiSubject(_ subject: String) -> String {
         return "\(self.prefix).\(subject)"
     }
+
+    public func accountInfo() async throws -> AccountInfo {
+        let info: Response<AccountInfo> = try await request("INFO")
+        switch info {
+        case .success(let info):
+            return info
+        case .error(let apiResponse):
+            throw apiResponse.error
+        }
+    }
+
 }
 
 public struct JetStreamAPIResponse: Codable {
