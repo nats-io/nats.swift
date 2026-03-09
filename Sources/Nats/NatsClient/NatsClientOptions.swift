@@ -199,7 +199,7 @@ public class NatsClientOptions {
         )
         return client
     }
-    
+
     private func applyDefaultPort(to url: URL) -> URL {
         guard url.port == nil, let scheme = url.scheme else {
             return url
