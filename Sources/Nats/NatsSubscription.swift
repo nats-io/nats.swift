@@ -74,43 +74,49 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     }
 
     func receiveMessage(_ message: NatsMessage) {
-        let continuationToResume: CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = state.withLockedValue { state in
-            if let continuation = state.continuation {
-                state.continuation = nil
-                return continuation
+        let continuationToResume:
+            CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? =
+                state.withLockedValue { state in
+                    if let continuation = state.continuation {
+                        state.continuation = nil
+                        return continuation
 
-            } else if state.buffer.count < capacity {
-                state.buffer.append(.success(message))
+                    } else if state.buffer.count < capacity {
+                        state.buffer.append(.success(message))
 
-            }
-            return nil
-        }
-        
+                    }
+                    return nil
+                }
+
         continuationToResume?.resume(returning: .success(message))
     }
 
     func receiveError(_ error: NatsError.SubscriptionError) {
-        let continuationToResume: CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = state.withLockedValue { state in
-            if let continuation = state.continuation {
-                state.continuation = nil
-                return continuation
-            } else {
-                state.buffer.append(.failure(error))
-                return nil
-            }
-        }
-        
+        let continuationToResume:
+            CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? =
+                state.withLockedValue { state in
+                    if let continuation = state.continuation {
+                        state.continuation = nil
+                        return continuation
+                    } else {
+                        state.buffer.append(.failure(error))
+                        return nil
+                    }
+                }
+
         continuationToResume?.resume(returning: .failure(error))
     }
 
     internal func complete() {
-        let continuationToResume: CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = state.withLockedValue { state in
-            state.closed = true
-            let cont = state.continuation
-            state.continuation = nil
-            return cont
-        }
-        
+        let continuationToResume:
+            CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? =
+                state.withLockedValue { state in
+                    state.closed = true
+                    let cont = state.continuation
+                    state.continuation = nil
+                    return cont
+                }
+
         continuationToResume?.resume(returning: nil)
     }
 
@@ -130,51 +136,54 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     private func nextMessage() async throws -> Element? {
         // Use withTaskCancellationHandler to prevent continuation leaks and hangs
         // if the parent Task is cancelled while awaiting a message.
-        let result: Result<Element, NatsError.SubscriptionError>? = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                enum Action {
-                    case resume(Result<Element, NatsError.SubscriptionError>?)
-                    case suspend
-                }
-                
-                let action: Action = state.withLockedValue { state in
-                    if state.closed {
-                        return .resume(nil)
+        let result: Result<Element, NatsError.SubscriptionError>? =
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    enum Action {
+                        case resume(Result<Element, NatsError.SubscriptionError>?)
+                        case suspend
                     }
 
-                    // delivered tracks "slots consumed", not "messages returned".
-                    // It is incremented here — before the message is in hand.
-                    state.delivered += 1
-                    
-                    if let message = state.buffer.first {
-                        state.buffer.removeFirst()
-                        return .resume(message)
-                    } else {
-                        state.continuation = continuation
-                        return .suspend
+                    let action: Action = state.withLockedValue { state in
+                        if state.closed {
+                            return .resume(nil)
+                        }
+
+                        // delivered tracks "slots consumed", not "messages returned".
+                        // It is incremented here — before the message is in hand.
+                        state.delivered += 1
+
+                        if let message = state.buffer.first {
+                            state.buffer.removeFirst()
+                            return .resume(message)
+                        } else {
+                            state.continuation = continuation
+                            return .suspend
+                        }
+                    }
+
+                    // Resume outside the lock
+                    if case .resume(let val) = action {
+                        continuation.resume(returning: val)
                     }
                 }
-                
-                // Resume outside the lock
-                if case .resume(let val) = action {
-                    continuation.resume(returning: val)
-                }
+            } onCancel: {
+                // If the iteration is cancelled, wake up the suspension point and clean up
+                let continuationToResume:
+                    CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? =
+                        state.withLockedValue { state in
+                            let cont = state.continuation
+                            state.continuation = nil
+                            return cont
+                        }
+                continuationToResume?.resume(returning: nil)
             }
-        } onCancel: {
-            // If the iteration is cancelled, wake up the suspension point and clean up
-            let continuationToResume: CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = state.withLockedValue { state in
-                let cont = state.continuation
-                state.continuation = nil
-                return cont
-            }
-            continuationToResume?.resume(returning: nil)
-        }
 
         let delivered = state.withLockedValue { $0.delivered }
         if let max, delivered >= max {
             conn.removeSub(sub: self)
         }
-        
+
         switch result {
         case .success(let msg):
             return msg

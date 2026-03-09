@@ -139,12 +139,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-     
+
         let state: NatsState = self.currentState
-        
+
         guard state == .connected || state == .pending || state == .connecting else {
             logger.debug("Ignoring channelRead. Current state (\(state)) does not allow reading.")
-            return 
+            return
         }
 
         var byteBuffer = self.unwrapInboundIn(data)
@@ -183,11 +183,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             // if parsing throws an error, clear buffer and remainder, then reconnect
             _inputBuffer.withLockedValue { $0.clear() }
             parseRemainder.withLockedValue { $0 = nil }
-            
+
             if self.currentState != .closed && self.currentState != .suspended {
                 context.fireErrorCaught(error)
             }
-            
+
             return
         }
         if let remainder = parseResult.remainder {
@@ -965,19 +965,19 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func handleReconnect() {
-        
+
         let isAlreadyReconnecting = _reconnectTask.withLockedValue { task -> Bool in
             guard let activeTask = task else { return false }
             return !activeTask.isCancelled
         }
-        
+
         guard !isAlreadyReconnecting else {
             logger.debug("Reconnect already in progress. Ignoring duplicate trigger.")
             return
         }
 
         reconnectTask = Task {
-         
+
             defer {
                 _reconnectTask.withLockedValue { $0 = nil }
             }
