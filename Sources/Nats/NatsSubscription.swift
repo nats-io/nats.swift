@@ -82,8 +82,12 @@ public final class NatsSubscription: AsyncSequence, Sendable {
                         return continuation
 
                     } else if state.buffer.count < capacity {
+                        // Only append to buffer if no continuation is available
+                        // TODO(pp): Handle SlowConsumer as subscription event
                         state.buffer.append(.success(message))
-
+                    } else {
+                        // Slow consumer: message dropped intentionally.
+                        // TODO: emit SlowConsumer subscription event.
                     }
                     return nil
                 }
