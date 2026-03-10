@@ -65,4 +65,23 @@ class NatsClientOptionsTests: XCTestCase {
         XCTAssertEqual(internalUrls[3].port, 443, "wss:// should default to 443")
         XCTAssertEqual(internalUrls[4].port, 9999, "Custom ports should not be overwritten")
     }
+
+    func testDefaultPortsInjectionWithSingleUrl() {
+        let options = NatsClientOptions()
+
+        let natsUrl = URL(string: "nats://localhost")!
+
+        _ = options.url(natsUrl)
+
+        let mirror = Mirror(reflecting: options)
+        guard
+            let internalUrls = mirror.children.first(where: { $0.label == "urls" })?.value as? [URL]
+        else {
+            XCTFail("Could not extract urls from options")
+            return
+        }
+
+        XCTAssertEqual(internalUrls.count, 1, "Single URL should produce exactly one entry")
+        XCTAssertEqual(internalUrls[0].port, 4222, "nats:// should default to 4222")
+    }
 }
