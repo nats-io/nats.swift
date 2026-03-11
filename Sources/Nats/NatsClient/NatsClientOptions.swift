@@ -51,13 +51,14 @@ public class NatsClientOptions {
 
     /// A list of server urls that a client can connect to.
     public func urls(_ urls: [URL]) -> NatsClientOptions {
-        self.urls = urls
+        self.urls = urls.map { self.applyDefaultPort(to: $0) }
         return self
+
     }
 
     /// A single url that the client can connect to.
     public func url(_ url: URL) -> NatsClientOptions {
-        self.urls = [url]
+        self.urls = [self.applyDefaultPort(to: url)]
         return self
     }
 
@@ -197,5 +198,26 @@ public class NatsClientOptions {
             retryOnFailedConnect: initialReconnect
         )
         return client
+    }
+
+    private func applyDefaultPort(to url: URL) -> URL {
+        guard url.port == nil, let scheme = url.scheme else {
+            return url
+        }
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+
+        switch scheme.lowercased() {
+        case "nats", "tls":
+            components?.port = 4222
+        case "ws":
+            components?.port = 80
+        case "wss":
+            components?.port = 443
+        default:
+            break
+        }
+
+        return components?.url ?? url
     }
 }
