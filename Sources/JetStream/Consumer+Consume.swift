@@ -287,7 +287,13 @@ public final class ConsumerMessages: AsyncSequence, Sendable {
             return (batch, maxBytesReq)
         }
 
-        guard batch > 0 else { return nil }
+        // In bytes mode, also guard maxBytesReq > 0: NATS interprets
+        // max_bytes=0 as "no limit", which is the opposite of what we want.
+        if useBytes {
+            guard batch > 0, let req = maxBytesReq, req > 0 else { return nil }
+        } else {
+            guard batch > 0 else { return nil }
+        }
 
         let request = PullRequest(
             batch: batch,
@@ -300,6 +306,10 @@ public final class ConsumerMessages: AsyncSequence, Sendable {
     }
 
     internal func startHeartbeatTimer() {
+        _heartbeatTask.withLockedValue { task in
+            task?.cancel()
+            task = nil
+        }
         let task = Task { [weak self] in
             guard let self else { return }
             let heartbeatTimeoutNanos = UInt64(self.idleHeartbeat * 2 * 1_000_000_000)
@@ -546,21 +556,30 @@ public struct ConsumerIterator: AsyncIteratorProtocol, Sendable {
                     }
                     continue
                 } else if descLower.contains("exceeded maxrequestbatch") {
+                    // for the misconfiguration 409s do not re-pull immediately:
+                    // this error indicates the server rejected the pull because
+                    // batch size exceeds the consumer's MaxRequestBatch. Pull
+                    // will be retried after the configured idle heartbeat
+                    // interval.
+                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestBatch(description))
                     continue
                 } else if descLower.contains("exceeded maxrequestexpires") {
+                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestExpires(description))
                     continue
                 } else if descLower.contains("exceeded maxrequestmaxbytes") {
+                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestMaxBytes(description))
                     continue
                 } else if descLower.contains("exceeded maxwaiting") {
+                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning.exceededMaxWaiting(
                             description))

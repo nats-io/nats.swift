@@ -398,28 +398,24 @@ class ConsumerConsumeTests: XCTestCase {
         let messages = try await consumer.consume(
             config: ConsumeConfig(maxMessages: 100, expires: 2))
 
-        var count = 0
-        for try await msg in messages {
-            try await msg.ack()
-            count += 1
-            if count == 5 {
-                break
+        // After reconnect, publish more messages for the consumer to pick up.
+        client.on(.connected) { _ in
+            Task {
+                for _ in 0..<5 {
+                    let ack = try await ctx.publish("foo.A", message: payload)
+                    _ = try await ack.wait()
+                }
             }
         }
-        XCTAssertEqual(count, 5)
 
         // Force reconnect — server stays up, JetStream state is preserved.
         // This tests the reconnect handler: pending reset + re-pull.
-        try await client.reconnect()
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-
-        // Publish more messages after reconnect
-        for _ in 0..<5 {
-            let ack = try await ctx.publish("foo.A", message: payload)
-            _ = try await ack.wait()
+        Task {
+            try await Task.sleep(nanoseconds: 500_000_000)
+            try await client.reconnect()
         }
 
-        // Continue consuming — should receive the new messages
+        var count = 0
         for try await msg in messages {
             try await msg.ack()
             count += 1
