@@ -28,6 +28,8 @@ class ConsumerConsumeTests: XCTestCase {
         ("testConsumeMissedHeartbeat", testConsumeMissedHeartbeat),
         ("testConsumeInvalidConfig", testConsumeInvalidConfig),
         ("testConsumeRecoverAfterTimeout", testConsumeRecoverAfterTimeout),
+        ("testConsumeReconnect", testConsumeReconnect),
+        ("testConsumeMaxBytes", testConsumeMaxBytes),
     ]
 
     var natsServer = NatsServer()
@@ -248,35 +250,24 @@ class ConsumerConsumeTests: XCTestCase {
 
         let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
 
-        var heartbeatMissed = false
+        // Delete the consumer before starting consume so the server never
+        // sets up heartbeat monitoring for the pull request. This guarantees
+        // no heartbeats arrive and the client's timer detects the miss.
+        try await stream.deleteConsumer(name: "cons")
+
+        let heartbeatExpectation = XCTestExpectation(
+            description: "missed heartbeat should be reported")
         let messages = try await consumer.consume(
-            config: ConsumeConfig(maxMessages: 10, expires: 3, idleHeartbeat: 1),
+            config: ConsumeConfig(maxMessages: 10, expires: 2, idleHeartbeat: 0.5),
             errorHandler: { error in
                 if case JetStreamError.ConsumeWarning.missedHeartbeat = error {
-                    heartbeatMissed = true
+                    heartbeatExpectation.fulfill()
                 }
             }
         )
 
-        // Delete consumer to stop heartbeats, then wait for timeout
-        try await stream.deleteConsumer(name: "cons")
-
-        do {
-            for try await _ in messages {
-                break
-            }
-        } catch {
-            // Expected - consumer deleted or heartbeat missed
-        }
-
-        // Wait for heartbeat timer to fire
-        try await Task.sleep(nanoseconds: 3_000_000_000)
+        await fulfillment(of: [heartbeatExpectation], timeout: 5.0)
         messages.stop()
-
-        // Heartbeat should have been reported as missed
-        // Note: depending on timing, the consumer deleted error may
-        // arrive before the heartbeat timer fires
-        XCTAssertTrue(heartbeatMissed || true, "heartbeat miss detection is timing-dependent")
     }
 
     func testConsumeInvalidConfig() async throws {
@@ -382,6 +373,99 @@ class ConsumerConsumeTests: XCTestCase {
             }
         }
         XCTAssertEqual(count, 10)
+    }
+
+    func testConsumeReconnect() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let payload = "hello".data(using: .utf8)!
+        for _ in 0..<5 {
+            let ack = try await ctx.publish("foo.A", message: payload)
+            _ = try await ack.wait()
+        }
+
+        let messages = try await consumer.consume(
+            config: ConsumeConfig(maxMessages: 100, expires: 2))
+
+        var count = 0
+        for try await msg in messages {
+            try await msg.ack()
+            count += 1
+            if count == 5 {
+                break
+            }
+        }
+        XCTAssertEqual(count, 5)
+
+        // Force reconnect — server stays up, JetStream state is preserved.
+        // This tests the reconnect handler: pending reset + re-pull.
+        try await client.reconnect()
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+
+        // Publish more messages after reconnect
+        for _ in 0..<5 {
+            let ack = try await ctx.publish("foo.A", message: payload)
+            _ = try await ack.wait()
+        }
+
+        // Continue consuming — should receive the new messages
+        for try await msg in messages {
+            try await msg.ack()
+            count += 1
+            if count == 10 {
+                messages.stop()
+            }
+        }
+        XCTAssertEqual(count, 10)
+    }
+
+    func testConsumeMaxBytes() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let payload = "hello".data(using: .utf8)!
+        for _ in 0..<20 {
+            let ack = try await ctx.publish("foo.A", message: payload)
+            _ = try await ack.wait()
+        }
+
+        // Use maxBytes instead of maxMessages
+        let messages = try await consumer.consume(
+            config: ConsumeConfig(maxBytes: 4096, expires: 5))
+
+        var count = 0
+        for try await msg in messages {
+            try await msg.ack()
+            XCTAssertEqual(msg.payload, payload)
+            count += 1
+            if count == 20 {
+                messages.stop()
+            }
+        }
+        XCTAssertEqual(count, 20)
     }
 
     private func assertConsumeInvalidConfig(
