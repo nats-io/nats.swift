@@ -207,7 +207,7 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     /// > - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     /// > - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
     public func unsubscribe(after: UInt64? = nil) async throws {
-        logger.info("unsubscribe from subject \(subject)")
+        logger.debug("unsubscribe from subject \(subject)")
         if case .closed = self.conn.currentState {
             throw NatsError.ClientError.connectionClosed
         }

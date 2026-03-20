@@ -46,7 +46,8 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible, Send
     public static let natsSequence = try! NatsHeaderName("Nats-Sequence")
     public static let natsTimestamp = try! NatsHeaderName("Nats-Time-Stamp")
     public static let natsSubject = try! NatsHeaderName("Nats-Subject")
-    // Add other standard headers as needed...
+    public static let natsPendingMessages = try! NatsHeaderName("Nats-Pending-Messages")
+    public static let natsPendingBytes = try! NatsHeaderName("Nats-Pending-Bytes")
 }
 
 // Represents a NATS header map in Swift.

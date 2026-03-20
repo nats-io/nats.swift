@@ -318,7 +318,7 @@ extension NatsClient {
     /// > - ``NatsError/SubscriptionError/invalidSubject`` if the provided subject is invalid.
     /// > - ``NatsError/SubscriptionError/invalidQueue`` if the provided queue group is invalid.
     public func subscribe(subject: String, queue: String? = nil) async throws -> NatsSubscription {
-        logger.info("subscribe to subject \(subject)")
+        logger.debug("subscribe to subject \(subject)")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }

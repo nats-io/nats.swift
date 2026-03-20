@@ -29,6 +29,7 @@ public struct StatusCode: Equatable, Sendable {
     public static let badRequest = StatusCode(value: 400)
     public static let notFound = StatusCode(value: 404)
     public static let timeout = StatusCode(value: 408)
+    public static let wrongPinId = StatusCode(value: 423)
     public static let noResponders = StatusCode(value: 503)
     public static let requestTerminated = StatusCode(value: 409)
 

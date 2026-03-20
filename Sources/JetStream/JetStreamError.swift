@@ -106,6 +106,59 @@ public enum JetStreamError {
 
     }
 
+    public enum ConsumeError: JetStreamErrorProtocol {
+        case invalidConfig(String)
+        case consumerDeleted
+        case consumerIsPush
+        case badRequest
+        case noResponders
+        case unknownStatus(StatusCode, String?)
+
+        public var description: String {
+            switch self {
+            case .invalidConfig(let message):
+                return "nats: \(message)"
+            case .consumerDeleted:
+                return "nats: consumer deleted"
+            case .consumerIsPush:
+                return "nats: consumer is push based"
+            case .badRequest:
+                return "nats: bad request"
+            case .noResponders:
+                return "nats: no responders"
+            case .unknownStatus(let status, let description):
+                if let description {
+                    return "nats: unknown response status: \(status): \(description)"
+                } else {
+                    return "nats: unknown response status: \(status)"
+                }
+            }
+        }
+    }
+
+    public enum ConsumeWarning: Error, CustomStringConvertible, Sendable {
+        case missedHeartbeat
+        case exceededMaxRequestBatch(String)
+        case exceededMaxRequestExpires(String)
+        case exceededMaxRequestMaxBytes(String)
+        case exceededMaxWaiting(String)
+
+        public var description: String {
+            switch self {
+            case .missedHeartbeat:
+                return "nats: missed idle heartbeat"
+            case .exceededMaxRequestBatch(let msg):
+                return "nats: \(msg)"
+            case .exceededMaxRequestExpires(let msg):
+                return "nats: \(msg)"
+            case .exceededMaxRequestMaxBytes(let msg):
+                return "nats: \(msg)"
+            case .exceededMaxWaiting(let msg):
+                return "nats: \(msg)"
+            }
+        }
+    }
+
     public enum AckError: JetStreamErrorProtocol {
         case noReplyInMessage
 
