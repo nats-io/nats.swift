@@ -60,8 +60,7 @@ class ConsumerConsumeTests: XCTestCase {
             _ = try await ack.wait()
         }
 
-        let messages = try await consumer.consume(
-            config: ConsumeConfig(maxMessages: 100, expires: 5))
+        let messages = try await consumer.consume()
 
         var count = 0
         for try await msg in messages {
