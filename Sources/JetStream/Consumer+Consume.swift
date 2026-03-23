@@ -1,4 +1,4 @@
-// Copyright 2024 The NATS Authors
+// Copyright 2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -268,32 +268,26 @@ public final class ConsumerMessages: AsyncSequence, Sendable {
     }
 
     private func preparePullRequest() throws -> Data? {
-        let (batch, maxBytesReq) = state.withLockedValue { state -> (Int, Int?) in
+        let result: (Int, Int?)? = state.withLockedValue { state -> (Int, Int?)? in
             let batch: Int
             let maxBytesReq: Int?
             if useBytes, let maxBytes = self.maxBytes {
                 batch = self.maxMessages - state.pendingMessages
                 let remainingBytes = maxBytes - state.pendingBytes
                 maxBytesReq = Swift.max(remainingBytes, 0)
+                guard batch > 0, let req = maxBytesReq, req > 0 else { return nil }
             } else {
                 batch = self.maxMessages - state.pendingMessages
                 maxBytesReq = nil
+                guard batch > 0 else { return nil }
             }
-            // Update pending counts
             state.pendingMessages += batch
             if let maxBytesReq {
                 state.pendingBytes += maxBytesReq
             }
             return (batch, maxBytesReq)
         }
-
-        // In bytes mode, also guard maxBytesReq > 0: NATS interprets
-        // max_bytes=0 as "no limit", which is the opposite of what we want.
-        if useBytes {
-            guard batch > 0, let req = maxBytesReq, req > 0 else { return nil }
-        } else {
-            guard batch > 0 else { return nil }
-        }
+        guard let (batch, maxBytesReq) = result else { return nil }
 
         let request = PullRequest(
             batch: batch,
@@ -560,26 +554,23 @@ public struct ConsumerIterator: AsyncIteratorProtocol, Sendable {
                     // this error indicates the server rejected the pull because
                     // batch size exceeds the consumer's MaxRequestBatch. Pull
                     // will be retried after the configured idle heartbeat
-                    // interval.
-                    messages.resetHeartbeatTime()
+                    // interval. Heartbeat is already reset by
+                    // adjustPendingAndResetHeartbeat above.
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestBatch(description))
                     continue
                 } else if descLower.contains("exceeded maxrequestexpires") {
-                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestExpires(description))
                     continue
                 } else if descLower.contains("exceeded maxrequestmaxbytes") {
-                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning
                             .exceededMaxRequestMaxBytes(description))
                     continue
                 } else if descLower.contains("exceeded maxwaiting") {
-                    messages.resetHeartbeatTime()
                     messages.errorHandler?(
                         JetStreamError.ConsumeWarning.exceededMaxWaiting(
                             description))
