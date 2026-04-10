@@ -1,4 +1,4 @@
-// Copyright 2024 The NATS Authors
+// Copyright 2024-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -207,7 +207,7 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     /// > - ``NatsError/ClientError/connectionClosed`` if the conneciton is closed.
     /// > - ``NatsError/SubscriptionError/subscriptionClosed`` if the subscription is already closed
     public func unsubscribe(after: UInt64? = nil) async throws {
-        logger.info("unsubscribe from subject \(subject)")
+        logger.debug("unsubscribe from subject \(subject)")
         if case .closed = self.conn.currentState {
             throw NatsError.ClientError.connectionClosed
         }

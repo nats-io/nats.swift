@@ -63,6 +63,7 @@ let package = Package(
         .executableTarget(name: "Benchmark", dependencies: ["Nats"]),
         .executableTarget(name: "BenchmarkPubSub", dependencies: ["Nats"]),
         .executableTarget(name: "BenchmarkSub", dependencies: ["Nats"]),
+        .executableTarget(name: "BenchmarkConsume", dependencies: ["Nats", "JetStream"]),
         .executableTarget(name: "Example", dependencies: ["Nats"]),
     ]
 )
