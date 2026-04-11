@@ -420,4 +420,62 @@ class ConsumerTests: XCTestCase {
         XCTAssertEqual(meta.consumerSequence, 2)
         try await msg.ack()
     }
+
+    func testFetchWithHeartbeatAdvancesIterator() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let streamCfg = StreamConfig(name: "test", subjects: ["foo.*"])
+        let stream = try await ctx.createStream(cfg: streamCfg)
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let payloads = ["first", "second", "third"]
+        for p in payloads {
+            let ack = try await ctx.publish("foo.A", message: p.data(using: .utf8)!)
+            _ = try await ack.wait()
+        }
+
+        let batch = try await consumer.fetch(batch: 3, expires: 5, idleHeartbeat: 0.5)
+
+        var received: [String] = []
+        for try await msg in batch {
+            try await msg.ack()
+            if let payload = msg.payload {
+                received.append(String(decoding: payload, as: UTF8.self))
+            }
+        }
+
+        XCTAssertEqual(received, ["first", "second", "third"])
+    }
+
+    func testAckFutureDoesNotLeakSubscriptions() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let streamCfg = StreamConfig(name: "test", subjects: ["foo.A"])
+        _ = try await ctx.createStream(cfg: streamCfg)
+
+        let payload = "hello".data(using: .utf8)!
+        for _ in 1...600 {
+            let ack = try await ctx.publish("foo.A", message: payload)
+            _ = try await ack.wait()
+        }
+
+        let info = try await ctx.accountInfo()
+        XCTAssertEqual(info.streams, 1)
+    }
 }

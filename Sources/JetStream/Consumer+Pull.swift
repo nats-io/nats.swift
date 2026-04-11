@@ -51,6 +51,13 @@ extension Consumer {
     }
 }
 
+private final class IteratorBox: @unchecked Sendable {
+    var iterator: NatsSubscription.AsyncIterator
+    init(_ iterator: NatsSubscription.AsyncIterator) {
+        self.iterator = iterator
+    }
+}
+
 /// Used to iterate over results of ``Consumer/fetch(batch:expires:idleHeartbeat:)``
 public class FetchResult: AsyncSequence {
     public typealias Element = JetStreamMessage
@@ -79,7 +86,7 @@ public class FetchResult: AsyncSequence {
         private let sub: NatsSubscription
         private let idleHeartbeat: TimeInterval?
         private var remainingMessages: Int
-        private var subIterator: NatsSubscription.AsyncIterator
+        private let subIteratorBox: IteratorBox
 
         init(
             ctx: JetStreamContext, sub: NatsSubscription, idleHeartbeat: TimeInterval?,
@@ -89,7 +96,7 @@ public class FetchResult: AsyncSequence {
             self.sub = sub
             self.idleHeartbeat = idleHeartbeat
             self.remainingMessages = remainingMessages
-            self.subIterator = sub.makeAsyncIterator()
+            self.subIteratorBox = IteratorBox(sub.makeAsyncIterator())
         }
 
         public mutating func next() async throws -> JetStreamMessage? {
@@ -103,9 +110,9 @@ public class FetchResult: AsyncSequence {
 
                 if let idleHeartbeat = idleHeartbeat {
                     let timeout = idleHeartbeat * 2
-                    message = try await nextWithTimeout(timeout, subIterator)
+                    message = try await nextWithTimeout(timeout, subIteratorBox)
                 } else {
-                    message = try await subIterator.next()
+                    message = try await subIteratorBox.iterator.next()
                 }
 
                 guard let message else {
@@ -163,12 +170,12 @@ public class FetchResult: AsyncSequence {
             }
         }
 
-        func nextWithTimeout(
-            _ timeout: TimeInterval, _ subIterator: NatsSubscription.AsyncIterator
+        private func nextWithTimeout(
+            _ timeout: TimeInterval, _ box: IteratorBox
         ) async throws -> NatsMessage? {
             try await withThrowingTaskGroup(of: NatsMessage?.self) { group in
                 group.addTask {
-                    return try await subIterator.next()
+                    return try await box.iterator.next()
                 }
                 group.addTask {
                     try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
