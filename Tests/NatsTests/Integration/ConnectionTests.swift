@@ -38,6 +38,7 @@ class CoreNatsTests: XCTestCase {
         ("testUsernameAndPassword", testUsernameAndPassword),
         ("testTokenAuth", testTokenAuth),
         ("testCredentialsAuth", testCredentialsAuth),
+        ("testCredentialsAuthWithoutNonce", testCredentialsAuthWithoutNonce),
         ("testNkeyAuth", testNkeyAuth),
         ("testNkeyAuthFile", testNkeyAuthFile),
         ("testMutualTls", testMutualTls),
@@ -578,6 +579,22 @@ class CoreNatsTests: XCTestCase {
         logger.logLevel = .critical
         let bundle = Bundle.module
         natsServer.start(cfg: bundle.url(forResource: "jwt", withExtension: "conf")!.relativePath)
+
+        let creds = bundle.url(forResource: "TestUser", withExtension: "creds")!
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).credentialsFile(
+            creds
+        ).build()
+        try await client.connect()
+        let subscribe = try await client.subscribe(subject: "foo").makeAsyncIterator()
+        try await client.publish("data".data(using: .utf8)!, subject: "foo")
+        _ = try await subscribe.next()
+    }
+
+    func testCredentialsAuthWithoutNonce() async throws {
+        logger.logLevel = .critical
+        let bundle = Bundle.module
+        natsServer.start()
 
         let creds = bundle.url(forResource: "TestUser", withExtension: "creds")!
 
