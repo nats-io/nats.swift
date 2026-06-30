@@ -314,11 +314,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         let natsMsg = NatsMessage(
             payload: message.payload, subject: message.subject, replySubject: message.reply,
             length: message.length, headers: nil, status: nil, description: nil)
-        subscriptions.withLockedValue { subs in
-            if let sub = subs[message.sid] {
-                sub.receiveMessage(natsMsg)
-            }
-        }
+        deliverOutsideLock(natsMsg, toSid: message.sid)
     }
 
     private func handleIncomingMessage(_ message: HMessageInbound) {
@@ -326,11 +322,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             payload: message.payload, subject: message.subject, replySubject: message.reply,
             length: message.length, headers: message.headers, status: message.status,
             description: message.description)
-        subscriptions.withLockedValue { subs in
-            if let sub = subs[message.sid] {
-                sub.receiveMessage(natsMsg)
-            }
-        }
+        deliverOutsideLock(natsMsg, toSid: message.sid)
+    }
+
+    private func deliverOutsideLock(_ natsMsg: NatsMessage, toSid sid: UInt64) {
+        let sub = subscriptions.withLockedValue { $0[sid] }
+        sub?.receiveMessage(natsMsg)
     }
 
     func connect() async throws {
@@ -1047,11 +1044,17 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     internal func subscribe(
-        _ subject: String, queue: String? = nil
+        _ subject: String, queue: String? = nil, capacity: UInt64? = nil
     ) async throws -> NatsSubscription {
         let sid = self.subscriptionCounter.wrappingIncrementThenLoad(
             ordering: AtomicUpdateOrdering.relaxed)
-        let sub = try NatsSubscription(sid: sid, subject: subject, queue: queue, conn: self)
+        let sub: NatsSubscription
+        if let capacity {
+            sub = try NatsSubscription(
+                sid: sid, subject: subject, queue: queue, capacity: max(1, capacity), conn: self)
+        } else {
+            sub = try NatsSubscription(sid: sid, subject: subject, queue: queue, conn: self)
+        }
 
         // Add subscription BEFORE sending command to avoid race condition
         subscriptions.withLockedValue { $0[sid] = sub }

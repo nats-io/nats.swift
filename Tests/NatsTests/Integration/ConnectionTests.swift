@@ -432,6 +432,32 @@ class CoreNatsTests: XCTestCase {
         try await client.close()
     }
 
+    func testUnsubscribeAfterWithWaitingConsumer() async throws {
+        natsServer.start()
+        logger.logLevel = .critical
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+        try await sub.unsubscribe(after: 3)
+
+        // Publish one-by-one to a waiting consumer (the continuation path): auto-unsubscribe
+        // must trigger after exactly 3 delivered messages.
+        let consumed = Task { () -> Int in
+            var i = 0
+            for try await _ in sub {
+                i += 1
+            }
+            return i
+        }
+        for _ in 0..<5 {
+            try await client.publish("msg".data(using: .utf8)!, subject: "test")
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let i = try await consumed.value
+        XCTAssertEqual(i, 3, "Expected exactly 3 delivered before auto-unsubscribe")
+        try await client.close()
+    }
+
     func testConnect() async throws {
         natsServer.start()
         logger.logLevel = .critical
