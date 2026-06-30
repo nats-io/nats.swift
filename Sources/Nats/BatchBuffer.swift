@@ -43,8 +43,8 @@ extension BatchBuffer {
             return writeBuffer
         }
 
-        mutating func writeMessage(_ message: ClientOp) {
-            self.buffer.writeClientOp(message)
+        mutating func writeMessage(_ message: ClientOp) throws {
+            try self.buffer.writeClientOp(message)
         }
     }
 }
@@ -64,7 +64,8 @@ internal final class BatchBuffer: Sendable {
 
     func writeMessage(_ message: ClientOp) async throws {
         #if SWIFT_NATS_BATCH_BUFFER_DISABLED
-            let b = channel.allocator.buffer(bytes: data)
+            var b = channel.allocator.buffer(capacity: 0)
+            try b.writeClientOp(message)
             try await channel.writeAndFlush(b)
         #else
             // Batch writes and if we have more than the batch size
@@ -77,7 +78,12 @@ internal final class BatchBuffer: Sendable {
                         return
                     }
 
-                    state.writeMessage(message)
+                    do {
+                        try state.writeMessage(message)
+                    } catch {
+                        continuation.resume(throwing: error)
+                        return
+                    }
                     self.flushWhenIdle(state: &state)
                     continuation.resume()
                 }
@@ -104,8 +110,12 @@ internal final class BatchBuffer: Sendable {
                 switch result {
                 case .success:
                     for (message, continuation) in state.waitingPromises {
-                        state.writeMessage(message)
-                        continuation.resume()
+                        do {
+                            try state.writeMessage(message)
+                            continuation.resume()
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
                     }
                     state.waitingPromises.removeAll()
                 case .failure(let error):
