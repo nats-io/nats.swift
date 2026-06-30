@@ -1042,6 +1042,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    internal var subscriptionCount: Int {
+        subscriptions.withLockedValue { $0.count }
+    }
+
     internal func subscribe(
         _ subject: String, queue: String? = nil
     ) async throws -> NatsSubscription {
