@@ -402,6 +402,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.io(lastErr)
             }
         }
+        // Restore before clearing the counter so a restore failure stays bounded by
+        // maxReconnects (no-op on the initial connect: the set is empty).
+        try await restoreSubscriptions()
         self.reconnectAttempts = 0
         guard let channel = self.channel else {
             throw NatsError.ClientError.internalError("empty channel")
@@ -1011,21 +1014,35 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
-            // Recreate subscriptions - safely copy first
-            let subsToRestore = subscriptions.withLockedValue { Array($0) }
-            for (sid, sub) in subsToRestore {
-                do {
-                    try await write(operation: ClientOp.subscribe((sid, sub.subject, nil)))
-                } catch {
-                    logger.error("Error recreating subscription \(sid): \(error)")
-                }
-            }
-
             self.channel?.eventLoop.execute {
                 self.state.withLockedValue { $0 = .connected }
                 self.fire(.connected)
             }
         }
+    }
+
+    private func restoreSubscriptions() async throws {
+        let subsToRestore = subscriptions.withLockedValue { Array($0) }
+        for (sid, sub) in subsToRestore {
+            do {
+                try await resubscribe(sid: sid, sub)
+            } catch {
+                logger.error("Error recreating subscription \(sid): \(error)")
+                self.fire(.error((error as? NatsErrorProtocol) ?? NatsError.ClientError.io(error)))
+                throw error
+            }
+        }
+    }
+
+    private func resubscribe(sid: UInt64, _ sub: NatsSubscription) async throws {
+        guard let max = sub.max else {
+            try await write(operation: ClientOp.subscribe((sid, sub.subject, sub.queue)))
+            return
+        }
+        let receivedSoFar = sub.received
+        guard receivedSoFar < max else { return }
+        try await write(operation: ClientOp.subscribe((sid, sub.subject, sub.queue)))
+        try await write(operation: ClientOp.unsubscribe((sid: sid, max: max - receivedSoFar)))
     }
 
     func write(operation: ClientOp) async throws {
