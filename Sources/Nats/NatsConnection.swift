@@ -14,6 +14,9 @@
 import Atomics
 import Dispatch
 import Foundation
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 import NIO
 import NIOConcurrencyHelpers
 import NIOFoundationCompat
