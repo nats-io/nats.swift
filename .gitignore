@@ -69,4 +69,8 @@ fastlane/screenshots
 fastlane/test_output
 /.swiftpm
 .DS_Store
+
+# NatsServer test helper writes JetStream storage under a literal "file:/..."
+# path instead of stripping the URL scheme - not a real directory to track.
+/file:
 .vscode
