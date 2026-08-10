@@ -7,6 +7,22 @@ on:
     branches: [ main, release/* ]
 
 jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.2-noble
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: |
+        apt-get update
+        apt-get install -y libsodium-dev curl
+    - name: Install nats-server
+      run: curl --fail https://binaries.nats.dev/nats-io/nats-server/v2@latest | PREFIX='/usr/local/bin' sh
+    - name: Build
+      run: swift build
+    - name: Test
+      run: swift test
   macos:
     runs-on: macos-15
     steps:

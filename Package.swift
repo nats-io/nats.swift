@@ -17,6 +17,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.68.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.4.2"),
         .package(url: "https://github.com/nats-io/nkeys.swift.git", from: "0.1.2"),
+        // Pinned below nkeys.swift's newer swift-sodium releases: 0.10.0+ use libsodium's
+        // AEGIS/KEM APIs, which aren't available on Ubuntu (libsodium-dev is stuck at 1.0.18).
+        .package(url: "https://github.com/jedisct1/swift-sodium.git", exact: "0.9.1"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.0.0"),
         .package(url: "https://github.com/Jarema/swift-nuid.git", from: "0.2.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
