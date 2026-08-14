@@ -99,7 +99,21 @@ public class NatsClientOptions {
         if self.auth == nil {
             self.auth = Auth(token: token)
         } else {
-            self.auth?.token = token
+            self.auth?.tokenProvider = { token }
+        }
+        return self
+    }
+
+    /// Token used for token auth to NATS server, resolved on every connect and
+    /// reconnect so that short-lived tokens can be refreshed without rebuilding
+    /// the client.
+    public func token(
+        _ provider: @escaping @Sendable () async throws -> String
+    ) -> NatsClientOptions {
+        if self.auth == nil {
+            self.auth = Auth(tokenProvider: provider)
+        } else {
+            self.auth?.tokenProvider = provider
         }
         return self
     }

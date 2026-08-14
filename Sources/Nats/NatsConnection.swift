@@ -530,11 +530,13 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private func sendClientConnectInit() async throws {
+        let authToken = try await self.auth?.tokenProvider?()
+
         var initialConnect = ConnectInfo(
             verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
             lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
             user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
-            authToken: self.auth?.token ?? "", headers: true, noResponders: true)
+            authToken: authToken ?? "", headers: true, noResponders: true)
 
         if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
             throw NatsError.ConnectError.invalidConfig("cannot use both nkey and nkeyPath")
