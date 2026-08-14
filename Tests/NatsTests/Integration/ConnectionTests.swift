@@ -58,7 +58,8 @@ class CoreNatsTests: XCTestCase {
         ("testReconnectOnClosedConnection", testReconnectOnClosedConnection),
         ("testSubscribeMissingPermissions", testSubscribeMissingPermissions),
         ("testSubscribePermissionsRevoked", testSubscribePermissionsRevoked),
-
+        ("testUnsubscribeAfterWithWaitingConsumer", testUnsubscribeAfterWithWaitingConsumer),
+        ("testQueueGroupSurvivesReconnect", testQueueGroupSurvivesReconnect),
     ]
     var natsServer = NatsServer()
 
@@ -432,6 +433,32 @@ class CoreNatsTests: XCTestCase {
         try await client.close()
     }
 
+    func testUnsubscribeAfterWithWaitingConsumer() async throws {
+        natsServer.start()
+        logger.logLevel = .critical
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "test")
+        try await sub.unsubscribe(after: 3)
+
+        // Publish one-by-one to a waiting consumer (the continuation path): auto-unsubscribe
+        // must trigger after exactly 3 delivered messages.
+        let consumed = Task { () -> Int in
+            var i = 0
+            for try await _ in sub {
+                i += 1
+            }
+            return i
+        }
+        for _ in 0..<5 {
+            try await client.publish("msg".data(using: .utf8)!, subject: "test")
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let i = try await consumed.value
+        XCTAssertEqual(i, 3, "Expected exactly 3 delivered before auto-unsubscribe")
+        try await client.close()
+    }
+
     func testConnect() async throws {
         natsServer.start()
         logger.logLevel = .critical
@@ -502,6 +529,57 @@ class CoreNatsTests: XCTestCase {
 
         // Check if the total number of messages received matches the number sent
         XCTAssertEqual(20, messagesReceived, "Mismatch in the number of messages sent and received")
+        try await client.close()
+    }
+
+    func testQueueGroupSurvivesReconnect() async throws {
+        natsServer.start()
+        let port = natsServer.port!
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .reconnectWait(1)
+            .build()
+        try await client.connect()
+
+        // Two members of one queue group: N messages produce exactly N deliveries
+        // across both. A lost queue group (plain fan-out) would double the count, which
+        // `assertForOverFulfill` rejects.
+        let delivered = XCTestExpectation(description: "each message delivered once")
+        delivered.expectedFulfillmentCount = 10
+        delivered.assertForOverFulfill = true
+
+        let sub1 = try await client.subscribe(subject: "q.subject", queue: "workers")
+        let sub2 = try await client.subscribe(subject: "q.subject", queue: "workers")
+        _ = try await client.rtt()  // ensure both SUBs reached the server
+
+        let collector1 = Task {
+            for try await _ in sub1 { delivered.fulfill() }
+        }
+        let collector2 = Task {
+            for try await _ in sub2 { delivered.fulfill() }
+        }
+
+        let reconnected = XCTestExpectation(description: "client reconnected")
+        client.on(.connected) { _ in reconnected.fulfill() }
+        natsServer.stop()
+        sleep(1)
+        natsServer.start(port: port)
+        await fulfillment(of: [reconnected], timeout: 10.0)
+        _ = try await client.rtt()  // ensure both re-SUBs were flushed after reconnect
+
+        let payload = "x".data(using: .utf8)!
+        for _ in 0..<10 {
+            try await client.publish(payload, subject: "q.subject")
+        }
+        try await client.flush()
+
+        await fulfillment(of: [delivered], timeout: 10.0)
+        // Give any erroneous duplicate deliveries a window to over-fulfill and fail.
+        _ = try await client.rtt()
+        collector1.cancel()
+        collector2.cancel()
         try await client.close()
     }
 
