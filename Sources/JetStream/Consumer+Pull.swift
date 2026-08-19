@@ -45,150 +45,215 @@ extension Consumer {
         let subject = ctx.apiSubject("CONSUMER.MSG.NEXT.\(info.stream).\(info.name)")
         let inbox = ctx.client.newInbox()
         let sub = try await ctx.client.subscribe(subject: inbox)
-        try await self.ctx.client.publish(
-            JSONEncoder().encode(request), subject: subject, reply: inbox)
-        return FetchResult(ctx: ctx, sub: sub, idleHeartbeat: idleHeartbeat, batch: batch)
+        do {
+            try await self.ctx.client.publish(
+                JSONEncoder().encode(request), subject: subject, reply: inbox)
+        } catch {
+            try? await sub.unsubscribe()
+            throw error
+        }
+        return FetchResult(
+            ctx: ctx, sub: sub, idleHeartbeat: idleHeartbeat, batch: batch, expires: expires)
     }
 }
 
-/// Used to iterate over results of ``Consumer/fetch(batch:expires:idleHeartbeat:)``
-public class FetchResult: AsyncSequence {
+/// Used to iterate over results of ``Consumer/fetch(batch:expires:idleHeartbeat:)``.
+public final class FetchResult: AsyncSequence, Sendable {
     public typealias Element = JetStreamMessage
-    public typealias AsyncIterator = FetchIterator
+    public typealias AsyncIterator = AsyncThrowingStream<JetStreamMessage, Error>.Iterator
 
+    private let stream: AsyncThrowingStream<JetStreamMessage, Error>
+
+    init(
+        ctx: JetStreamContext, sub: NatsSubscription, idleHeartbeat: TimeInterval?, batch: Int,
+        expires: TimeInterval
+    ) {
+        self.stream = AsyncThrowingStream { continuation in
+            let producerTask = Task {
+                let producer = FetchProducer(
+                    ctx: ctx, sub: sub, idleHeartbeat: idleHeartbeat, remaining: batch,
+                    expires: expires)
+                await producer.run(into: continuation)
+            }
+            continuation.onTermination = { _ in
+                producerTask.cancel()
+                Task { await FetchResult.tearDownIgnoringClosed(sub) }
+            }
+        }
+    }
+
+    public func makeAsyncIterator() -> AsyncIterator {
+        stream.makeAsyncIterator()
+    }
+
+    private static func tearDownIgnoringClosed(_ sub: NatsSubscription) async {
+        do {
+            try await sub.unsubscribe()
+        } catch NatsError.SubscriptionError.subscriptionClosed,
+            NatsError.ClientError.connectionClosed
+        {
+        } catch {
+            logger.error("error tearing down fetch subscription: \(error)")
+        }
+    }
+}
+
+private struct FetchProducer {
     private let ctx: JetStreamContext
-    private let sub: NatsSubscription
     private let idleHeartbeat: TimeInterval?
-    private let batch: Int
+    private let remaining: Int
+    private let deadlineUptime: TimeInterval
+    private let subIterator: NatsSubscription.AsyncIterator
 
-    init(ctx: JetStreamContext, sub: NatsSubscription, idleHeartbeat: TimeInterval?, batch: Int) {
+    private static let deadlineGrace: TimeInterval = 1
+
+    init(
+        ctx: JetStreamContext, sub: NatsSubscription, idleHeartbeat: TimeInterval?, remaining: Int,
+        expires: TimeInterval
+    ) {
         self.ctx = ctx
-        self.sub = sub
         self.idleHeartbeat = idleHeartbeat
-        self.batch = batch
+        self.remaining = remaining
+        self.subIterator = sub.makeAsyncIterator()
+        self.deadlineUptime =
+            ProcessInfo.processInfo.systemUptime + expires + Self.deadlineGrace
     }
 
-    public func makeAsyncIterator() -> FetchIterator {
-        return FetchIterator(
-            ctx: ctx,
-            sub: self.sub, idleHeartbeat: self.idleHeartbeat, remainingMessages: self.batch)
+    private enum ReadOutcome {
+        case message(NatsMessage)
+        case subscriptionEnded
+        case missedHeartbeat
     }
 
-    public struct FetchIterator: AsyncIteratorProtocol {
-        private let ctx: JetStreamContext
-        private let sub: NatsSubscription
-        private let idleHeartbeat: TimeInterval?
-        private var remainingMessages: Int
-        private var subIterator: NatsSubscription.AsyncIterator
+    private enum MessageOutcome {
+        case deliver(JetStreamMessage)
+        case skip
+        case end
+    }
 
-        init(
-            ctx: JetStreamContext, sub: NatsSubscription, idleHeartbeat: TimeInterval?,
-            remainingMessages: Int
-        ) {
-            self.ctx = ctx
-            self.sub = sub
-            self.idleHeartbeat = idleHeartbeat
-            self.remainingMessages = remainingMessages
-            self.subIterator = sub.makeAsyncIterator()
-        }
+    fileprivate typealias Continuation = AsyncThrowingStream<JetStreamMessage, Error>.Continuation
 
-        public mutating func next() async throws -> JetStreamMessage? {
-            if remainingMessages <= 0 {
-                try await sub.unsubscribe()
-                return nil
+    func run(into continuation: Continuation) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.finishAtDeadline(continuation) }
+            group.addTask { [subIterator, ctx, idleHeartbeat, remaining] in
+                await Self.readLoop(
+                    subIterator: subIterator, ctx: ctx, idleHeartbeat: idleHeartbeat,
+                    remaining: remaining, into: continuation)
             }
+            await group.next()
+            group.cancelAll()
+        }
+    }
 
-            while true {
-                let message: NatsMessage?
+    private func finishAtDeadline(_ continuation: Continuation) async {
+        let nanos = Self.nanoseconds(
+            max(0, deadlineUptime - ProcessInfo.processInfo.systemUptime))
+        try? await Task.sleep(nanoseconds: nanos)
+        continuation.finish()
+    }
 
-                if let idleHeartbeat = idleHeartbeat {
-                    let timeout = idleHeartbeat * 2
-                    message = try await nextWithTimeout(timeout, subIterator)
-                } else {
-                    message = try await subIterator.next()
+    private static func readLoop(
+        subIterator: NatsSubscription.AsyncIterator, ctx: JetStreamContext,
+        idleHeartbeat: TimeInterval?, remaining: Int, into continuation: Continuation
+    ) async {
+        var remaining = remaining
+        do {
+            while remaining > 0 {
+                let message: NatsMessage
+                switch try await readNextMessage(
+                    subIterator: subIterator, idleHeartbeat: idleHeartbeat)
+                {
+                case .message(let received):
+                    message = received
+                case .subscriptionEnded:
+                    continuation.finish()
+                    return
+                case .missedHeartbeat:
+                    continuation.finish(throwing: JetStreamError.FetchError.noHeartbeatReceived)
+                    return
                 }
-
-                guard let message else {
-                    // the subscription has ended
-                    try await sub.unsubscribe()
-                    return nil
-                }
-
-                let status = message.status ?? .ok
-
-                switch status {
-                case .timeout:
-                    try await sub.unsubscribe()
-                    return nil
-                case .idleHeartbeat:
-                    // in case of idle heartbeat error, we want to
-                    // wait for next message on subscription
+                switch try handle(message, ctx: ctx) {
+                case .deliver(let jsMessage):
+                    remaining -= 1
+                    continuation.yield(jsMessage)
+                case .skip:
                     continue
-                case .notFound:
-                    try await sub.unsubscribe()
-                    return nil
-                case .ok:
-                    remainingMessages -= 1
-                    return JetStreamMessage(message: message, client: ctx.client)
-                case .badRequest:
-                    try await sub.unsubscribe()
-                    throw JetStreamError.FetchError.badRequest
-                case .noResponders:
-                    try await sub.unsubscribe()
-                    throw JetStreamError.FetchError.noResponders
-                case .requestTerminated:
-                    try await sub.unsubscribe()
-                    guard let description = message.description else {
-                        throw JetStreamError.FetchError.invalidResponse
-                    }
-
-                    let descLower = description.lowercased()
-                    if descLower.contains("message size exceeds maxbytes") {
-                        return nil
-                    } else if descLower.contains("leadership changed") {
-                        throw JetStreamError.FetchError.leadershipChanged
-                    } else if descLower.contains("consumer deleted") {
-                        throw JetStreamError.FetchError.consumerDeleted
-                    } else if descLower.contains("consumer is push based") {
-                        throw JetStreamError.FetchError.consumerIsPush
-                    }
-                default:
-                    throw JetStreamError.FetchError.unknownStatus(status, message.description)
+                case .end:
+                    continuation.finish()
+                    return
                 }
-
-                if remainingMessages == 0 {
-                    try await sub.unsubscribe()
-                }
-
             }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
         }
+    }
 
-        func nextWithTimeout(
-            _ timeout: TimeInterval, _ subIterator: NatsSubscription.AsyncIterator
-        ) async throws -> NatsMessage? {
-            try await withThrowingTaskGroup(of: NatsMessage?.self) { group in
-                group.addTask {
-                    return try await subIterator.next()
-                }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                    try await sub.unsubscribe()
-                    return nil
-                }
-                defer {
-                    group.cancelAll()
-                }
-                for try await result in group {
-                    if let msg = result {
-                        return msg
-                    } else {
-                        throw JetStreamError.FetchError.noHeartbeatReceived
-                    }
-                }
-                // this should not be reachable
-                throw JetStreamError.FetchError.noHeartbeatReceived
+    private static func readNextMessage(
+        subIterator: NatsSubscription.AsyncIterator, idleHeartbeat: TimeInterval?
+    ) async throws -> ReadOutcome {
+        guard let heartbeatNanos = idleHeartbeat.map({ nanoseconds($0 * 2) }) else {
+            if let message = try await subIterator.next() {
+                return .message(message)
             }
+            return .subscriptionEnded
         }
+        return try await withThrowingTaskGroup(of: ReadOutcome.self) { group in
+            group.addTask {
+                if let message = try await subIterator.next() {
+                    return .message(message)
+                }
+                return .subscriptionEnded
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: heartbeatNanos)
+                return .missedHeartbeat
+            }
+            defer { group.cancelAll() }
+            return try await group.next() ?? .subscriptionEnded
+        }
+    }
+
+    private static func handle(
+        _ message: NatsMessage, ctx: JetStreamContext
+    ) throws
+        -> MessageOutcome
+    {
+        switch message.status ?? .ok {
+        case .ok:
+            return .deliver(JetStreamMessage(message: message, client: ctx.client))
+        case .idleHeartbeat:
+            return .skip
+        case .timeout, .notFound:
+            return .end
+        case .badRequest:
+            throw JetStreamError.FetchError.badRequest
+        case .noResponders:
+            throw JetStreamError.FetchError.noResponders
+        case .requestTerminated:
+            guard let description = message.description else {
+                throw JetStreamError.FetchError.invalidResponse
+            }
+            let descLower = description.lowercased()
+            if descLower.contains("leadership changed") {
+                throw JetStreamError.FetchError.leadershipChanged
+            } else if descLower.contains("consumer deleted") {
+                throw JetStreamError.FetchError.consumerDeleted
+            } else if descLower.contains("consumer is push based") {
+                throw JetStreamError.FetchError.consumerIsPush
+            }
+            return .end
+        default:
+            throw JetStreamError.FetchError.unknownStatus(
+                message.status ?? .ok, message.description)
+        }
+    }
+
+    private static func nanoseconds(_ seconds: TimeInterval) -> UInt64 {
+        let ns = (seconds * 1_000_000_000).rounded()
+        guard ns > 0 else { return 0 }
+        return ns >= Double(UInt64.max) ? .max : UInt64(ns)
     }
 }
 

@@ -328,6 +328,18 @@ extension NatsClient {
         return try await connectionHandler.subscribe(subject, queue: queue)
     }
 
+    internal func subscribe(
+        subject: String, queue: String? = nil, capacity: UInt64
+    ) async throws -> NatsSubscription {
+        guard let connectionHandler = self.connectionHandler else {
+            throw NatsError.ClientError.internalError("empty connection handler")
+        }
+        if case .closed = connectionHandler.currentState {
+            throw NatsError.ClientError.connectionClosed
+        }
+        return try await connectionHandler.subscribe(subject, queue: queue, capacity: capacity)
+    }
+
     /// Sends a PING to the server, returning the time it took for the server to respond.
     ///
     /// - Returns rtt of the request.

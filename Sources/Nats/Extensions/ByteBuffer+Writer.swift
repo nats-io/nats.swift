@@ -15,7 +15,7 @@ import Foundation
 import NIO
 
 extension ByteBuffer {
-    mutating func writeClientOp(_ op: ClientOp) {
+    mutating func writeClientOp(_ op: ClientOp) throws {
         switch op {
         case .publish((let subject, let reply, let payload, let headers)):
             if let payload = payload {
@@ -72,8 +72,7 @@ extension ByteBuffer {
                 self.writeString("\(NatsOperation.unsubscribe.rawValue) \(sid)\r\n")
             }
         case .connect(let info):
-            // This encode can't actually fail
-            let json = try! JSONEncoder().encode(info)
+            let json = try JSONEncoder().encode(info)
             self.reserveCapacity(minimumWritableBytes: json.count + 5)
             self.writeString("\(NatsOperation.connect.rawValue) ")
             self.writeData(json)
