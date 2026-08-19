@@ -777,6 +777,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         guard let eventLoop = self.channel?.eventLoop else {
             self.state.withLockedValue { $0 = .closed }
             self.pingTask?.cancel()
+            self.failOutstandingPings(NatsError.ClientError.connectionClosed)
             self.fire(.closed)
             return
         }
@@ -785,6 +786,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         eventLoop.execute {
             self.state.withLockedValue { $0 = .closed }
             self.pingTask?.cancel()
+            self.failOutstandingPings(NatsError.ClientError.connectionClosed)
             self.channel?.close(mode: .all, promise: promise)
         }
 
@@ -800,6 +802,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     private func disconnect() async throws {
         self.pingTask?.cancel()
+        self.failOutstandingPings(NatsError.ClientError.connectionClosed)
         try await self.channel?.close().get()
     }
 
@@ -811,6 +814,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         guard let eventLoop = self.channel?.eventLoop else {
             // Set state to suspended even if channel is nil
             self.state.withLockedValue { $0 = .suspended }
+            self.failOutstandingPings(NatsError.ClientError.connectionClosed)
             return
         }
         let promise = eventLoop.makePromise(of: Void.self)
@@ -821,6 +825,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 currentState = .suspended
                 return wasConnected
             }
+
+            self.failOutstandingPings(NatsError.ClientError.connectionClosed)
 
             if shouldClose {
                 self.pingTask?.cancel()
@@ -851,6 +857,25 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     func reconnect() async throws {
         try await suspend()
         try await resume()
+    }
+
+    /// Complete every queued RTT command, for a connection that is not going to answer.
+    ///
+    /// A command is enqueued per outgoing `PING` and only completed by the matching `PONG`,
+    /// so a connection that dies with pings in flight leaves promises unfulfilled. NIO traps
+    /// on an unfulfilled promise in `EventLoopFuture.deinit` (`debugOnly`), which crashes
+    /// debug builds of the host application the moment the client is released.
+    ///
+    /// Resetting `outstandingPings` is part of the same fix rather than a separate one: the
+    /// counter is otherwise only cleared by an incoming `PONG`, and `sendPing` returns early
+    /// once it exceeds 2 — *without* writing the `PING` that could earn that `PONG`. A
+    /// connection that misses three pings therefore stays stuck above the threshold and
+    /// force-disconnects on every subsequent ping tick, even after it reconnects cleanly.
+    internal func failOutstandingPings(_ error: Error) {
+        for rttCommand in pingQueue.drain() {
+            rttCommand.fail(error)
+        }
+        outstandingPings.store(0, ordering: AtomicStoreOrdering.relaxed)
     }
 
     internal func sendPing(_ rttCommand: RttCommand? = nil) async {
@@ -913,6 +938,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             continuation.resume(throwing: errorToUse)
         }
 
+        failOutstandingPings(errorToUse)
+
         let shouldHandleDisconnect = state.withLockedValue { $0 == .connected }
         if shouldHandleDisconnect {
             handleDisconnect()
@@ -938,6 +965,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     func handleDisconnect() {
         state.withLockedValue { $0 = .disconnected }
+        failOutstandingPings(NatsError.ClientError.connectionClosed)
         if let channel = self.channel {
             let promise = channel.eventLoop.makePromise(of: Void.self)
             Task {
