@@ -401,7 +401,7 @@ class ConnectionHandler: ChannelInboundHandler {
             throw NatsError.ConnectError.invalidConfig("cannot use both nkey and nkeyPath")
         }
         if let auth = self.auth, let credentialsPath = auth.credentialsPath {
-            let credentials = try await URLSession.shared.data(from: credentialsPath).0
+            let credentials = try Data(contentsOf: credentialsPath)
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {
                 throw NatsError.ConnectError.invalidConfig(
                     "failed to extract JWT from credentials file")
@@ -421,7 +421,7 @@ class ConnectionHandler: ChannelInboundHandler {
             initialConnect.userJwt = String(data: jwt, encoding: .utf8)!
         }
         if let nkey = self.auth?.nkeyPath {
-            let nkeyData = try await URLSession.shared.data(from: nkey).0
+            let nkeyData = try Data(contentsOf: nkey)
 
             guard let nkeyContent = String(data: nkeyData, encoding: .utf8) else {
                 throw NatsError.ConnectError.invalidConfig("failed to read NKEY file")
