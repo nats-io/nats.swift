@@ -39,6 +39,7 @@ class JetStreamTests: XCTestCase {
         ("testConsumerConfig", testConsumerConfig),
         ("testCreateEphemeralConsumer", testCreateEphemeralConsumer),
         ("testConsumerInfo", testConsumerInfo),
+        ("testConsumerInfoWithCustomInbox", testConsumerInfoWithCustomInbox),
         ("testListConsumers", testListConsumers),
     ]
 
@@ -53,7 +54,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -83,7 +84,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "prefix", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let clientA = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
@@ -108,7 +109,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "domain", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
@@ -121,7 +122,7 @@ class JetStreamTests: XCTestCase {
 
     func testJetStreamNotEnabled() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -139,7 +140,7 @@ class JetStreamTests: XCTestCase {
 
     func testJetStreamNotEnabledForAccount() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)
             .build()
@@ -159,7 +160,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -251,7 +252,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -282,7 +283,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -319,7 +320,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -386,7 +387,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -436,7 +437,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -483,7 +484,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -536,7 +537,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -580,7 +581,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -627,7 +628,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -673,7 +674,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -763,7 +764,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -853,7 +854,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -884,7 +885,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()
@@ -902,9 +903,54 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let stream = try await ctx.createStream(cfg: StreamConfig(name: "test", subjects: ["foo"]))
+
+        let cfg = ConsumerConfig(name: "cons")
+        let consumer = try await stream.createConsumer(cfg: cfg)
+
+        let info = try await consumer.info()
+        XCTAssertEqual(info.config.name, "cons")
+
+        // simulate external update of consumer
+        let updateJSON = """
+            {
+                "stream_name": "test",
+                "config": {
+                    "name": "cons",
+                    "description": "updated",
+                    "ack_policy": "explicit"
+                },
+                "action": "update"
+            }
+            """
+        let data = updateJSON.data(using: .utf8)!
+
+        _ = try await client.request(data, subject: "$JS.API.CONSUMER.CREATE.test.cons")
+
+        XCTAssertNil(consumer.info.config.description)
+
+        let newInfo = try await consumer.info()
+        XCTAssertEqual(newInfo.config.description, "updated")
+        XCTAssertEqual(consumer.info.config.description, "updated")
+    }
+
+    func testConsumerInfoWithCustomInbox() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .debug
+
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .inboxPrefix("_INBOX_custom.baz")
+            .build()
         try await client.connect()
 
         let ctx = JetStreamContext(client: client)
@@ -944,7 +990,7 @@ class JetStreamTests: XCTestCase {
         let bundle = Bundle.module
         natsServer.start(
             cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()

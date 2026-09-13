@@ -34,7 +34,7 @@ class TestNatsEvents: XCTestCase {
 
     func testClientConnectedEvent() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
@@ -52,7 +52,7 @@ class TestNatsEvents: XCTestCase {
 
     func testClientClosedEvent() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
 
@@ -71,7 +71,7 @@ class TestNatsEvents: XCTestCase {
     func testClientReconnectEvent() async throws {
         natsServer.start()
         let port = natsServer.port!
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions()
             .url(URL(string: natsServer.clientURL)!)

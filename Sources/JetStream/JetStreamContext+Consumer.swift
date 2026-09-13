@@ -142,7 +142,7 @@ extension JetStreamContext {
         try Consumer.validate(name: consumerName)
 
         let createReq = CreateConsumerRequest(stream: stream, config: cfg, action: action)
-        let req = try! JSONEncoder().encode(createReq)
+        let req = try JSONEncoder().encode(createReq)
 
         var subject: String
         if let filterSubject = cfg.filterSubject {

@@ -32,7 +32,7 @@ class TestMessageWithHeadersTests: XCTestCase {
 
     func testMessageWithHeaders() async throws {
         natsServer.start()
-        logger.logLevel = .debug
+        logger.logLevel = .critical
 
         let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
         try await client.connect()

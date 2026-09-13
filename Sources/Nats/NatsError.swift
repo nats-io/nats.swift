@@ -13,7 +13,7 @@
 
 import Foundation
 
-public protocol NatsErrorProtocol: Error, CustomStringConvertible {}
+public protocol NatsErrorProtocol: Error, CustomStringConvertible, Sendable {}
 
 public enum NatsError {
     public enum ServerError: NatsErrorProtocol, Equatable {
@@ -82,7 +82,7 @@ public enum NatsError {
             }
         }
 
-        public enum Operation: String, Equatable {
+        public enum Operation: String, Equatable, Sendable {
             case publish = "Publish"
             case subscribe = "Subscription"
         }
@@ -147,6 +147,8 @@ public enum NatsError {
         case connectionClosed
         case io(Error)
         case invalidConnection(String)
+        case cancelled
+        case alreadyConnected
 
         public var description: String {
             switch self {
@@ -160,6 +162,10 @@ public enum NatsError {
                 return "nats: IO error: \(error)"
             case .invalidConnection(let error):
                 return "nats: \(error)"
+            case .cancelled:
+                return "nats: operation cancelled"
+            case .alreadyConnected:
+                return "nats: client is already connected or connecting"
             }
         }
     }
@@ -209,6 +215,7 @@ public enum NatsError {
         case invalidQueue
         case permissionDenied
         case subscriptionClosed
+        case slowConsumer
 
         public var description: String {
             switch self {
@@ -220,6 +227,8 @@ public enum NatsError {
                 return "nats: permission denied"
             case .subscriptionClosed:
                 return "nats: subscription closed"
+            case .slowConsumer:
+                return "nats: slow consumer, messages dropped"
             }
         }
     }

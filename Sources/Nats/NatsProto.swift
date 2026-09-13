@@ -254,7 +254,7 @@ struct ServerInfo: Codable, Equatable {
     }
 }
 
-enum ClientOp {
+enum ClientOp: Sendable {
     case publish((subject: String, reply: String?, payload: Data?, headers: NatsHeaderMap?))
     case subscribe((sid: UInt64, subject: String, queue: String?))
     case unsubscribe((sid: UInt64, max: UInt64?))
@@ -264,7 +264,7 @@ enum ClientOp {
 }
 
 /// Info to construct a CONNECT message.
-struct ConnectInfo: Encodable {
+struct ConnectInfo: Encodable, Sendable {
     /// Turns on +OK protocol acknowledgments.
     var verbose: Bool
     /// Turns on additional strict format checking, e.g. for properly formed

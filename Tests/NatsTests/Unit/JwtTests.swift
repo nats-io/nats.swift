@@ -23,7 +23,7 @@ class JwtTests: XCTestCase {
     ]
 
     func testParseCredentialsFile() async throws {
-        logger.logLevel = .debug
+        logger.logLevel = .critical
         let currentFile = URL(fileURLWithPath: #file)
         let testDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         let resourceURL = testDir.appendingPathComponent("Integration/Resources/TestUser.creds")

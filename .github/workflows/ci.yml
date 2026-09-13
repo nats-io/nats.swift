@@ -8,7 +8,7 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
     - name: Checkout the code
       uses: actions/checkout@v4
@@ -19,18 +19,18 @@ jobs:
     - name: List schemes
       run: xcodebuild -list
     - name: Build
-      run: xcodebuild build -scheme Nats -destination 'platform=macOS,arch=x86_64'
+      run: xcodebuild build -scheme Nats -destination 'platform=macOS,arch=arm64'
     - name: Test
       run: swift test
   ios:
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
     - name: Checkout the code
       uses: actions/checkout@v4
     - name: Build
       run: xcodebuild build -scheme Nats -destination generic/platform=ios
   check-linter:
-    runs-on: macos-13
+    runs-on: macos-15
     steps:
     - name: Checkout the code
       uses: actions/checkout@v4
