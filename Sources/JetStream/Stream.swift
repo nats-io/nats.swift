@@ -26,7 +26,7 @@ public class Stream {
 
     /// Contains information about the stream.
     /// Note that this may be out of date and reading it does not query the server.
-    /// For up-to-date stream info use ``Stream/info()``
+    /// For up-to-date stream info use ``Stream/info(deletedDetails:)``
     public internal(set) var info: StreamInfo
     internal let ctx: JetStreamContext
 
@@ -38,14 +38,22 @@ public class Stream {
     /// Retrieves information about the stream
     /// This also refreshes ``Stream/info``.
     ///
+    /// - Parameter deletedDetails: When true, the server includes the sequence numbers of
+    ///   deleted messages in ``StreamState/deleted``. The list can be large for streams with
+    ///   many interior deletes, so it is not requested by default.
+    ///
     /// - Returns ``StreamInfo`` from the server.
     ///
     /// > **Throws:**
     /// > - ``JetStreamRequestError`` if the request was unsuccessful.
     /// > - ``JetStreamError`` if the server responded with an API error.
-    public func info() async throws -> StreamInfo {
+    public func info(deletedDetails: Bool = false) async throws -> StreamInfo {
         let subj = "STREAM.INFO.\(info.config.name)"
-        let info: Response<StreamInfo> = try await ctx.request(subj)
+        var requestData: Data?
+        if deletedDetails {
+            requestData = try JSONEncoder().encode(InfoRequest(deletedDetails: true))
+        }
+        let info: Response<StreamInfo> = try await ctx.request(subj, message: requestData)
         switch info {
         case .success(let info):
             self.info = info
@@ -325,6 +333,14 @@ public class Stream {
             return result.purged
         case .error(let err):
             throw err.error
+        }
+    }
+
+    private struct InfoRequest: Codable {
+        internal let deletedDetails: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case deletedDetails = "deleted_details"
         }
     }
 
@@ -878,6 +894,7 @@ public struct StreamState: Codable {
     public let consumers: Int
 
     /// Sequence numbers of deleted messages.
+    /// Only populated when requested with ``Stream/info(deletedDetails:)``.
     public let deleted: [UInt64]?
 
     /// Number of messages deleted causing gaps in sequence numbers.
