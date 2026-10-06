@@ -731,15 +731,17 @@ class JetStreamTests: XCTestCase {
 
         XCTAssertEqual(expectedConfig, cons.info.config)
 
-        // attempt to update illegal consumer property
-        cfg.memoryStorage = true
+        // attempt to update illegal consumer property; the server reports it
+        // with the generic consumer create error code
+        cfg.deliverPolicy = .last
         errOk = false
         do {
             _ = try await stream.updateConsumer(cfg: cfg)
-        } catch JetStreamError.ConsumerError.invalidConfig(_) {
+        } catch let err as JetStreamError.APIError where err.errorCode == .consumerCreate {
             // success
             errOk = true
         }
+        XCTAssertTrue(errOk, "Expected consumer create error")
 
         // attempt updating non-existing consumer
         errOk = false
@@ -821,15 +823,17 @@ class JetStreamTests: XCTestCase {
 
         XCTAssertEqual(expectedConfig, cons.info.config)
 
-        // attempt to update illegal consumer property
-        cfg.memoryStorage = true
+        // attempt to update illegal consumer property; the server reports it
+        // with the generic consumer create error code
+        cfg.deliverPolicy = .last
         errOk = false
         do {
             _ = try await ctx.updateConsumer(stream: "test", cfg: cfg)
-        } catch JetStreamError.ConsumerError.invalidConfig(_) {
+        } catch let err as JetStreamError.APIError where err.errorCode == .consumerCreate {
             // success
             errOk = true
         }
+        XCTAssertTrue(errOk, "Expected consumer create error")
 
         // attempt updating non-existing consumer
         errOk = false
