@@ -33,7 +33,7 @@ extension JetStreamContext {
     /// > - ``JetStreamError/APIError``: if there was a different API error returned from JetStream.
     public func createStream(cfg: StreamConfig) async throws -> Stream {
         try Stream.validate(name: cfg.name)
-        let req = try! JSONEncoder().encode(cfg)
+        let req = try JSONEncoder().encode(cfg)
         let subj = "STREAM.CREATE.\(cfg.name)"
         let info: Response<StreamInfo> = try await request(subj, message: req)
         switch info {
@@ -93,7 +93,7 @@ extension JetStreamContext {
     /// > - ``JetStreamError/APIError`` if there was a different API error returned from JetStream.
     public func updateStream(cfg: StreamConfig) async throws -> Stream {
         try Stream.validate(name: cfg.name)
-        let req = try! JSONEncoder().encode(cfg)
+        let req = try JSONEncoder().encode(cfg)
         let subj = "STREAM.UPDATE.\(cfg.name)"
         let info: Response<StreamInfo> = try await request(subj, message: req)
         switch info {

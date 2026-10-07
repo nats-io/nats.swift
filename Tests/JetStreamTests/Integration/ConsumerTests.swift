@@ -13,9 +13,10 @@
 
 import JetStream
 import Logging
-import Nats
 import NatsServer
 import XCTest
+
+@testable import Nats
 
 class ConsumerTests: XCTestCase {
 
@@ -28,6 +29,10 @@ class ConsumerTests: XCTestCase {
         ("testNak", testNak),
         ("testNakWithDelay", testNakWithDelay),
         ("testTerm", testTerm),
+        ("testFetchEmptyTerminatesWithoutHang", testFetchEmptyTerminatesWithoutHang),
+        ("testFetchCancellationTearsDownSubscription", testFetchCancellationTearsDownSubscription),
+        ("testFetchEarlyBreakTearsDownSubscription", testFetchEarlyBreakTearsDownSubscription),
+        ("testFetchCompletionTearsDownSubscription", testFetchCompletionTearsDownSubscription),
     ]
 
     var natsServer = NatsServer()
@@ -419,5 +424,165 @@ class ConsumerTests: XCTestCase {
         XCTAssertEqual(meta.streamSequence, 2)
         XCTAssertEqual(meta.consumerSequence, 2)
         try await msg.ack()
+    }
+
+    func testFetchEmptyTerminatesWithoutHang() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        // A fetch on an empty consumer must terminate, not hang; race it against a
+        // wall-clock budget that returns -1 if the fetch hung.
+        let count = try await withThrowingTaskGroup(of: Int.self) { group -> Int in
+            group.addTask {
+                let batch = try await consumer.fetch(batch: 5, expires: 1)
+                var n = 0
+                for try await _ in batch { n += 1 }
+                return n
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 8 * 1_000_000_000)
+                return -1
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
+        XCTAssertEqual(count, 0, "empty fetch should return 0 messages (-1 means it hung)")
+
+        // The consumer must still be usable after the empty fetch.
+        _ = try await ctx.publish("foo.A", message: "hi".data(using: .utf8)!).wait()
+        let batch = try await consumer.fetch(batch: 1, expires: 2)
+        var got = 0
+        for try await msg in batch {
+            try await msg.ack()
+            got += 1
+        }
+        XCTAssertEqual(got, 1)
+
+        try await client.close()
+    }
+
+    func testFetchCancellationTearsDownSubscription() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let baseline = client.connectionHandler?.subscriptionCount ?? -1
+
+        // Empty consumer: the fetch blocks waiting for a message.
+        let task = Task {
+            let batch = try await consumer.fetch(batch: 1, expires: 30)
+            for try await _ in batch {}
+        }
+        // Let the fetch create its inbox subscription and start waiting, then cancel.
+        try await Task.sleep(nanoseconds: 500_000_000)
+        task.cancel()
+        _ = try? await task.value
+
+        // Teardown runs asynchronously after cancellation; poll briefly for it.
+        var count = client.connectionHandler?.subscriptionCount ?? -1
+        for _ in 0..<20 where count != baseline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            count = client.connectionHandler?.subscriptionCount ?? -1
+        }
+        XCTAssertEqual(count, baseline, "cancelled fetch leaked its inbox subscription")
+
+        try await client.close()
+    }
+
+    func testFetchEarlyBreakTearsDownSubscription() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        for i in 0..<5 {
+            _ = try await ctx.publish("foo.\(i)", message: "hi".data(using: .utf8)!).wait()
+        }
+
+        let baseline = client.connectionHandler?.subscriptionCount ?? -1
+
+        // Consume one message then break out early. The fetch's inbox subscription
+        // must still be torn down, not leaked.
+        let batch = try await consumer.fetch(batch: 5, expires: 30)
+        for try await msg in batch {
+            try await msg.ack()
+            break
+        }
+
+        var count = client.connectionHandler?.subscriptionCount ?? -1
+        for _ in 0..<20 where count != baseline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            count = client.connectionHandler?.subscriptionCount ?? -1
+        }
+        XCTAssertEqual(count, baseline, "early-break fetch leaked its inbox subscription")
+
+        try await client.close()
+    }
+
+    func testFetchCompletionTearsDownSubscription() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        for i in 0..<3 {
+            _ = try await ctx.publish("foo.\(i)", message: "hi".data(using: .utf8)!).wait()
+        }
+
+        let baseline = client.connectionHandler?.subscriptionCount ?? -1
+
+        // Consume the whole batch to completion.
+        let batch = try await consumer.fetch(batch: 3, expires: 5)
+        var got = 0
+        for try await msg in batch {
+            try await msg.ack()
+            got += 1
+        }
+        XCTAssertEqual(got, 3)
+
+        var count = client.connectionHandler?.subscriptionCount ?? -1
+        for _ in 0..<20 where count != baseline {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            count = client.connectionHandler?.subscriptionCount ?? -1
+        }
+        XCTAssertEqual(count, baseline, "completed fetch leaked its inbox subscription")
+
+        try await client.close()
     }
 }

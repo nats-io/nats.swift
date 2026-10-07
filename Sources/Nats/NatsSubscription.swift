@@ -15,7 +15,6 @@ import Foundation
 import NIOConcurrencyHelpers
 import NIOCore
 
-// TODO(pp): Implement slow consumer
 public final class NatsSubscription: AsyncSequence, Sendable {
     public typealias Element = NatsMessage
     public typealias AsyncIterator = SubscriptionIterator
@@ -31,14 +30,23 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     internal var delivered: UInt64 {
         state.withLockedValue { $0.delivered }
     }
+    internal var received: UInt64 {
+        state.withLockedValue { $0.received }
+    }
     internal let sid: UInt64
 
     private struct State: Sendable {
         var buffer: [Result<NatsMessage, NatsError.SubscriptionError>] = []
         var closed = false
         var delivered: UInt64 = 0
+        var received: UInt64 = 0
+        var slowConsumer = false
         var continuation:
             CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? = nil
+
+        mutating func rearmSlowConsumerBelowHalfCapacity(capacity: UInt64) {
+            if buffer.count <= capacity / 2 { slowConsumer = false }
+        }
     }
 
     private let state = NIOLockedValueBox(State())
@@ -74,24 +82,31 @@ public final class NatsSubscription: AsyncSequence, Sendable {
     }
 
     func receiveMessage(_ message: NatsMessage) {
+        var didBecomeSlowConsumer = false
         let continuationToResume:
             CheckedContinuation<Result<NatsMessage, NatsError.SubscriptionError>?, Never>? =
                 state.withLockedValue { state in
                     if let continuation = state.continuation {
                         state.continuation = nil
+                        state.received += 1
                         return continuation
 
                     } else if state.buffer.count < capacity {
                         // Only append to buffer if no continuation is available
-                        // TODO(pp): Handle SlowConsumer as subscription event
                         state.buffer.append(.success(message))
+                        state.received += 1
                     } else {
-                        // Slow consumer: message dropped intentionally.
-                        // TODO: emit SlowConsumer subscription event.
+                        if !state.slowConsumer {
+                            state.slowConsumer = true
+                            didBecomeSlowConsumer = true
+                        }
                     }
                     return nil
                 }
 
+        if didBecomeSlowConsumer {
+            conn.fire(.error(NatsError.SubscriptionError.slowConsumer))
+        }
         continuationToResume?.resume(returning: .success(message))
     }
 
@@ -153,12 +168,9 @@ public final class NatsSubscription: AsyncSequence, Sendable {
                             return .resume(nil)
                         }
 
-                        // delivered tracks "slots consumed", not "messages returned".
-                        // It is incremented here — before the message is in hand.
-                        state.delivered += 1
-
                         if let message = state.buffer.first {
                             state.buffer.removeFirst()
+                            state.rearmSlowConsumerBelowHalfCapacity(capacity: capacity)
                             return .resume(message)
                         } else {
                             state.continuation = continuation
@@ -183,7 +195,10 @@ public final class NatsSubscription: AsyncSequence, Sendable {
                 continuationToResume?.resume(returning: nil)
             }
 
-        let delivered = state.withLockedValue { $0.delivered }
+        let delivered: UInt64 = state.withLockedValue { state in
+            if case .success? = result { state.delivered += 1 }
+            return state.delivered
+        }
         if let max, delivered >= max {
             conn.removeSub(sub: self)
         }
