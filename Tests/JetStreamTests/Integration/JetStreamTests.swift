@@ -27,6 +27,7 @@ class JetStreamTests: XCTestCase {
         ("testStreamCRUD", testStreamCRUD),
         ("testStreamConfig", testStreamConfig),
         ("testStreamInfo", testStreamInfo),
+        ("testStreamInfoDeletedDetails", testStreamInfoDeletedDetails),
         ("testListStreams", testListStreams),
         ("testGetMessage", testGetMessage),
         ("testGetMessageDirect", testGetMessageDirect),
@@ -314,6 +315,37 @@ class JetStreamTests: XCTestCase {
         let newInfo = try await stream.info()
         XCTAssertEqual(newInfo.config.description, "updated")
         XCTAssertEqual(stream.info.config.description, "updated")
+    }
+
+    func testStreamInfoDeletedDetails() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let cfg = StreamConfig(name: "test", subjects: ["foo"])
+        let stream = try await ctx.createStream(cfg: cfg)
+
+        for i in 1...3 {
+            let ack = try await ctx.publish("foo", message: "\(i)".data(using: .utf8)!)
+            _ = try await ack.wait()
+        }
+        try await stream.deleteMessage(sequence: 2)
+
+        // deleted sequences are not returned unless requested
+        var info = try await stream.info()
+        XCTAssertEqual(info.state.numDeleted, 1)
+        XCTAssertNil(info.state.deleted)
+
+        info = try await stream.info(deletedDetails: true)
+        XCTAssertEqual(info.state.numDeleted, 1)
+        XCTAssertEqual(info.state.deleted, [2])
+        XCTAssertEqual(stream.info.state.deleted, [2])
     }
 
     func testListStreams() async throws {
