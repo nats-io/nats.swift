@@ -1,4 +1,4 @@
-// Copyright 2024 The NATS Authors
+// Copyright 2024-2026 The NATS Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -29,6 +29,7 @@ public struct StatusCode: Equatable, Sendable {
     public static let badRequest = StatusCode(value: 400)
     public static let notFound = StatusCode(value: 404)
     public static let timeout = StatusCode(value: 408)
+    public static let wrongPinId = StatusCode(value: 423)
     public static let noResponders = StatusCode(value: 503)
     public static let requestTerminated = StatusCode(value: 409)
 
