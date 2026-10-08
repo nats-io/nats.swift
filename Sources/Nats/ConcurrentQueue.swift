@@ -28,4 +28,16 @@ internal final class ConcurrentQueue<T: Sendable>: Sendable {
             return array.removeFirst()
         }
     }
+
+    /// Take every element and leave the queue empty.
+    ///
+    /// One locked pass rather than a `while let _ = dequeue()` loop, so a concurrent
+    /// `enqueue` cannot slip an element in between two dequeues and be dropped by a caller
+    /// that believes it has drained everything.
+    func drain() -> [T] {
+        elements.withLockedValue { array in
+            defer { array.removeAll() }
+            return array
+        }
+    }
 }

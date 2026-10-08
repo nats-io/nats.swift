@@ -33,6 +33,30 @@ internal final class RttCommand: Sendable {
         promise?.succeed(rtt)
     }
 
+    /// Complete the promise for a PONG that is never going to arrive.
+    ///
+    /// Anything holding queued commands must call this before dropping them — see
+    /// `ConnectionHandler.failOutstandingPings(_:)`.
+    func fail(_ error: Error) {
+        promise?.fail(error)
+    }
+
+    deinit {
+        // A command is enqueued on `PING` and only completed when the matching `PONG` comes
+        // back. A connection that goes stale — a dead socket, a backgrounded phone — never
+        // sends that `PONG`, so the command is dropped along with the connection handler
+        // while its promise is still unfulfilled. NIO traps on exactly that in
+        // `EventLoopFuture.deinit`: `fatalError("leaking promise created at …")`, which is
+        // `debugOnly`, so it takes down every debug build of the host application and leaks
+        // silently in release.
+        //
+        // Completing here is safe on both counts:
+        // - Completing an already-completed promise is a no-op — `EventLoopFuture._setValue`
+        //   returns early once `_value != nil`.
+        // - `fail` is callable from any thread; it hops to the event loop when needed.
+        promise?.fail(NatsError.ClientError.connectionClosed)
+    }
+
     func getRoundTripTime() async throws -> TimeInterval {
         try await promise?.futureResult.get() ?? 0
     }
