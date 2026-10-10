@@ -13,6 +13,7 @@
 
 import Logging
 import NIO
+import NIOConcurrencyHelpers
 import Nats
 import NatsServer
 import XCTest
@@ -37,6 +38,7 @@ class CoreNatsTests: XCTestCase {
         ("testReconnect", testReconnect),
         ("testUsernameAndPassword", testUsernameAndPassword),
         ("testTokenAuth", testTokenAuth),
+        ("testTokenProviderRefreshedOnReconnect", testTokenProviderRefreshedOnReconnect),
         ("testCredentialsAuth", testCredentialsAuth),
         ("testNkeyAuth", testNkeyAuth),
         ("testNkeyAuthFile", testNkeyAuthFile),
@@ -650,6 +652,48 @@ class CoreNatsTests: XCTestCase {
             XCTFail("Expected auth error; got: \(error)")
         }
         XCTFail("Expected error from connect")
+    }
+
+    func testTokenProviderRefreshedOnReconnect() async throws {
+        logger.logLevel = .critical
+        let bundle = Bundle.module
+        natsServer.start(cfg: bundle.url(forResource: "token", withExtension: "conf")!.relativePath)
+        let port = natsServer.port!
+
+        // The server accepts "s3cr3t" now and only "r0tat3d" after the restart below,
+        // so reconnecting can only succeed if the provider is consulted again.
+        let token = NIOLockedValueBox("s3cr3t")
+        let client = NatsClientOptions()
+            .url(URL(string: natsServer.clientURL)!)
+            .token { token.withLockedValue { $0 } }
+            .reconnectWait(1)
+            .build()
+
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "foo")
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        client.on(.connected) { _ in reconnected.fulfill() }
+
+        token.withLockedValue { $0 = "r0tat3d" }
+        natsServer.stop()
+        sleep(1)
+        natsServer.start(
+            port: port,
+            cfg: bundle.url(forResource: "token_rotated", withExtension: "conf")!.relativePath)
+        await fulfillment(of: [reconnected], timeout: 10.0)
+
+        let payload = "hello".data(using: .utf8)!
+        let received = XCTestExpectation(description: "subscription did not survive the reconnect")
+        let iter = sub.makeAsyncIterator()
+        Task {
+            if let message = try await iter.next() {
+                XCTAssertEqual(message.payload, payload)
+                received.fulfill()
+            }
+        }
+        try await client.publish(payload, subject: "foo")
+        await fulfillment(of: [received], timeout: 5.0)
     }
 
     func testCredentialsAuth() async throws {

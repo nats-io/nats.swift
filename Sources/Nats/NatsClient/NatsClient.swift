@@ -33,7 +33,7 @@ public enum NatsState: Sendable {
 public struct Auth: Sendable {
     var user: String?
     var password: String?
-    var token: String?
+    var tokenProvider: (@Sendable () async throws -> String)?
     var credentialsPath: URL?
     var nkeyPath: URL?
     var nkey: String?
@@ -47,7 +47,10 @@ public struct Auth: Sendable {
         self.password = password
     }
     init(token: String) {
-        self.token = token
+        self.tokenProvider = { token }
+    }
+    init(tokenProvider: @escaping @Sendable () async throws -> String) {
+        self.tokenProvider = tokenProvider
     }
     static func fromCredentials(_ credentials: URL) -> Auth {
         var auth = Auth()
