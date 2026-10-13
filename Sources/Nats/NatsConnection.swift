@@ -42,7 +42,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let eventHandlerStore = NIOLockedValueBox<[NatsEventKind: [NatsEventHandler]]>([:])
 
     // Connection options
-    internal let retryOnFailedConnect: Bool
+    private let retryOnFailedConnect: Bool
     private let _urls: NIOLockedValueBox<[URL]>
     private var urls: [URL] {
         get { _urls.withLockedValue { $0 } }
@@ -60,16 +60,18 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let clientKey: URL?
 
     typealias InboundIn = ByteBuffer
-    private let state = NIOLockedValueBox(NatsState.pending)
-    private let subscriptions = NIOLockedValueBox([UInt64: NatsSubscription]())
-
-    // Helper methods for state access
-    internal var currentState: NatsState {
-        state.withLockedValue { $0 }
+    private struct Lifecycle: Sendable {
+        var state = NatsState.pending
+        var connectionTask: Task<Void, Error>?
+        var stopping = false
     }
 
-    internal func setState(_ newState: NatsState) {
-        state.withLockedValue { $0 = newState }
+    // Admit connection work and change its state under the same lock.
+    private let lifecycle = NIOLockedValueBox(Lifecycle())
+    private let subscriptions = NIOLockedValueBox([UInt64: NatsSubscription]())
+
+    internal var currentState: NatsState {
+        lifecycle.withLockedValue { $0.state }
     }
 
     private let subscriptionCounter = ManagedAtomic<UInt64>(0)
@@ -92,21 +94,32 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         get { _reconnectAttempts.load(ordering: .relaxed) }
         set { _reconnectAttempts.store(newValue, ordering: .relaxed) }
     }
-    private let capturedConnectionError = NIOLockedValueBox<Error?>(nil)
-
-    private let _reconnectTask = NIOLockedValueBox<Task<(), Error>?>(nil)
-    private var reconnectTask: Task<(), Error>? {
-        get { _reconnectTask.withLockedValue { $0 } }
-        set { _reconnectTask.withLockedValue { $0 = newValue } }
-    }
 
     private let group: MultiThreadedEventLoopGroup
 
-    private let serverInfoContinuation = NIOLockedValueBox<CheckedContinuation<ServerInfo, Error>?>(
-        nil)
-    private let connectionEstablishedContinuation = NIOLockedValueBox<
-        CheckedContinuation<Void, Error>?
-    >(nil)
+    // Promises retain early results across the asynchronous phases of one attempt.
+    private struct Handshake: Sendable {
+        let info: EventLoopPromise<ServerInfo>
+        let upgraded: EventLoopPromise<Void>
+        let established: EventLoopPromise<Channel>
+        let channel = NIOLockedValueBox<Channel?>(nil)
+
+        init(eventLoop: EventLoop) {
+            info = eventLoop.makePromise(of: ServerInfo.self)
+            upgraded = eventLoop.makePromise(of: Void.self)
+            established = eventLoop.makePromise(of: Channel.self)
+            upgraded.futureResult.cascadeFailure(to: established)
+        }
+
+        func fail(_ error: Error) {
+            // Preserve the original failure before cancelled setup work reports its own error.
+            established.fail(error)
+            info.fail(error)
+            upgraded.fail(error)
+        }
+    }
+
+    private let handshake = NIOLockedValueBox<Handshake?>(nil)
 
     private let pingQueue = ConcurrentQueue<RttCommand>()
     private let _batchBuffer = NIOLockedValueBox<BatchBuffer?>(nil)
@@ -139,6 +152,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard context.channel === self.channel else { return }
 
         let state: NatsState = self.currentState
 
@@ -152,6 +166,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
+        guard context.channel === self.channel else { return }
 
         let state: NatsState = self.currentState
         guard state == .connected || state == .pending || state == .connecting else {
@@ -185,7 +200,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = nil }
 
             if self.currentState != .closed && self.currentState != .suspended {
-                context.fireErrorCaught(error)
+                self.errorCaught(context: context, error: error)
             }
 
             return
@@ -194,48 +209,26 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = remainder }
         }
         for op in parseResult.ops {
-            // Only resume the server info continuation when we actually receive
-            // an INFO or -ERR op. Do NOT clear it for unrelated ops.
-            switch op {
-            case .error(let err):
-                if let continuation = serverInfoContinuation.withLockedValue({ cont in
-                    let toResume = cont
-                    cont = nil
-                    return toResume
-                }) {
-                    logger.debug("server info error")
-                    continuation.resume(throwing: err)
-                    continue
-                }
-            case .info(let info):
-                if let continuation = serverInfoContinuation.withLockedValue({ cont in
-                    let toResume = cont
-                    cont = nil
-                    return toResume
-                }) {
-                    logger.debug("server info")
-                    continuation.resume(returning: info)
-                    continue
-                }
-            default:
-                break
-            }
-
-            let connEstablishedCont = connectionEstablishedContinuation.withLockedValue { cont in
-                let toResume = cont
-                cont = nil
-                return toResume
-            }
-
-            if let continuation = connEstablishedCont {
-                logger.debug("conn established")
+            if let handshake = self.handshake.withLockedValue({ $0 }) {
                 switch op {
-                case .error(let err):
-                    continuation.resume(throwing: err)
+                case .info(let info):
+                    handshake.info.succeed(info)
+                    continue
+                case .error(let error):
+                    handshake.fail(error)
+                    continue
+                case .pong:
+                    self.outstandingPings.store(0, ordering: .relaxed)
+                    handshake.established.succeed(context.channel)
+                    continue
+                case .ping:
+                    context.channel.writeAndFlush(
+                        context.channel.allocator.buffer(string: "PONG\r\n")
+                    ).whenFailure { handshake.fail($0) }
+                    continue
                 default:
-                    continuation.resume()
+                    break
                 }
-                continue
             }
 
             switch op {
@@ -331,19 +324,50 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func connect() async throws {
-        self.setState(.connecting)
+        try Task.checkCancellation()
+        let task = try lifecycle.withLockedValue { lifecycle in
+            switch lifecycle.state {
+            case .connected, .connecting:
+                throw NatsError.ClientError.alreadyConnected
+            case .closed:
+                throw NatsError.ClientError.connectionClosed
+            case .suspended:
+                throw NatsError.ClientError.invalidConnection(
+                    "connection is suspended, use resume() instead")
+            case .pending, .disconnected:
+                break
+            }
+            guard lifecycle.connectionTask == nil else {
+                throw NatsError.ClientError.alreadyConnected
+            }
+            lifecycle.state = .connecting
+            let task = makeConnectionTask(retrying: retryOnFailedConnect)
+            lifecycle.connectionTask = task
+            return task
+        }
+
+        if retryOnFailedConnect { return }
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func connectToServers() async throws {
+        try Task.checkCancellation()
         var servers = self.urls
         if !self.retainServersOrder {
             servers = self.urls.shuffled()
         }
         var lastErr: Error?
 
-        // if there are more reconnect attempts than the number of servers,
-        // we are after the initial connect, so sleep between servers
+        // After the first pass, wait once before each server attempt.
         let shouldSleep = self.reconnectAttempts >= self.urls.count
         for s in servers {
             if let maxReconnects {
                 if reconnectAttempts > 0 && reconnectAttempts >= maxReconnects {
+                    if lastErr != nil { break }
                     throw NatsError.ClientError.maxReconnects
                 }
             }
@@ -354,6 +378,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
             do {
                 try await connectToServer(s: s)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch let error as NatsError.ConnectError {
                 if case .invalidConfig(_) = error {
                     throw error
@@ -370,10 +396,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             break
         }
         if let lastErr {
-            self.state.withLockedValue { $0 = .disconnected }
             switch lastErr {
             case let error as ChannelError:
-                serverInfoContinuation.withLockedValue { $0 = nil }
                 var err: NatsError.ConnectError
                 switch error.self {
                 case .connectTimeout(_):
@@ -402,12 +426,16 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.io(lastErr)
             }
         }
-        // Restore before clearing the counter so a restore failure stays bounded by
-        // maxReconnects (no-op on the initial connect: the set is empty).
-        try await restoreSubscriptions()
-        self.reconnectAttempts = 0
         guard let channel = self.channel else {
             throw NatsError.ClientError.internalError("empty channel")
+        }
+        // A cancelled restore must release writes waiting for socket backpressure.
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await restoreSubscriptions()
+            try Task.checkCancellation()
+        } onCancel: {
+            channel.close(promise: nil)
         }
         // Schedule the task to send a PING periodically
         let pingInterval = TimeAmount.nanoseconds(Int64(self.pingInterval * 1_000_000_000))
@@ -416,92 +444,110 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         ) { _ in
             Task { await self.sendPing() }
         }
-        logger.debug("connection established")
-        return
     }
 
     private func connectToServer(s: URL) async throws {
-        var infoTask: Task<(), Never>? = nil
-        // this continuation can throw NatsError.ServerError if server responds with
-        // -ERR to client connect (e.g. auth error)
-        let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
-            serverInfoContinuation.withLockedValue { $0 = continuation }
-            infoTask = Task {
-                await withTaskCancellationHandler {
-                    do {
-                        let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
+        try Task.checkCancellation()
+        guard let host = s.host, let port = s.port else {
+            throw NatsError.ConnectError.invalidConfig("no url")
+        }
 
-                        guard let host = s.host, let port = s.port else {
-                            upgradePromise.succeed()  // avoid promise leaks
-                            throw NatsError.ConnectError.invalidConfig("no url")
-                        }
+        let handshake = Handshake(eventLoop: group.any())
+        self.handshake.withLockedValue { $0 = handshake }
+        defer { self.handshake.withLockedValue { $0 = nil } }
 
-                        let connect = bootstrap.connect(host: host, port: port)
-                        connect.cascadeFailure(to: upgradePromise)
-                        self.channel = try await connect.get()
+        let established = handshake.established.futureResult.map { channel in
+            // Hand off on the event loop before processing any messages following PONG.
+            self.batchBuffer = BatchBuffer(channel: channel)
+            self.handshake.withLockedValue { $0 = nil }
+        }
 
-                        guard let channel = self.channel else {
-                            upgradePromise.succeed()  // avoid promise leaks
-                            throw NatsError.ClientError.internalError("empty channel")
-                        }
-
-                        try await upgradePromise.futureResult.get()
-                        self.batchBuffer = BatchBuffer(channel: channel)
-                    } catch {
-                        let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
-                            .serverInfoContinuation.withLockedValue { cont in
-                                guard let c = cont else { return nil }
-                                cont = nil
-                                return c
-                            }
-                        if let continuation = continuationToResume {
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } onCancel: {
-                    logger.debug("Connection task cancelled")
-                    // Clean up resources
-                    if let channel = self.channel {
-                        channel.close(mode: .all, promise: nil)
-                        self.channel = nil
-                    }
-                    self.batchBuffer = nil
-
-                    let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
-                        .serverInfoContinuation.withLockedValue { cont in
-                            guard let c = cont else { return nil }
-                            cont = nil
-                            return c
-                        }
-                    if let continuation = continuationToResume {
-                        continuation.resume(throwing: NatsError.ClientError.cancelled)
-                    }
+        let setup = Task {
+            do {
+                try Task.checkCancellation()
+                // DNS can race several TCP candidates; only configure the winning connection.
+                let channel = try await ClientBootstrap(
+                    group: handshake.established.futureResult.eventLoop
+                )
+                .channelOption(ChannelOptions.autoRead, value: false)
+                .channelOption(
+                    ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1
+                )
+                .connectTimeout(.seconds(5))
+                .connect(host: host, port: port).get()
+                handshake.channel.withLockedValue { $0 = channel }
+                self.channel = channel
+                self.batchBuffer = nil
+                handshake.established.futureResult.whenFailure { _ in
+                    channel.close(promise: nil)
                 }
-            }
-        }
+                // WebSocket negotiation can close before this handler is added to the pipeline.
+                channel.closeFuture.whenComplete { _ in
+                    handshake.fail(NatsError.ClientError.connectionClosed)
+                }
 
-        await infoTask?.value
-        self.serverInfo = info
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
-            let tlsConfig = try makeTLSConfig()
-            let sslContext = try NIOSSLContext(configuration: tlsConfig)
-            let sslHandler = try NIOSSLClientHandler(
-                context: sslContext, serverHostname: s.host)
-            if let channel = self.channel {
-                // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
-                // (takes ownership via `sending`), unlike NIOLoopBound which requires
-                // already being on the event loop at construction time.
-                let sslHandlerBox = NIOLoopBoundBox.makeBoxSendingValue(
-                    sslHandler, eventLoop: channel.eventLoop)
-                try await channel.eventLoop.submit {
-                    try channel.pipeline.syncOperations.addHandler(
-                        sslHandlerBox.value, position: .first)
+                // TCP has its own timeout; all remaining handshake phases share this deadline.
+                let deadline = channel.eventLoop.scheduleTask(in: .seconds(5)) {
+                    handshake.fail(NatsError.ConnectError.timeout)
+                }
+                handshake.established.futureResult.whenComplete { _ in deadline.cancel() }
+
+                parseRemainder.withLockedValue { $0 = nil }
+                _inputBuffer.withLockedValue { $0.clear() }
+                try await channel.eventLoop.flatSubmit {
+                    self.configureTransport(channel: channel, server: s, handshake: handshake)
                 }.get()
+                try await channel.setOption(ChannelOptions.autoRead, value: true).get()
+                try await handshake.upgraded.futureResult.get()
+                let info = try await handshake.info.futureResult.get()
+                try Task.checkCancellation()
+                self.serverInfo = info
+
+                if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst
+                    && s.scheme != "wss"
+                {
+                    let tlsConfig = try makeTLSConfig()
+                    let sslContext = try NIOSSLContext(configuration: tlsConfig)
+                    let sslHandler = try NIOSSLClientHandler(
+                        context: sslContext, serverHostname: s.host)
+                    let sslHandlerBox = NIOLoopBoundBox.makeBoxSendingValue(
+                        sslHandler, eventLoop: channel.eventLoop)
+                    try await channel.eventLoop.submit {
+                        try channel.pipeline.syncOperations.addHandler(
+                            sslHandlerBox.value, position: .first)
+                    }.get()
+                }
+
+                try await sendClientConnectInit(channel: channel, info: info)
+            } catch {
+                handshake.fail(error)
             }
         }
+        handshake.established.futureResult.whenFailure { _ in setup.cancel() }
 
-        try await sendClientConnectInit()
-        self.connectedUrl = s
+        do {
+            try await withTaskCancellationHandler {
+                try await established.get()
+                await setup.value
+                try Task.checkCancellation()
+            } onCancel: {
+                // Waiting on a NIO future does not observe Swift task cancellation on its own.
+                handshake.fail(CancellationError())
+            }
+
+            guard let channel = handshake.channel.withLockedValue({ $0 }), channel.isActive else {
+                throw NatsError.ClientError.connectionClosed
+            }
+            self.connectedUrl = s
+        } catch {
+            handshake.fail(error)
+            await setup.value
+            if let channel = handshake.channel.withLockedValue({ $0 }) {
+                channel.close(promise: nil)
+                try await channel.closeFuture.get()
+            }
+            throw error
+        }
     }
 
     private func makeTLSConfig() throws -> TLSConfiguration {
@@ -529,7 +575,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return tlsConfiguration
     }
 
-    private func sendClientConnectInit() async throws {
+    private func sendClientConnectInit(channel: Channel, info: ServerInfo) async throws {
         var initialConnect = ConnectInfo(
             verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
             lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
@@ -549,7 +595,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.invalidConfig(
                     "failed to extract NKEY from credentials file")
             }
-            guard let nonce = self.serverInfo?.nonce else {
+            guard let nonce = info.nonce else {
                 throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let keypair = try KeyPair(seed: String(data: nkey, encoding: .utf8)!)
@@ -569,7 +615,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 seed: nkeyContent.trimmingCharacters(in: .whitespacesAndNewlines)
             )
 
-            guard let nonce = self.serverInfo?.nonce else {
+            guard let nonce = info.nonce else {
                 throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let sig = try keypair.sign(input: nonce.data(using: .utf8)!)
@@ -579,7 +625,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
         if let nkey = self.auth?.nkey {
             let keypair = try KeyPair(seed: nkey)
-            guard let nonce = self.serverInfo?.nonce else {
+            guard let nonce = info.nonce else {
                 throw NatsError.ConnectError.invalidConfig("missing nonce")
             }
             let nonceData = nonce.data(using: .utf8)!
@@ -588,173 +634,106 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             initialConnect.signature = base64sig
             initialConnect.nkey = keypair.publicKeyEncoded
         }
-        let connect = initialConnect
-        // this continuation can throw NatsError.ServerError if server responds with
-        // -ERR to client connect (e.g. auth error)
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                connectionEstablishedContinuation.withLockedValue { $0 = continuation }
-                Task.detached {
-                    do {
-                        try await self.write(operation: ClientOp.connect(connect))
-                        try await self.write(operation: ClientOp.ping)
-                        self.channel?.flush()
-                    } catch {
-                        let continuationToResume: CheckedContinuation<Void, Error>? = self
-                            .connectionEstablishedContinuation.withLockedValue { cont in
-                                guard let c = cont else { return nil }
-                                cont = nil
-                                return c
-                            }
-                        if let continuation = continuationToResume {
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                }
-            }
-        } onCancel: {
-            logger.debug("Client connect initialization cancelled")
-            // Clean up resources
-            if let channel = self.channel {
-                channel.close(mode: .all, promise: nil)
-                self.channel = nil
-            }
-            self.batchBuffer = nil
-
-            let continuationToResume: CheckedContinuation<Void, Error>? = self
-                .connectionEstablishedContinuation.withLockedValue { cont in
-                    guard let c = cont else { return nil }
-                    cont = nil
-                    return c
-                }
-            if let continuation = continuationToResume {
-                continuation.resume(throwing: NatsError.ClientError.cancelled)
-            }
-        }
+        try Task.checkCancellation()
+        var buffer = channel.allocator.buffer(capacity: 512)
+        try buffer.writeClientOp(.connect(initialConnect))
+        try buffer.writeClientOp(.ping)
+        // Handshake writes must observe socket errors, not merely acceptance by the batch buffer.
+        try await channel.writeAndFlush(buffer)
     }
 
-    private func bootstrapConnection(
-        to server: URL
-    ) -> (ClientBootstrap, EventLoopPromise<Void>) {
-        let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
-        let bootstrap = ClientBootstrap(group: self.group)
-            .channelOption(
-                ChannelOptions.socket(
-                    SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR),
-                value: 1
-            )
-            .channelInitializer { channel in
-                if self.requireTls && self.tlsFirst {
-                    upgradePromise.succeed(())
-                    do {
-                        let tlsConfig = try self.makeTLSConfig()
-                        let sslContext = try NIOSSLContext(
-                            configuration: tlsConfig)
-                        let sslHandler = try NIOSSLClientHandler(
-                            context: sslContext, serverHostname: server.host!)
-                        do {
-                            try channel.pipeline.syncOperations.addHandler(sslHandler)
-                        } catch {
-                            let tlsError = NatsError.ConnectError.tlsFailure(error)
-                            return channel.eventLoop.makeFailedFuture(tlsError)
-                        }
-                        return channel.pipeline.addHandler(self)
-                    } catch {
-                        let tlsError = NatsError.ConnectError.tlsFailure(error)
-                        return channel.eventLoop.makeFailedFuture(tlsError)
-                    }
-                } else {
-                    if server.scheme == "ws" || server.scheme == "wss" {
-                        let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
-                            host: server.host ?? "localhost",
-                            path: server.path,
-                            query: server.query,
-                            headers: HTTPHeaders(),  // TODO (mtmk): pass in from client options
-                            upgradePromise: upgradePromise)
-                        let httpUpgradeRequestHandlerBox = NIOLoopBound(
-                            httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
+    private func configureTransport(
+        channel: Channel, server: URL, handshake: Handshake
+    ) -> EventLoopFuture<Void> {
+        let upgradePromise = handshake.upgraded
+        if self.requireTls && self.tlsFirst {
+            upgradePromise.succeed(())
+            do {
+                let tlsConfig = try self.makeTLSConfig()
+                let sslContext = try NIOSSLContext(
+                    configuration: tlsConfig)
+                let sslHandler = try NIOSSLClientHandler(
+                    context: sslContext, serverHostname: server.host!)
+                try channel.pipeline.syncOperations.addHandler(sslHandler)
+                return channel.pipeline.addHandler(self)
+            } catch {
+                let tlsError = NatsError.ConnectError.tlsFailure(error)
+                return channel.eventLoop.makeFailedFuture(tlsError)
+            }
+        }
 
-                        let websocketUpgrader = NIOWebSocketClientUpgrader(
-                            maxFrameSize: 8 * 1024 * 1024,
-                            automaticErrorHandling: true,
-                            upgradePipelineHandler: { channel, _ in
-                                let wsh = NIOWebSocketFrameAggregator(
-                                    minNonFinalFragmentSize: 0,
-                                    maxAccumulatedFrameCount: Int.max,
-                                    maxAccumulatedFrameSize: Int.max
-                                )
-                                do {
-                                    try channel.pipeline.syncOperations.addHandler(wsh)
-                                    try channel.pipeline.syncOperations.addHandler(
-                                        WebSocketByteBufferCodec())
-                                } catch {
-                                    return channel.eventLoop.makeFailedFuture(error)
-                                }
-                                return channel.pipeline.addHandler(self)
-                            }
-                        )
+        guard server.scheme == "ws" || server.scheme == "wss" else {
+            upgradePromise.succeed(())
+            return channel.pipeline.addHandler(self)
+        }
 
-                        let config: NIOHTTPClientUpgradeConfiguration = (
-                            upgraders: [websocketUpgrader],
-                            completionHandler: { context in
-                                upgradePromise.succeed(())
-                                channel.pipeline.syncOperations.removeHandler(
-                                    httpUpgradeRequestHandlerBox.value, promise: nil)
-                            }
-                        )
+        let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
+            host: server.host ?? "localhost",
+            path: server.path,
+            query: server.query,
+            headers: HTTPHeaders(),  // TODO (mtmk): pass in from client options
+            upgradePromise: upgradePromise)
+        let httpUpgradeRequestHandlerBox = NIOLoopBound(
+            httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
 
-                        if server.scheme == "wss" {
-                            do {
-                                let tlsConfig = try self.makeTLSConfig()
-                                let sslContext = try NIOSSLContext(
-                                    configuration: tlsConfig)
-                                let sslHandler = try NIOSSLClientHandler(
-                                    context: sslContext, serverHostname: server.host!)
-                                // The sync methods here are safe because we're on the channel event loop
-                                // due to the promise originating on the event loop of the channel.
-                                try channel.pipeline.syncOperations.addHandler(sslHandler)
-                            } catch {
-                                let tlsError = NatsError.ConnectError.tlsFailure(error)
-                                upgradePromise.fail(tlsError)
-                                return channel.eventLoop.makeFailedFuture(tlsError)
-                            }
-                        }
-
-                        channel.pipeline.addHTTPClientHandlers(
-                            leftOverBytesStrategy: .forwardBytes,
-                            withClientUpgrade: config
-                        ).flatMap {
-                            do {
-                                try channel.pipeline.syncOperations.addHandler(
-                                    httpUpgradeRequestHandlerBox.value)
-                                return channel.eventLoop.makeSucceededFuture(())
-                            } catch {
-                                return channel.eventLoop.makeFailedFuture(error)
-                            }
-                        }.whenComplete { result in
-                            switch result {
-                            case .success():
-                                logger.debug("success")
-                            case .failure(let error):
-                                logger.debug("error: \(error)")
-                            }
-                        }
-                    } else {
-                        upgradePromise.succeed(())
-                        //Fixme(jrm): do not ignore error from addHandler future.
-                        channel.pipeline.addHandler(self).whenComplete { result in
-                            switch result {
-                            case .success():
-                                logger.debug("success")
-                            case .failure(let error):
-                                logger.debug("error: \(error)")
-                            }
-                        }
-                    }
-                    return channel.eventLoop.makeSucceededFuture(())
+        let websocketUpgrader = NIOWebSocketClientUpgrader(
+            maxFrameSize: 8 * 1024 * 1024,
+            automaticErrorHandling: true,
+            upgradePipelineHandler: { channel, _ in
+                let wsh = NIOWebSocketFrameAggregator(
+                    minNonFinalFragmentSize: 0,
+                    maxAccumulatedFrameCount: Int.max,
+                    maxAccumulatedFrameSize: Int.max
+                )
+                do {
+                    try channel.pipeline.syncOperations.addHandler(wsh)
+                    try channel.pipeline.syncOperations.addHandler(
+                        WebSocketByteBufferCodec())
+                } catch {
+                    return channel.eventLoop.makeFailedFuture(error)
                 }
-            }.connectTimeout(.seconds(5))
-        return (bootstrap, upgradePromise)
+                return channel.pipeline.addHandler(self)
+            }
+        )
+
+        let config: NIOHTTPClientUpgradeConfiguration = (
+            upgraders: [websocketUpgrader],
+            completionHandler: { context in
+                upgradePromise.succeed(())
+                channel.pipeline.syncOperations.removeHandler(
+                    httpUpgradeRequestHandlerBox.value, promise: nil)
+            }
+        )
+
+        if server.scheme == "wss" {
+            do {
+                let tlsConfig = try self.makeTLSConfig()
+                let sslContext = try NIOSSLContext(
+                    configuration: tlsConfig)
+                let sslHandler = try NIOSSLClientHandler(
+                    context: sslContext, serverHostname: server.host!)
+                // The sync methods here are safe because we're on the channel event loop
+                // due to the promise originating on the event loop of the channel.
+                try channel.pipeline.syncOperations.addHandler(sslHandler)
+            } catch {
+                let tlsError = NatsError.ConnectError.tlsFailure(error)
+                upgradePromise.fail(tlsError)
+                return channel.eventLoop.makeFailedFuture(tlsError)
+            }
+        }
+
+        return channel.pipeline.addHTTPClientHandlers(
+            leftOverBytesStrategy: .forwardBytes,
+            withClientUpgrade: config
+        ).flatMap {
+            do {
+                try channel.pipeline.syncOperations.addHandler(
+                    httpUpgradeRequestHandlerBox.value)
+                return channel.eventLoop.makeSucceededFuture(())
+            } catch {
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
     }
 
     private func updateServersList(info: ServerInfo) {
@@ -771,81 +750,66 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func close() async throws {
-        self.reconnectTask?.cancel()
-        try await self.reconnectTask?.value
-
-        guard let eventLoop = self.channel?.eventLoop else {
-            self.state.withLockedValue { $0 = .closed }
-            self.pingTask?.cancel()
-            self.fire(.closed)
-            return
-        }
-        let promise = eventLoop.makePromise(of: Void.self)
-
-        eventLoop.execute {
-            self.state.withLockedValue { $0 = .closed }
-            self.pingTask?.cancel()
-            self.channel?.close(mode: .all, promise: promise)
-        }
-
-        do {
-            try await promise.futureResult.get()
-        } catch ChannelError.alreadyClosed {
-            // we don't want to throw an error if channel is already closed
-            // as that would mean we would get an error closing client during reconnect
-        }
-
-        self.fire(.closed)
-    }
-
-    private func disconnect() async throws {
-        self.pingTask?.cancel()
-        try await self.channel?.close().get()
+        try await stop(state: .closed)
     }
 
     func suspend() async throws {
-        self.reconnectTask?.cancel()
-        _ = try await self.reconnectTask?.value
+        try await stop(state: .suspended)
+    }
 
-        // Handle case where channel is already nil (e.g., during rapid reconnections)
-        guard let eventLoop = self.channel?.eventLoop else {
-            // Set state to suspended even if channel is nil
-            self.state.withLockedValue { $0 = .suspended }
-            return
-        }
-        let promise = eventLoop.makePromise(of: Void.self)
-
-        eventLoop.execute {  // This ensures the code block runs on the event loop
-            let shouldClose = self.state.withLockedValue { currentState in
-                let wasConnected = currentState == .connected
-                currentState = .suspended
-                return wasConnected
+    private func stop(state: NatsState) async throws {
+        let task = try lifecycle.withLockedValue { lifecycle in
+            guard lifecycle.state != .closed else {
+                throw NatsError.ClientError.connectionClosed
             }
-
-            if shouldClose {
-                self.pingTask?.cancel()
-                self.channel?.close(mode: .all, promise: promise)
-            } else {
-                promise.succeed()
+            guard !lifecycle.stopping else {
+                throw NatsError.ClientError.invalidConnection("connection is stopping")
             }
+            // Stop admitting success or new work before cancelling the active attempt.
+            lifecycle.state = state
+            lifecycle.stopping = true
+            return lifecycle.connectionTask
+        }
+        var stopped = false
+        defer {
+            lifecycle.withLockedValue {
+                $0.connectionTask = nil
+                $0.stopping = false
+            }
+            if stopped { fire(state == .closed ? .closed : .suspended) }
         }
 
-        try await promise.futureResult.get()
-        self.fire(.suspended)
+        task?.cancel()
+        _ = await task?.result
+        try await closeChannel()
+        stopped = true
+    }
+
+    private func closeChannel() async throws {
+        pingTask?.cancel()
+        guard let channel = self.channel else { return }
+
+        let closing: EventLoopFuture<Void> = channel.close()
+        try await channel.closeFuture.get()
+        do {
+            try await closing.get()
+        } catch ChannelError.alreadyClosed {
+            // The handshake or peer may have closed the socket first.
+        }
     }
 
     func resume() async throws {
-        guard let eventLoop = self.channel?.eventLoop else {
-            throw NatsError.ClientError.internalError("channel should not be nil")
-        }
-        try await eventLoop.submit {
-            let canResume = self.state.withLockedValue { $0 == .suspended }
-            guard canResume else {
+        try lifecycle.withLockedValue { lifecycle in
+            guard lifecycle.state != .closed else {
+                throw NatsError.ClientError.connectionClosed
+            }
+            guard lifecycle.state == .suspended, !lifecycle.stopping else {
                 throw NatsError.ClientError.invalidConnection(
                     "unable to resume connection - connection is not in suspended state")
             }
-            self.handleReconnect()
-        }.get()
+            lifecycle.state = .connecting
+            lifecycle.connectionTask = makeConnectionTask(retrying: true)
+        }
     }
 
     func reconnect() async throws {
@@ -871,60 +835,26 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     }
 
-    func channelActive(context: ChannelHandlerContext) {
-        logger.debug("TCP channel active")
-
-        parseRemainder.withLockedValue { $0 = nil }
-
-        self._inputBuffer.withLockedValue {
-            $0 = context.channel.allocator.buffer(capacity: 1024 * 1024 * 8)
-        }
-    }
-
     func channelInactive(context: ChannelHandlerContext) {
+        guard context.channel === self.channel else { return }
+
         logger.debug("TCP channel inactive")
 
-        // If we lost the channel before we delivered server INFO or connection
-        // establishment, make sure to fail any pending continuations to avoid leaks.
-        // Use captured error if available (e.g., TLS failure), otherwise use connectionClosed.
-        let errorToUse: Error = capturedConnectionError.withLockedValue({ err in
-            let captured = err
-            err = nil  // Clear after using
-            if let capturedError = captured {
-                return NatsError.ConnectError.tlsFailure(capturedError)
-            } else {
-                return NatsError.ClientError.connectionClosed
-            }
-        })
+        handshake.withLockedValue { $0 }?.fail(NatsError.ClientError.connectionClosed)
 
-        if let continuation = serverInfoContinuation.withLockedValue({ cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }) {
-            continuation.resume(throwing: errorToUse)
-        }
-
-        if let continuation = connectionEstablishedContinuation.withLockedValue({ cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }) {
-            continuation.resume(throwing: errorToUse)
-        }
-
-        let shouldHandleDisconnect = state.withLockedValue { $0 == .connected }
-        if shouldHandleDisconnect {
-            handleDisconnect()
-        }
+        handleDisconnect()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        guard context.channel === self.channel else { return }
+
         logger.debug("Encountered error on the channel: \(error)")
 
-        let isConnecting = state.withLockedValue { $0 == .pending || $0 == .connecting }
-        if isConnecting {
-            capturedConnectionError.withLockedValue { $0 = error }
+        if let handshake = handshake.withLockedValue({ $0 }) {
+            // The connection task reports handshake failures once, after cleanup.
+            handshake.fail(error)
+            context.close(promise: nil)
+            return
         }
 
         context.close(promise: nil)
@@ -936,87 +866,94 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    func handleDisconnect() {
-        state.withLockedValue { $0 = .disconnected }
-        if let channel = self.channel {
-            let promise = channel.eventLoop.makePromise(of: Void.self)
-            Task {
-                do {
-                    try await self.disconnect()
-                    promise.succeed()
-                } catch ChannelError.alreadyClosed {
-                    // if the channel was already closed, no need to return error
-                    promise.succeed()
-                } catch {
-                    promise.fail(error)
-                }
-            }
-            promise.futureResult.whenComplete { result in
-                do {
-                    try result.get()
-                    self.fire(.disconnected)
-                } catch {
-                    logger.error("Error closing connection: \(error)")
-                }
-            }
-        }
+    private func handleDisconnect() {
+        lifecycle.withLockedValue { lifecycle in
+            guard lifecycle.state == .connected else { return }
+            lifecycle.state = .disconnected
 
-        handleReconnect()
+            // A task still finishing its connected notification performs this handoff in defer.
+            guard lifecycle.connectionTask == nil else { return }
+            lifecycle.state = .connecting
+            lifecycle.connectionTask = makeConnectionTask(retrying: true, notifyDisconnect: true)
+        }
     }
 
-    func handleReconnect() {
-
-        let isAlreadyReconnecting = _reconnectTask.withLockedValue { task -> Bool in
-            guard let activeTask = task else { return false }
-            return !activeTask.isCancelled
-        }
-
-        guard !isAlreadyReconnecting else {
-            logger.debug("Reconnect already in progress. Ignoring duplicate trigger.")
-            return
-        }
-
-        reconnectTask = Task {
-
-            defer {
-                _reconnectTask.withLockedValue { $0 = nil }
-            }
-
+    // Called while holding the lifecycle lock, so shutdown always sees the registered task.
+    private func makeConnectionTask(
+        retrying: Bool, notifyDisconnect: Bool = false
+    ) -> Task<Void, Error> {
+        Task {
             var connected = false
-            while !Task.isCancelled
-                && (maxReconnects == nil || self.reconnectAttempts < maxReconnects!)
-            {
-                do {
-                    try await self.connect()
-                    connected = true
-                    break  // Successfully connected
-                } catch is CancellationError {
-                    logger.debug("Reconnect task cancelled")
-                    return
-                } catch {
-                    logger.debug("Could not reconnect: \(error)")
-                    if !Task.isCancelled {
-                        try await Task.sleep(nanoseconds: self.reconnectWait)
+            defer {
+                lifecycle.withLockedValue { lifecycle in
+                    // stop() keeps ownership until both the task and socket have drained.
+                    guard !lifecycle.stopping else { return }
+                    if connected && lifecycle.state == .disconnected {
+                        lifecycle.state = .connecting
+                        lifecycle.connectionTask = makeConnectionTask(
+                            retrying: true, notifyDisconnect: true)
+                    } else {
+                        lifecycle.connectionTask = nil
+                        if lifecycle.state == .connecting { lifecycle.state = .disconnected }
                     }
                 }
             }
 
-            // Early return if cancelled
-            if Task.isCancelled {
-                logger.debug("Reconnect task cancelled after connection attempts")
-                return
+            // Drain any previous socket before reusing the handler for a new attempt.
+            pingTask?.cancel()
+            if let channel = self.channel {
+                channel.close(promise: nil)
+                try await channel.closeFuture.get()
+            }
+            if notifyDisconnect { fire(.disconnected) }
+
+            while !retrying || maxReconnects == nil || reconnectAttempts < maxReconnects! {
+                do {
+                    try Task.checkCancellation()
+                    try await connectToServers()
+                    guard let channel = self.channel else {
+                        throw NatsError.ClientError.connectionClosed
+                    }
+                    try await channel.eventLoop.submit {
+                        try self.lifecycle.withLockedValue { lifecycle in
+                            guard lifecycle.state == .connecting,
+                                lifecycle.connectionTask?.isCancelled == false
+                            else { throw CancellationError() }
+                            guard channel.isActive else {
+                                throw NatsError.ClientError.connectionClosed
+                            }
+                            lifecycle.state = .connected
+                        }
+                        logger.debug("connection established")
+                        self.fire(.connected)
+                    }.get()
+                    self.reconnectAttempts = 0
+                    connected = true
+                    return
+                } catch {
+                    do {
+                        try await closeChannel()
+                    } catch {
+                        logger.warning("Error closing failed connection: \(error)")
+                    }
+                    if error is CancellationError || Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    guard retrying else { throw error }
+
+                    fire(.error((error as? NatsErrorProtocol) ?? NatsError.ClientError.io(error)))
+                    logger.debug("Could not reconnect: \(error)")
+                }
             }
 
-            // If we got here without connecting and weren't cancelled, we hit max reconnects
-            if !connected {
+            let exhausted = lifecycle.withLockedValue { lifecycle in
+                guard lifecycle.state == .connecting else { return false }
+                lifecycle.state = .closed
+                return true
+            }
+            if exhausted {
                 logger.error("Could not reconnect; maxReconnects exceeded")
-                try await self.close()
-                return
-            }
-
-            self.channel?.eventLoop.execute {
-                self.state.withLockedValue { $0 = .connected }
-                self.fire(.connected)
+                fire(.closed)
             }
         }
     }
@@ -1024,13 +961,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func restoreSubscriptions() async throws {
         let subsToRestore = subscriptions.withLockedValue { Array($0) }
         for (sid, sub) in subsToRestore {
-            do {
-                try await resubscribe(sid: sid, sub)
-            } catch {
-                logger.error("Error recreating subscription \(sid): \(error)")
-                self.fire(.error((error as? NatsErrorProtocol) ?? NatsError.ClientError.io(error)))
-                throw error
-            }
+            try await resubscribe(sid: sid, sub)
         }
     }
 

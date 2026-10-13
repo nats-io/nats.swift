@@ -88,10 +88,12 @@ extension NatsClient {
     /// If ``NatsClientOptions/retryOnfailedConnect()`` is used, `connect()`
     /// will not wait until the connection is established but rather return immediatelly.
     ///
+    /// Each server attempt allows five seconds for TCP and another five seconds for the handshake.
+    ///
     /// > **Throws:**
     /// > - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
     /// > - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
-    /// > - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
+    /// > - ``NatsError/ConnectError/timeout`` if the TCP connection or NATS handshake timed out
     /// > - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
     /// > - ``NatsError/ConnectError/io`` if there was other error establishing connection
     /// > - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
@@ -102,37 +104,7 @@ extension NatsClient {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
 
-        // Check if already connected or in invalid state for connect()
-        let currentState = connectionHandler.currentState
-        switch currentState {
-        case .connected, .connecting:
-            throw NatsError.ClientError.alreadyConnected
-        case .closed:
-            throw NatsError.ClientError.connectionClosed
-        case .suspended:
-            throw NatsError.ClientError.invalidConnection(
-                "connection is suspended, use resume() instead")
-        case .pending, .disconnected:
-            // These states allow connection/reconnection
-            break
-        }
-
-        // Set state to connecting immediately to prevent concurrent connect() calls
-        connectionHandler.setState(.connecting)
-
-        do {
-            if !connectionHandler.retryOnFailedConnect {
-                try await connectionHandler.connect()
-                connectionHandler.setState(.connected)
-                connectionHandler.fire(.connected)
-            } else {
-                connectionHandler.handleReconnect()
-            }
-        } catch {
-            // Reset state on connection failure
-            connectionHandler.setState(.disconnected)
-            throw error
-        }
+        try await connectionHandler.connect()
     }
 
     /// Closes a connection to NATS server.
@@ -142,9 +114,6 @@ extension NatsClient {
         logger.debug("close")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
-        }
-        if case .closed = connectionHandler.currentState {
-            throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.close()
     }
@@ -159,9 +128,6 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.currentState {
-            throw NatsError.ClientError.connectionClosed
-        }
         try await connectionHandler.suspend()
     }
 
@@ -175,9 +141,6 @@ extension NatsClient {
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
         }
-        if case .closed = connectionHandler.currentState {
-            throw NatsError.ClientError.connectionClosed
-        }
         try await connectionHandler.resume()
     }
 
@@ -189,9 +152,6 @@ extension NatsClient {
         logger.debug("resume")
         guard let connectionHandler = self.connectionHandler else {
             throw NatsError.ClientError.internalError("empty connection handler")
-        }
-        if case .closed = connectionHandler.currentState {
-            throw NatsError.ClientError.connectionClosed
         }
         try await connectionHandler.reconnect()
     }
