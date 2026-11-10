@@ -42,6 +42,8 @@ class JetStreamTests: XCTestCase {
         ("testConsumerInfo", testConsumerInfo),
         ("testConsumerInfoWithCustomInbox", testConsumerInfoWithCustomInbox),
         ("testListConsumers", testListConsumers),
+        ("testPublishOptions", testPublishOptions),
+        ("testAccountInfo", testAccountInfo),
     ]
 
     var natsServer = NatsServer()
@@ -1059,11 +1061,107 @@ class JetStreamTests: XCTestCase {
 
         // list consumers on non-existing stream
         consumers = await ctx.consumers(stream: "bad")
-        i = 0
-        for try await _ in consumers {
-            i += 1
+        do {
+            for try await _ in consumers {
+                XCTFail("should not return any consumers")
+            }
+            XCTFail("expected stream not found error")
+        } catch JetStreamError.StreamError.streamNotFound {
+            // success
         }
-        XCTAssertEqual(i, 0)
     }
 
+    func testPublishOptions() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        _ = try await ctx.createStream(cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let payload = "hello".data(using: .utf8)!
+
+        // deduplication
+        let first = try await ctx.publish(
+            "foo.A", message: payload, options: PublishOptions(messageId: "1")
+        ).wait()
+        XCTAssertFalse(first.duplicate)
+        let dup = try await ctx.publish(
+            "foo.A", message: payload, options: PublishOptions(messageId: "1")
+        ).wait()
+        XCTAssertTrue(dup.duplicate)
+        XCTAssertEqual(dup.seq, first.seq)
+
+        // expectations which are met
+        let ack = try await ctx.publish(
+            "foo.A", message: payload,
+            options: PublishOptions(
+                messageId: "2", expectedStream: "test", expectedLastSequence: 1,
+                expectedLastSubjectSequence: 1, expectedLastMessageId: "1")
+        ).wait()
+        XCTAssertEqual(ack.seq, 2)
+
+        // expectations which are not met
+        let failing: [(PublishOptions, (Error) -> Bool)] = [
+            (
+                PublishOptions(expectedStream: "other"),
+                {
+                    if case JetStreamError.PublishError.streamNotMatch = $0 { return true }
+                    return false
+                }
+            ),
+            (
+                PublishOptions(expectedLastSequence: 1),
+                {
+                    if case JetStreamError.PublishError.streamWrongLastSequence = $0 { return true }
+                    return false
+                }
+            ),
+            (
+                PublishOptions(expectedLastSubjectSequence: 1),
+                {
+                    if case JetStreamError.PublishError.streamWrongLastSequence = $0 { return true }
+                    return false
+                }
+            ),
+            (
+                PublishOptions(expectedLastMessageId: "1"),
+                {
+                    if case JetStreamError.PublishError.streamWrongLastMessageId = $0 {
+                        return true
+                    }
+                    return false
+                }
+            ),
+        ]
+        for (options, isExpected) in failing {
+            do {
+                _ = try await ctx.publish("foo.A", message: payload, options: options).wait()
+                XCTFail("expected publish to fail for \(options)")
+            } catch {
+                XCTAssertTrue(isExpected(error), "unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testAccountInfo() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+        let stream = try await ctx.createStream(cfg: StreamConfig(name: "test", subjects: ["foo"]))
+        _ = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let info = try await ctx.accountInfo()
+        XCTAssertEqual(info.streams, 1)
+        XCTAssertEqual(info.consumers, 1)
+    }
 }

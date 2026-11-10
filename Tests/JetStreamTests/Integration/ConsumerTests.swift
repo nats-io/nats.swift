@@ -33,6 +33,8 @@ class ConsumerTests: XCTestCase {
         ("testFetchCancellationTearsDownSubscription", testFetchCancellationTearsDownSubscription),
         ("testFetchEarlyBreakTearsDownSubscription", testFetchEarlyBreakTearsDownSubscription),
         ("testFetchCompletionTearsDownSubscription", testFetchCompletionTearsDownSubscription),
+        ("testConsume", testConsume),
+        ("testConsumeConsumerDeleted", testConsumeConsumerDeleted),
     ]
 
     var natsServer = NatsServer()
@@ -584,5 +586,77 @@ class ConsumerTests: XCTestCase {
         XCTAssertEqual(count, baseline, "completed fetch leaked its inbox subscription")
 
         try await client.close()
+    }
+
+    func testConsume() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        let payload = "hello".data(using: .utf8)!
+        for _ in 1...25 {
+            _ = try await ctx.publish("foo.A", message: payload).wait()
+        }
+
+        // publish more messages after the first pull requests expired with no messages
+        let publisher = Task {
+            try await Task.sleep(nanoseconds: 2_500_000_000)
+            for _ in 1...25 {
+                _ = try await ctx.publish("foo.A", message: payload).wait()
+            }
+        }
+
+        // batch smaller than the number of messages forces multiple pull requests
+        var i = 0
+        for try await msg in consumer.consume(batch: 10, expires: 1) {
+            try await msg.ack()
+            XCTAssertEqual(msg.payload, payload)
+            i += 1
+            if i == 50 {
+                break
+            }
+        }
+        try await publisher.value
+        XCTAssertEqual(i, 50)
+    }
+
+    func testConsumeConsumerDeleted() async throws {
+        let bundle = Bundle.module
+        natsServer.start(
+            cfg: bundle.url(forResource: "jetstream", withExtension: "conf")!.relativePath)
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        try await client.connect()
+
+        let ctx = JetStreamContext(client: client)
+
+        let stream = try await ctx.createStream(
+            cfg: StreamConfig(name: "test", subjects: ["foo.*"]))
+        let consumer = try await stream.createConsumer(cfg: ConsumerConfig(name: "cons"))
+
+        Task {
+            try await Task.sleep(nanoseconds: 500_000_000)
+            try await stream.deleteConsumer(name: "cons")
+        }
+
+        do {
+            for try await _ in consumer.consume(expires: 5) {
+                XCTFail("should not receive any messages")
+            }
+            XCTFail("expected consumer deleted error")
+        } catch JetStreamError.FetchError.consumerDeleted {
+            // success
+        }
     }
 }

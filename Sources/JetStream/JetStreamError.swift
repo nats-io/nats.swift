@@ -839,16 +839,15 @@ public enum Response<T: Codable>: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
-        // Try to decode the expected success type T first
-        if let successResponse = try? container.decode(T.self) {
-            self = .success(successResponse)
+        // Try to decode an error first, as error responses may also contain fields of T
+        // (e.g. a failed publish ack contains `stream` and `seq`)
+        if let errorResponse = try? container.decode(JetStreamAPIResponse.self) {
+            self = .error(errorResponse)
             return
         }
 
-        // If that fails, try to decode ErrorResponse
-        let errorResponse = try container.decode(JetStreamAPIResponse.self)
-        self = .error(errorResponse)
-        return
+        // If that fails, decode the expected success type T
+        self = .success(try container.decode(T.self))
     }
 
     public func encode(to encoder: Encoder) throws {

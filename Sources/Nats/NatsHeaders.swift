@@ -46,6 +46,13 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible, Send
     public static let natsSequence = try! NatsHeaderName("Nats-Sequence")
     public static let natsTimestamp = try! NatsHeaderName("Nats-Time-Stamp")
     public static let natsSubject = try! NatsHeaderName("Nats-Subject")
+    public static let natsMsgId = try! NatsHeaderName("Nats-Msg-Id")
+    public static let natsExpectedStream = try! NatsHeaderName("Nats-Expected-Stream")
+    public static let natsExpectedLastSequence = try! NatsHeaderName(
+        "Nats-Expected-Last-Sequence")
+    public static let natsExpectedLastSubjectSequence = try! NatsHeaderName(
+        "Nats-Expected-Last-Subject-Sequence")
+    public static let natsExpectedLastMsgId = try! NatsHeaderName("Nats-Expected-Last-Msg-Id")
     // Add other standard headers as needed...
 }
 

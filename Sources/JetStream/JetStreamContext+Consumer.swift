@@ -241,6 +241,9 @@ public struct ConsumerNames: AsyncSequence {
             buffer.append(contentsOf: consumers)
             return try await self.next()
         case .error(let err):
+            if let streamErr = JetStreamError.StreamError(from: err.error) {
+                throw streamErr
+            }
             throw err.error
         }
 
@@ -307,6 +310,9 @@ public struct Consumers: AsyncSequence {
             buffer.append(contentsOf: consumers)
             return try await self.next()
         case .error(let err):
+            if let streamErr = JetStreamError.StreamError(from: err.error) {
+                throw streamErr
+            }
             throw err.error
         }
 

@@ -55,6 +55,64 @@ extension Consumer {
         return FetchResult(
             ctx: ctx, sub: sub, idleHeartbeat: idleHeartbeat, batch: batch, expires: expires)
     }
+
+    /// Continuously retrieves messages from a stream.
+    /// A new pull request is sent each time the previous one is exhausted or expires,
+    /// so iteration only ends when the iterating task is cancelled or an unrecoverable error occurs.
+    ///
+    ///  - Parameters:
+    ///   - batch: maximum number of messages retrieved in a single pull request
+    ///   - expires: timeout of each pull request
+    ///   - idleHeartbeat: interval in which server should send heartbeat messages (if no user messages are available).
+    ///
+    ///  - Returns: ``ConsumeResult`` which implements ``AsyncSequence`` allowing iteration over messages.
+    ///
+    ///  - Throws (while iterating):
+    ///   - ``JetStreamError/FetchError`` if there was an error while fetching messages
+    public func consume(
+        batch: Int = 100, expires: TimeInterval = 30, idleHeartbeat: TimeInterval? = nil
+    ) -> ConsumeResult {
+        ConsumeResult(consumer: self, batch: batch, expires: expires, idleHeartbeat: idleHeartbeat)
+    }
+}
+
+/// Used to iterate over results of ``Consumer/consume(batch:expires:idleHeartbeat:)``.
+public struct ConsumeResult: AsyncSequence {
+    public typealias Element = JetStreamMessage
+
+    let consumer: Consumer
+    let batch: Int
+    let expires: TimeInterval
+    let idleHeartbeat: TimeInterval?
+
+    public func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(result: self)
+    }
+
+    public struct AsyncIterator: AsyncIteratorProtocol {
+        let result: ConsumeResult
+        var current: FetchResult.AsyncIterator?
+
+        public mutating func next() async throws -> JetStreamMessage? {
+            while !Task.isCancelled {
+                if current == nil {
+                    current = try await result.consumer.fetch(
+                        batch: result.batch, expires: result.expires,
+                        idleHeartbeat: result.idleHeartbeat
+                    ).makeAsyncIterator()
+                }
+                do {
+                    if let message = try await current?.next() {
+                        return message
+                    }
+                } catch JetStreamError.FetchError.leadershipChanged {
+                    // the pull request is gone with the old leader, issue a new one
+                }
+                current = nil
+            }
+            return nil
+        }
+    }
 }
 
 /// Used to iterate over results of ``Consumer/fetch(batch:expires:idleHeartbeat:)``.

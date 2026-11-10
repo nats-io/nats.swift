@@ -68,16 +68,38 @@ extension JetStreamContext {
     ///   - subject: Subject on which the message will be published.
     ///   - message: NATS message payload.
     ///   - headers:Optional set of message headers.
+    ///   - options: Optional message deduplication and optimistic concurrency expectations.
     ///
     /// - Returns: ``AckFuture`` allowing to await for the ack from the server.
     public func publish(
-        _ subject: String, message: Data, headers: NatsHeaderMap? = nil
+        _ subject: String, message: Data, headers: NatsHeaderMap? = nil,
+        options: PublishOptions? = nil
     ) async throws -> AckFuture {
-        // TODO(pp): add stream header options (expected seq etc)
+        var headers = headers
+        if let options {
+            headers = options.apply(to: headers ?? NatsHeaderMap())
+        }
         let inbox = client.newInbox()
         let sub = try await self.client.subscribe(subject: inbox)
         try await self.client.publish(message, subject: subject, reply: inbox, headers: headers)
         return AckFuture(sub: sub, timeout: self.timeout)
+    }
+
+    /// Retrieves information about the JetStream usage of the current account.
+    ///
+    /// - Returns: ``AccountInfo`` with memory, storage, streams and consumers usage.
+    ///
+    /// > **Throws:**
+    /// > - ``JetStreamError/RequestError`` if the request fails if e.g. JetStream is not enabled.
+    /// > - ``JetStreamError/APIError`` if there was an API error returned from JetStream.
+    public func accountInfo() async throws -> AccountInfo {
+        let info: Response<AccountInfo> = try await request("INFO")
+        switch info {
+        case .success(let info):
+            return info
+        case .error(let apiResponse):
+            throw apiResponse.error
+        }
     }
 
     internal func request<T: Codable>(
@@ -126,9 +148,70 @@ extension JetStreamContext {
     }
 }
 
+/// Options used to deduplicate a published message and to set optimistic concurrency expectations.
+/// If an expectation is not met, ``AckFuture/wait()`` throws ``JetStreamError/PublishError``.
+public struct PublishOptions {
+    /// Unique ID used by the stream to discard duplicates within its duplicate window.
+    public var messageId: String?
+    /// Name of the stream the message is expected to be stored in.
+    public var expectedStream: String?
+    /// Expected sequence of the last message in the stream.
+    public var expectedLastSequence: UInt64?
+    /// Expected sequence of the last message on the published subject.
+    public var expectedLastSubjectSequence: UInt64?
+    /// Expected message ID of the last message in the stream.
+    public var expectedLastMessageId: String?
+
+    public init(
+        messageId: String? = nil, expectedStream: String? = nil,
+        expectedLastSequence: UInt64? = nil, expectedLastSubjectSequence: UInt64? = nil,
+        expectedLastMessageId: String? = nil
+    ) {
+        self.messageId = messageId
+        self.expectedStream = expectedStream
+        self.expectedLastSequence = expectedLastSequence
+        self.expectedLastSubjectSequence = expectedLastSubjectSequence
+        self.expectedLastMessageId = expectedLastMessageId
+    }
+
+    internal func apply(to headers: NatsHeaderMap) -> NatsHeaderMap {
+        var headers = headers
+        if let messageId {
+            headers.insert(.natsMsgId, NatsHeaderValue(messageId))
+        }
+        if let expectedStream {
+            headers.insert(.natsExpectedStream, NatsHeaderValue(expectedStream))
+        }
+        if let expectedLastSequence {
+            headers.insert(.natsExpectedLastSequence, NatsHeaderValue(String(expectedLastSequence)))
+        }
+        if let expectedLastSubjectSequence {
+            headers.insert(
+                .natsExpectedLastSubjectSequence,
+                NatsHeaderValue(String(expectedLastSubjectSequence)))
+        }
+        if let expectedLastMessageId {
+            headers.insert(.natsExpectedLastMsgId, NatsHeaderValue(expectedLastMessageId))
+        }
+        return headers
+    }
+}
+
 public struct JetStreamAPIResponse: Codable {
     public let type: String
     public let error: JetStreamError.APIError
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // publish acks do not contain `type`
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? ""
+        error = try container.decode(JetStreamError.APIError.self, forKey: .error)
+    }
 }
 
 /// Used to await for response from ``JetStreamContext/publish(_:message:headers:)``
