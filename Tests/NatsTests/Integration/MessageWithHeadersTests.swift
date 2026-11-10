@@ -19,7 +19,7 @@ import XCTest
 
 class TestMessageWithHeadersTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testMessageWithHeaders", testMessageWithHeaders)
     ]
 

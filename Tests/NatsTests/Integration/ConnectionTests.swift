@@ -19,7 +19,7 @@ import XCTest
 
 class CoreNatsTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testRtt", testRtt),
         ("testPublish", testPublish),
         ("testSuspendAndResume", testSuspendAndResume),
@@ -94,7 +94,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
@@ -116,7 +116,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
@@ -139,7 +139,7 @@ class CoreNatsTests: XCTestCase {
         await fulfillment(of: [reconnectExpectation], timeout: 5.0)
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation1.fulfill()
@@ -161,7 +161,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
@@ -183,7 +183,7 @@ class CoreNatsTests: XCTestCase {
         await fulfillment(of: [reconnectExpectation], timeout: 5.0)
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation1 = XCTestExpectation(description: "Should receive message in 5 seconsd")
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation1.fulfill()
@@ -208,7 +208,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 expectation.fulfill()
@@ -297,7 +297,7 @@ class CoreNatsTests: XCTestCase {
         try await client.publish("msg".data(using: .utf8)!, subject: "test", reply: "reply")
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconsd")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 XCTAssertEqual(msg.replySubject, "reply")
@@ -321,7 +321,7 @@ class CoreNatsTests: XCTestCase {
             "msg".data(using: .utf8)!, subject: "test", reply: client.newInbox())
         let expectation = XCTestExpectation(description: "Should receive message in 5 seconds")
         let iter = sub.makeAsyncIterator()
-        Task {
+        _ = Task {
             if let msg = try await iter.next() {
                 XCTAssertEqual(msg.subject, "test")
                 XCTAssertTrue(msg.replySubject?.starts(with: "_INBOX_foo.") == true)
@@ -488,7 +488,7 @@ class CoreNatsTests: XCTestCase {
         let sub = try! await client.subscribe(subject: "foo")
 
         // publish some messages
-        Task {
+        _ = Task {
             for _ in 0..<10 {
                 try await client.publish(payload, subject: "foo")
             }
@@ -514,7 +514,7 @@ class CoreNatsTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: 10.0)
 
         // publish more messages, sub should receive them
-        Task {
+        _ = Task {
             for _ in 0..<10 {
                 try await client.publish(payload, subject: "foo")
             }
@@ -896,7 +896,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         let service = try await client.subscribe(subject: "service")
-        Task {
+        _ = Task {
             for try await msg in service {
                 try await client.publish(
                     "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
@@ -919,7 +919,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         let service = try await client.subscribe(subject: "service")
-        Task {
+        _ = Task {
             for try await msg in service {
                 try await client.publish(
                     "reply".data(using: .utf8)!, subject: msg.replySubject!, reply: "reply")
@@ -956,7 +956,7 @@ class CoreNatsTests: XCTestCase {
         try await client.connect()
 
         let service = try await client.subscribe(subject: "service")
-        Task {
+        _ = Task {
             for try await msg in service {
                 sleep(2)
                 try await client.publish(

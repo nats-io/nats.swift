@@ -17,7 +17,7 @@ import XCTest
 
 class ParserTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testParseOutMessages", testParseOutMessages)
     ]
 

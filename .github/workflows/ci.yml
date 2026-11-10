@@ -22,13 +22,25 @@ jobs:
       run: xcodebuild build -scheme Nats -destination 'platform=macOS,arch=arm64'
     - name: Test
       run: swift test
-  ios:
+    - name: Run JetStream example
+      run: |
+        nats-server -js -p 4333 &
+        sleep 1
+        NATS_URL=nats://localhost:4333 swift run JetStreamExample
+  apple-platforms:
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iOS, tvOS, watchOS, visionOS]
     steps:
     - name: Checkout the code
       uses: actions/checkout@v4
-    - name: Build
-      run: xcodebuild build -scheme Nats -destination generic/platform=ios
+    - name: Build libraries
+      run: |
+        for scheme in Nats JetStream JetStreamKeyValue JetStreamObjectStore; do
+          xcodebuild build -scheme $scheme -destination "generic/platform=${{ matrix.platform }}"
+        done
   check-linter:
     runs-on: macos-15
     steps:

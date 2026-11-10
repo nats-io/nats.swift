@@ -14,8 +14,21 @@
 import Foundation
 import XCTest
 
+/// Runs a `nats-server` process for integration tests.
+///
+/// The `nats-server` binary must be available on the `PATH`. Each started server uses its own
+/// temporary JetStream store directory, which is removed when the server is stopped.
+///
+/// ```swift
+/// let server = NatsServer()
+/// server.start(cfg: configPath)
+/// defer { server.stop() }
+/// let client = NatsClientOptions().url(URL(string: server.clientURL)!).build()
+/// ```
 public class NatsServer {
+    /// The client port of the running server.
     public var port: Int? { return natsServerPort }
+    /// The URL clients connect to, using `tls://` when TLS is configured.
     public var clientURL: String {
         let scheme = tlsEnabled ? "tls://" : "nats://"
         if let natsServerPort {
@@ -25,6 +38,7 @@ public class NatsServer {
         }
     }
 
+    /// The WebSocket URL clients connect to, when WebSocket is configured.
     public var clientWebsocketURL: String {
         let scheme = tlsEnabled ? "wss://" : "ws://"
         if let natsWebsocketPort {
@@ -39,12 +53,20 @@ public class NatsServer {
     private var natsWebsocketPort: Int?
     private var tlsEnabled = false
     private var pidFile: URL?
+    private var storeDir: URL?
 
+    /// Creates a server which is not running yet.
     public init() {}
 
-    // TODO: When implementing JetStream, creating and deleting store dir should be handled in start/stop methods
+    /// Starts the server and waits until it accepts connections.
+    ///
+    /// - Parameters:
+    ///   - port: client port, `-1` picks a random free port.
+    ///   - cfg: path of a server configuration file.
+    ///   - file: source file reported by failed assertions.
+    ///   - line: source line reported by failed assertions.
     public func start(
-        port: Int = -1, cfg: String? = nil, file: StaticString = #file, line: UInt = #line
+        port: Int = -1, cfg: String? = nil, file: StaticString = #filePath, line: UInt = #line
     ) {
         XCTAssertNil(
             self.process, "nats-server is already running on port \(port)", file: file, line: line)
@@ -55,6 +77,7 @@ public class NatsServer {
         pidFile = fileManager.temporaryDirectory.appendingPathComponent("nats-server.pid")
 
         let tempDir = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        storeDir = tempDir
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [
@@ -69,55 +92,14 @@ public class NatsServer {
 
         let outputHandle = pipe.fileHandleForReading
         let semaphore = DispatchSemaphore(value: 0)
-        var lineCount = 0
-        let maxLines = 100
-        var serverError: String?
-        var outputBuffer = Data()
+        let startup = StartupOutput()
 
         outputHandle.readabilityHandler = { fileHandle in
             let data = fileHandle.availableData
             guard data.count > 0 else { return }
-            outputBuffer.append(data)
-
-            guard let output = String(data: outputBuffer, encoding: .utf8) else { return }
-
-            let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
-            let completedLines = lines.dropLast()
-
-            for lineSequence in completedLines {
-                let line = String(lineSequence)
-                lineCount += 1
-
-                let errorLine = self.extracErrorMessage(from: line)
-
-                if let port = self.extractPort(from: line, for: "client connections") {
-                    self.natsServerPort = port
-                }
-
-                if let port = self.extractPort(from: line, for: "websocket clients") {
-                    self.natsWebsocketPort = port
-                }
-
-                let ready = line.contains("Server is ready")
-
-                if !self.tlsEnabled && self.isTLS(from: line) {
-                    self.tlsEnabled = true
-                }
-
-                if ready || errorLine != nil || lineCount >= maxLines {
-                    serverError = errorLine
-                    semaphore.signal()
-                    outputHandle.readabilityHandler = nil
-                    return
-                }
-            }
-
-            if output.hasSuffix("\n") {
-                outputBuffer.removeAll()
-            } else {
-                if let lastLine = lines.last, let incompleteLine = lastLine.data(using: .utf8) {
-                    outputBuffer = incompleteLine
-                }
+            if startup.process(data) {
+                fileHandle.readabilityHandler = nil
+                semaphore.signal()
             }
         }
 
@@ -128,25 +110,38 @@ public class NatsServer {
 
         XCTAssertFalse(
             result == .timedOut, "timeout waiting for server to be ready", file: file, line: line)
+        let state = startup.state
         XCTAssertNil(
-            serverError, "error starting nats-server: \(serverError!)", file: file, line: line)
+            state.serverError, "error starting nats-server: \(state.serverError ?? "")", file: file,
+            line: line)
 
+        natsServerPort = state.port
+        natsWebsocketPort = state.websocketPort
+        tlsEnabled = state.tlsEnabled
         self.process = process
     }
 
+    /// Stops the server and removes its JetStream store directory.
     public func stop() {
         if process == nil {
             return
         }
 
         self.process?.terminate()
-        process?.waitUntilExit()
+        if let process {
+            Self.waitForExit(process)
+        }
         process = nil
         natsServerPort = port
         tlsEnabled = false
+        if let storeDir {
+            try? FileManager.default.removeItem(at: storeDir)
+            self.storeDir = nil
+        }
     }
 
-    public func sendSignal(_ signal: Signal, file: StaticString = #file, line: UInt = #line) {
+    /// Sends a signal to the running server, e.g. to enter lame duck mode.
+    public func sendSignal(_ signal: Signal, file: StaticString = #filePath, line: UInt = #line) {
         let process = Process()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -157,7 +152,17 @@ public class NatsServer {
         self.process = nil
     }
 
-    private func extractPort(from string: String, for phrase: String) -> Int? {
+    /// Waits until the process exits (at most 10 seconds).
+    /// Unlike `Process.waitUntilExit()`, this does not rely on the run loop of the current thread,
+    /// which is not running on threads of the Swift concurrency pool.
+    private static func waitForExit(_ process: Process) {
+        let deadline = Date().addingTimeInterval(10)
+        while process.isRunning && Date() < deadline {
+            usleep(10_000)
+        }
+    }
+
+    fileprivate static func extractPort(from string: String, for phrase: String) -> Int? {
         // Listening for websocket clients on
         // Listening for client connections on
         let pattern = "Listening for \(phrase) on .*?:(\\d+)$"
@@ -176,7 +181,7 @@ public class NatsServer {
         return nil
     }
 
-    private func extracErrorMessage(from logLine: String) -> String? {
+    fileprivate static func extracErrorMessage(from logLine: String) -> String? {
         if logLine.contains("nats-server: No such file or directory") {
             return "nats-server not found - make sure nats-server can be found in PATH"
         }
@@ -190,7 +195,7 @@ public class NatsServer {
         return String(message).trimmingCharacters(in: .whitespaces)
     }
 
-    private func isTLS(from logLine: String) -> Bool {
+    fileprivate static func isTLS(from logLine: String) -> Bool {
         return logLine.contains("TLS required for client connections")
             || logLine.contains("websocket clients on wss://")
     }
@@ -199,8 +204,71 @@ public class NatsServer {
         stop()
     }
 
+    /// Signals which can be sent to the server.
     public enum Signal: String {
+        /// Puts the server in lame duck mode, asking clients to move to other servers.
         case lameDuckMode = "ldm"
+        /// Reloads the server configuration.
         case reload = "reload"
+    }
+}
+
+/// Parses the startup output of a server, which is read on a background queue.
+private final class StartupOutput: @unchecked Sendable {
+    struct State {
+        var port: Int?
+        var websocketPort: Int?
+        var tlsEnabled = false
+        var serverError: String?
+    }
+
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var lineCount = 0
+    private var current = State()
+    private static let maxLines = 100
+
+    var state: State {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    /// Processes output, returning true once the server is ready or failed to start.
+    func process(_ data: Data) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        buffer.append(data)
+        guard let output = String(data: buffer, encoding: .utf8) else { return false }
+
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+        for lineSequence in lines.dropLast() {
+            let line = String(lineSequence)
+            lineCount += 1
+
+            let errorLine = NatsServer.extracErrorMessage(from: line)
+            if let port = NatsServer.extractPort(from: line, for: "client connections") {
+                current.port = port
+            }
+            if let port = NatsServer.extractPort(from: line, for: "websocket clients") {
+                current.websocketPort = port
+            }
+            if NatsServer.isTLS(from: line) {
+                current.tlsEnabled = true
+            }
+            if line.contains("Server is ready") || errorLine != nil
+                || lineCount >= Self.maxLines
+            {
+                current.serverError = errorLine
+                return true
+            }
+        }
+
+        if output.hasSuffix("\n") {
+            buffer.removeAll()
+        } else if let lastLine = lines.last {
+            buffer = Data(lastLine.utf8)
+        }
+        return false
     }
 }

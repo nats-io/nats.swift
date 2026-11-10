@@ -17,7 +17,7 @@ import XCTest
 
 class HeadersTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testAppend", testAppend),
         ("testSubscript", testSubscript),
         ("testInsert", testInsert),

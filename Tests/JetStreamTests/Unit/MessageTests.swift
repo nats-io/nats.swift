@@ -18,7 +18,7 @@ import XCTest
 
 class JetStreamMessageTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testValidOldFormatMessage", testValidOldFormatMessage),
         ("testValidNewFormatMessage", testValidNewFormatMessage),
         ("testMissingTokens", testMissingTokens),
@@ -32,7 +32,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: replySubject, length: 0, headers: nil,
             status: nil, description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
 
         let metadata = try jetStreamMessage.metadata()
 
@@ -52,7 +54,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: replySubject, length: 0, headers: nil,
             status: nil, description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
         let metadata = try jetStreamMessage.metadata()
 
         XCTAssertEqual(metadata.domain, "domain")
@@ -71,7 +75,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: replySubject, length: 0, headers: nil,
             status: nil, description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
         do {
             _ = try jetStreamMessage.metadata()
         } catch JetStreamError.MessageMetadataError.invalidTokenNum {
@@ -84,7 +90,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: replySubject, length: 0, headers: nil,
             status: nil, description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
         do {
             _ = try jetStreamMessage.metadata()
         } catch JetStreamError.MessageMetadataError.invalidTokenValue {
@@ -97,7 +105,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: replySubject, length: 0, headers: nil,
             status: nil, description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
         do {
             _ = try jetStreamMessage.metadata()
         } catch JetStreamError.MessageMetadataError.invalidPrefix {
@@ -109,7 +119,9 @@ class JetStreamMessageTests: XCTestCase {
         let natsMessage = NatsMessage(
             payload: nil, subject: "", replySubject: nil, length: 0, headers: nil, status: nil,
             description: nil)
-        let jetStreamMessage = JetStreamMessage(message: natsMessage, client: NatsClient())
+        let jetStreamMessage = JetStreamMessage(
+            message: natsMessage, client: NatsClient(inboxPrefix: "_INBOX.", connectionHandler: nil)
+        )
         do {
             _ = try jetStreamMessage.metadata()
         } catch JetStreamError.MessageMetadataError.noReplyInMessage {
