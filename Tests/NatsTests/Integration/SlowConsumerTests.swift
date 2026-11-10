@@ -20,7 +20,7 @@ import XCTest
 
 class SlowConsumerTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testSlowConsumerEventFiresOnOverflow", testSlowConsumerEventFiresOnOverflow),
         ("testSlowConsumerReArmsAfterDrain", testSlowConsumerReArmsAfterDrain),
     ]
@@ -97,7 +97,7 @@ class SlowConsumerTests: XCTestCase {
         _ = try await client.rtt()  // let the inbound messages be processed
 
         // Drain below capacity/2 so the slow-consumer signal re-arms.
-        var iter = sub.makeAsyncIterator()
+        let iter = sub.makeAsyncIterator()
         _ = try await iter.next()
         _ = try await iter.next()
 

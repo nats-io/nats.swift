@@ -18,13 +18,13 @@ import XCTest
 
 class JwtTests: XCTestCase {
 
-    static var allTests = [
+    static let allTests = [
         ("testParseCredentialsFile", testParseCredentialsFile)
     ]
 
     func testParseCredentialsFile() async throws {
         logger.logLevel = .critical
-        let currentFile = URL(fileURLWithPath: #file)
+        let currentFile = URL(fileURLWithPath: #filePath)
         let testDir = currentFile.deletingLastPathComponent().deletingLastPathComponent()
         let resourceURL = testDir.appendingPathComponent("Integration/Resources/TestUser.creds")
         let credsData = try await URLSession.shared.data(from: resourceURL).0
