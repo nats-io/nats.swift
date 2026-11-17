@@ -21,6 +21,7 @@ class ServerPoolTests: XCTestCase {
         ("testEntryOfAKnownServerAddsNothing", testEntryOfAKnownServerAddsNothing),
         ("testDiscoveredServerGainsTlsAndKeepsIt", testDiscoveredServerGainsTlsAndKeepsIt),
         ("testLatestHasTheTlsTheServerGained", testLatestHasTheTlsTheServerGained),
+        ("testLaterListReplacesDiscoveredServers", testLaterListReplacesDiscoveredServers),
     ]
 
     private let configured = [URL(string: "tls://a:4222")!, URL(string: "nats://b:4222")!]
@@ -55,5 +56,21 @@ class ServerPoolTests: XCTestCase {
         pool.add(["c:4222"], websocket: false, tls: true)
         XCTAssertEqual(pool.latest(read)?.url, URL(string: "tls://c:4222"))
         XCTAssertEqual(pool.latest(pool.servers[0])?.url, configured[0])
+    }
+
+    func testLaterListReplacesDiscoveredServers() {
+        var pool = ServerPool(configured: configured)
+        pool.add(["c:1", "d:1", "e:1"], websocket: false, tls: false)
+        let dropped = pool.servers[3]
+        let current = Server.Key(host: "c", port: 1)
+        pool.replace(["e:1", "f:1", "a:4222"], websocket: false, tls: true, current: current)
+        XCTAssertEqual(
+            urls(pool), ["tls://a:4222", "nats://b:4222", "nats://c:1", "tls://e:1", "tls://f:1"])
+        XCTAssertNil(pool.latest(dropped))
+        pool.replace([], websocket: false, tls: false, current: current)
+        XCTAssertEqual(pool.servers.count, 5)
+        // back in a later list, a dropped server is learned again
+        pool.replace(["d:1"], websocket: false, tls: false, current: current)
+        XCTAssertEqual(urls(pool), ["tls://a:4222", "nats://b:4222", "nats://c:1", "nats://d:1"])
     }
 }

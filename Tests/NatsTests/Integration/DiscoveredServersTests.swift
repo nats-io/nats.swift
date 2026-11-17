@@ -81,6 +81,8 @@ class DiscoveredServersTests: XCTestCase {
             "testInfoAfterTheErrorOfAFailedAttemptIsNotUsed",
             testInfoAfterTheErrorOfAFailedAttemptIsNotUsed
         ),
+        ("testLaterInfoReplacesDiscoveredServers", testLaterInfoReplacesDiscoveredServers),
+        ("testConfiguredAndCurrentServersAreKept", testConfiguredAndCurrentServersAreKept),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -810,5 +812,70 @@ class DiscoveredServersTests: XCTestCase {
         XCTAssertEqual(plainClient.connectedUrl?.port, listed.port, "plaintext")
         XCTAssertEqual(later.connections.count, 0, "plaintext: dialed a server of the later INFO")
         try await plainClient.close()
+    }
+
+    func testLaterInfoReplacesDiscoveredServers() async throws {
+        let dropped = try fake(.init(greeting: FakeNatsServer.info()))
+        let listed = try fake(.init(greeting: FakeNatsServer.info()))
+        // after the list, INFOs without servers, which change nothing
+        let seed = try fake(
+            .init(
+                greeting: FakeNatsServer.info(),
+                afterFirstPong: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(dropped.port)"]),
+                afterSecondPong: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(listed.port)"])
+                    + FakeNatsServer.info(connectUrls: nil) + FakeNatsServer.info(connectUrls: [])))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(seed.port)")!)
+            .retainServersOrder()
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        // the INFOs after the second PONG are read before the third
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        seed.shutdown()
+        await fulfillment(of: [reconnected], timeout: 10)
+        XCTAssertEqual(client.connectedUrl?.port, listed.port)
+        XCTAssertEqual(dropped.connections.count, 0, "dialed a server the later list dropped")
+        try? await client.close()
+    }
+
+    func testConfiguredAndCurrentServersAreKept() async throws {
+        // a configured server that is not running
+        let down = try fake(.init())
+        down.shutdown()
+        let later = try fake(.init(greeting: FakeNatsServer.info()))
+        let current = try seed(listing: ["127.0.0.1:\(later.port)"])
+        let dropped = try fake(.init(greeting: FakeNatsServer.info()))
+        let seed = try seed(listing: [
+            "127.0.0.1:\(current.port)", "127.0.0.1:\(dropped.port)",
+        ])
+        let configured = [
+            URL(string: "nats://127.0.0.1:\(seed.port)")!,
+            URL(string: "nats://127.0.0.1:\(down.port)")!,
+        ]
+        let client = NatsClientOptions()
+            .urls(configured)
+            .retainServersOrder()
+            .reconnectWait(0.1)
+            .build()
+
+        let reconnected = try await reconnects(client, from: seed)
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl?.port, current.port, "setup: not on that server")
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+        // its list leaves out itself and the other server of the first list
+        XCTAssertEqual(
+            client.connectionHandler?.servers.map { $0.url },
+            configured + [
+                URL(string: "nats://127.0.0.1:\(current.port)")!,
+                URL(string: "nats://127.0.0.1:\(later.port)")!,
+            ])
+        try? await client.close()
     }
 }

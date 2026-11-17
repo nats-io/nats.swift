@@ -196,6 +196,11 @@ internal struct ServerPool: Sendable {
 
     init(configured urls: [URL]) {
         servers = urls.map { Server(configured: $0) }
+        index()
+    }
+
+    private mutating func index() {
+        indices = [:]
         for (index, server) in servers.enumerated() where indices[server.key] == nil {
             indices[server.key] = index
         }
@@ -239,5 +244,26 @@ internal struct ServerPool: Sendable {
                 servers.append(server)
             }
         }
+    }
+
+    /// Replaces the discovered servers with those in `entries`, from an INFO received on the
+    /// connection to `current`, which is a websocket when `websocket` is set and has TLS when
+    /// `tls` is set. The configured servers and `current` stay. A discovered server that drops
+    /// out of the list and comes back is learned again. An empty list changes nothing.
+    mutating func replace(
+        _ entries: [String], websocket: Bool, tls: Bool, current: Server.Key
+    ) {
+        guard !entries.isEmpty else {
+            return
+        }
+        var listed: Set<Server.Key> = [current]
+        for entry in entries {
+            if case .server(let host, let port) = DiscoveredEntry(entry) {
+                listed.insert(Server.Key(host: host, port: port))
+            }
+        }
+        servers.removeAll { $0.isDiscovered && !listed.contains($0.key) }
+        index()
+        add(entries, websocket: websocket, tls: tls)
     }
 }
