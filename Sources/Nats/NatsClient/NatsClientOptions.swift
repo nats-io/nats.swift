@@ -53,7 +53,9 @@ public class NatsClientOptions {
     /// A list of server urls that a client can connect to.
     ///
     /// A `tls://` or `wss://` URL among them asks for TLS for every server, as
-    /// ``requireTls()`` does, unless ``tlsOptional()`` is set.
+    /// ``requireTls()`` does, unless ``tlsOptional()`` is set. While anything asks for TLS, a
+    /// `ws://` URL is refused: ``NatsClient/connect()`` throws
+    /// ``NatsError/ConnectError/invalidConfig(_:)``, and `wss://` is the form with TLS.
     public func urls(_ urls: [URL]) -> NatsClientOptions {
         self.urls = urls.map { self.applyDefaultPort(to: $0) }
         return self
@@ -149,8 +151,8 @@ public class NatsClientOptions {
     /// reports, and every reconnect. A server that cannot do TLS is not connected to, and
     /// nothing a server sends turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
     /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
-    /// TLS for every server too. ``tlsOptional()`` opts out, and cannot be set together with
-    /// this option.
+    /// TLS for every server too. A `ws://` URL is then refused, as it cannot be upgraded to TLS;
+    /// `wss://` is the form with TLS. ``tlsOptional()`` cannot be set together with this option.
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
@@ -188,8 +190,8 @@ public class NatsClientOptions {
 
     /// Leaves TLS to each server: ``rootCertificates(_:)``, ``clientCertificate(_:_:)`` and a
     /// `tls://` or `wss://` URL then no longer ask for TLS for every server. Each server is
-    /// connected to as its own URL says, or with TLS when its INFO requires it. A `tls://` or
-    /// `wss://` URL still gets TLS.
+    /// connected to as its own URL says, or, for a `nats://` URL, with TLS when its INFO
+    /// requires it. A `tls://` or `wss://` URL still gets TLS.
     ///
     /// It cannot be set together with ``requireTls()`` or ``withTlsFirst()``:
     /// ``NatsClient/connect()`` then throws ``NatsError/ConnectError/invalidConfig(_:)``.

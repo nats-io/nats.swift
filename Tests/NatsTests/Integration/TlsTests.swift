@@ -46,6 +46,12 @@ class TlsTests: XCTestCase {
             "testTlsOptionalWithTlsFirstIsAConfigurationError",
             testTlsOptionalWithTlsFirstIsAConfigurationError
         ),
+        ("testWsUrlIsRefusedWhenTlsIsAskedFor", testWsUrlIsRefusedWhenTlsIsAskedFor),
+        ("testWsUrlIsNotUpgradedToTlsAfterInfo", testWsUrlIsNotUpgradedToTlsAfterInfo),
+        (
+            "testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor",
+            testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -399,5 +405,107 @@ class TlsTests: XCTestCase {
                     .withTlsFirst()
                     .tlsOptional()
             }, naming: ["tlsOptional()", "withTlsFirst()"], server: server)
+    }
+
+    func testWsUrlIsRefusedWhenTlsIsAskedFor() async throws {
+        let ws = try natsServer("ws")
+        let wsUrl = URL(string: ws.clientWebsocketURL)!
+        let refused = "\"\(wsUrl.absoluteString)\" is a ws:// URL"
+        let variants: [(String, () -> NatsClientOptions)] = [
+            (
+                "rootCertificates(_:)",
+                { NatsClientOptions().url(wsUrl).rootCertificates(self.rootCA) }
+            ),
+            ("requireTls()", { NatsClientOptions().url(wsUrl).requireTls() }),
+            ("withTlsFirst()", { NatsClientOptions().url(wsUrl).withTlsFirst() }),
+            (
+                "the URL \"wss://localhost:1\"",
+                {
+                    NatsClientOptions()
+                        .urls([URL(string: "wss://localhost:1")!, wsUrl])
+                        .retainServersOrder()
+                }
+            ),
+        ]
+        for (askedBy, options) in variants {
+            try await assertConfigurationError(
+                options, naming: [askedBy, refused, "wss:// is the TLS form"])
+        }
+
+        // refused before any attempt, in any case of the scheme
+        for scheme in ["ws", "WS"] {
+            let server = try fake(.init(greeting: FakeNatsServer.info()))
+            try await assertConfigurationError(
+                {
+                    NatsClientOptions()
+                        .url(URL(string: "\(scheme)://127.0.0.1:\(server.port)")!)
+                        .requireTls()
+                }, naming: ["requireTls()", "is a ws:// URL"], server: server)
+        }
+
+        // with tlsOptional() the URL is dialed as written
+        await assertConnects(
+            NatsClientOptions().url(wsUrl).rootCertificates(rootCA).tlsOptional(), "tlsOptional()")
+    }
+
+    // TLS after INFO would start below the websocket framing after the upgrade, so a ws://
+    // connection goes on without it, also when its INFO requires TLS.
+    func testWsUrlIsNotUpgradedToTlsAfterInfo() async throws {
+        let variants: [(String, (URL) -> NatsClientOptions)] = [
+            ("no TLS setting", { NatsClientOptions().url($0) }),
+            (
+                "tlsOptional()",
+                { NatsClientOptions().url($0).rootCertificates(self.rootCA).tlsOptional() }
+            ),
+        ]
+        for (name, options) in variants {
+            let server = try fake(
+                .init(greeting: FakeNatsServer.info(tlsRequired: true), websocket: true))
+            await assertConnects(options(URL(string: "ws://127.0.0.1:\(server.port)")!), name)
+            let first = server.connections.first?.firstBytes ?? []
+            XCTAssertNotEqual(first.first, 0x16, "\(name): TLS started after the websocket upgrade")
+            XCTAssertTrue(
+                server.lines.contains { $0.hasPrefix("CONNECT") },
+                "\(name): no CONNECT in a websocket frame: \(server.lines)")
+        }
+    }
+
+    // connect() refuses a ws:// URL of the list; a ws:// URL that a server reports fails its
+    // attempt before CONNECT.
+    func testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor() async throws {
+        let ws = try fake(.init(greeting: FakeNatsServer.info(), websocket: true))
+        let server = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                tls: try FakeNatsServer.tlsContext(),
+                afterFirstPong: FakeNatsServer.info(
+                    tlsRequired: true, connectUrls: ["ws://127.0.0.1:\(ws.port)"])))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://localhost:\(server.port)")!)
+            .requireTls()
+            .rootCertificates(rootCA)
+            .usernameAndPassword("user", "secret")
+            .retainServersOrder()
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        // the INFO with the ws:// URL came before the PONG of this flush
+        try await client.flush()
+        server.shutdown()
+
+        // the client tries the ws:// URL next
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if let attempt = ws.connections.first,
+                attempt.closed || attempt.lines.contains(where: { $0.hasPrefix("CONNECT") })
+            {
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        try? await client.close()
+        XCTAssertNotNil(ws.connections.first, "the reported ws:// URL was not tried")
+        XCTAssertFalse(
+            ws.lines.contains { $0.hasPrefix("CONNECT") }, "CONNECT without TLS: \(ws.lines)")
     }
 }

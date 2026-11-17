@@ -14,7 +14,9 @@
 import Foundation
 import NIO
 import NIOConcurrencyHelpers
+import NIOHTTP1
 import NIOSSL
+import NIOWebSocket
 import XCTest
 
 /// A scripted NATS server for protocol-level tests.
@@ -23,7 +25,8 @@ import XCTest
 /// bytes), optionally switches the connection to TLS, then answers `PING` with `PONG`
 /// and records every protocol line the client sends. The first raw bytes of each connection
 /// are recorded before any TLS processing, so a test can tell a ClientHello from plaintext.
-/// Each connection can follow a script of its own.
+/// Each connection can follow a script of its own. A websocket script answers the upgrade
+/// request first and then carries the same exchange in binary websocket frames.
 final class FakeNatsServer: Sendable {
     struct Script: Sendable {
         /// Bytes written right after accept, or `greetingDelay` seconds later.
@@ -56,6 +59,10 @@ final class FakeNatsServer: Sendable {
         /// bypasses the server's TLS.
         var spray: (text: String, interval: TimeInterval, count: Int)? = nil
         var sprayOnConnection = 0
+        /// When set, the server first answers a websocket upgrade request, then reads and
+        /// writes binary websocket frames; `firstBytes` are the first bytes read after the
+        /// upgrade. Not used together with `tls`.
+        var websocket = false
     }
 
     struct Connection: Sendable {
@@ -107,11 +114,14 @@ final class FakeNatsServer: Sendable {
                 children.withLockedValue { $0.append(channel) }
                 let recorder = RawRecorder(state: state, index: index)
                 let script = scripts[min(index, scripts.count - 1)]
+                let handler = ScriptHandler(
+                    script: script, state: state, index: index, recorder: recorder)
+                if script.websocket {
+                    return upgradeToWebsocket(channel, recorder: recorder, handler: handler)
+                }
                 do {
                     try channel.pipeline.syncOperations.addHandler(recorder)
-                    try channel.pipeline.syncOperations.addHandler(
-                        ScriptHandler(
-                            script: script, state: state, index: index, recorder: recorder))
+                    try channel.pipeline.syncOperations.addHandler(handler)
                 } catch {
                     return channel.eventLoop.makeFailedFuture(error)
                 }
@@ -225,6 +235,52 @@ final class FakeNatsServer: Sendable {
     }
 }
 
+/// Answers the websocket upgrade request on `channel`, then puts `recorder` below the websocket
+/// framing and `handler` above it.
+private func upgradeToWebsocket(
+    _ channel: Channel, recorder: RawRecorder, handler: ScriptHandler
+) -> EventLoopFuture<Void> {
+    let upgrader = NIOWebSocketServerUpgrader(
+        shouldUpgrade: { channel, _ in channel.eventLoop.makeSucceededFuture(HTTPHeaders()) },
+        upgradePipelineHandler: { channel, _ in
+            do {
+                try channel.pipeline.syncOperations.addHandler(recorder, position: .first)
+                try channel.pipeline.syncOperations.addHandlers(WebSocketBytes(), handler)
+            } catch {
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+            return channel.eventLoop.makeSucceededFuture(())
+        })
+    return channel.pipeline.configureHTTPServerPipeline(
+        withServerUpgrade: (upgraders: [upgrader], completionHandler: { _ in }))
+}
+
+/// Reads the payload of binary and continuation frames as bytes, and writes bytes as binary
+/// frames.
+private final class WebSocketBytes: ChannelDuplexHandler, Sendable {
+    typealias InboundIn = WebSocketFrame
+    typealias InboundOut = ByteBuffer
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = WebSocketFrame
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let frame = unwrapInboundIn(data)
+        switch frame.opcode {
+        case .binary, .continuation:
+            context.fireChannelRead(wrapInboundOut(frame.unmaskedData))
+        case .connectionClose:
+            context.close(promise: nil)
+        default:
+            break
+        }
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        let frame = WebSocketFrame(fin: true, opcode: .binary, data: unwrapOutboundIn(data))
+        context.write(wrapOutboundOut(frame), promise: promise)
+    }
+}
+
 /// Records the first raw bytes of a connection, before any TLS processing.
 private final class RawRecorder: ChannelInboundHandler, RemovableChannelHandler, Sendable {
     typealias InboundIn = ByteBuffer
@@ -277,7 +333,19 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
         self.recorder = recorder
     }
 
+    func handlerAdded(context: ChannelHandlerContext) {
+        // after a websocket upgrade the channel is active already
+        if script.websocket {
+            start(context: context)
+        }
+    }
+
     func channelActive(context: ChannelHandlerContext) {
+        start(context: context)
+        context.fireChannelActive()
+    }
+
+    private func start(context: ChannelHandlerContext) {
         if script.greetingDelay > 0 {
             let loopBound = NIOLoopBound(context, eventLoop: context.eventLoop)
             let delay = TimeAmount.nanoseconds(Int64(script.greetingDelay * 1_000_000_000))
@@ -285,7 +353,6 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
         } else {
             greet(context: context)
         }
-        context.fireChannelActive()
     }
 
     private func greet(context: ChannelHandlerContext) {
