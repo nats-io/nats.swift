@@ -713,7 +713,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// Whether the attempt upgrades its connection to `server` to TLS after `info`. A `wss://`
     /// connection and a TLS-first connection have TLS from the start, and a `ws://` connection
     /// is never upgraded: its TLS would start below the websocket framing after the upgrade.
-    /// Throws for a `ws://` URL while TLS is asked for.
+    /// Throws for a `ws://` URL while TLS is asked for, and when TLS is asked for and `info`
+    /// offers none.
     private func upgradesToTls(server: URL, info: ServerInfo) throws -> Bool {
         if server.isWebsocket || self.tlsFirst {
             // connect() refuses a ws:// URL of the list while TLS is asked for; one that a
@@ -726,8 +727,20 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return false
         }
         // With TLS optional nothing asks for TLS, but a tls:// URL still gets it.
-        return self.tlsAskedBy != nil || server.lowercasedScheme == "tls"
-            || info.tlsRequired ?? false
+        let urlAsksForTls = server.lowercasedScheme == "tls" ? "the URL \(server.quoted)" : nil
+        guard let askedBy = self.tlsAskedBy ?? urlAsksForTls else {
+            return info.tlsRequired ?? false
+        }
+        // An INFO with neither tls_required nor tls_available says that the server offers no
+        // TLS: instead of starting a handshake, say which server it is and what asked for TLS.
+        guard info.tlsRequired ?? false || info.tlsAvailable ?? false else {
+            var message = "\(askedBy) asks for TLS, but \(server.quoted) does not offer it"
+            if self.tlsAskedBy != nil {
+                message += "; tlsOptional() leaves TLS to each server"
+            }
+            throw NatsError.ConnectError.tlsFailure(NatsError.TlsNotOffered(description: message))
+        }
+        return true
     }
 
     private func makeSSLHandler(for server: URL) throws -> NIOSSLClientHandler {
@@ -1244,6 +1257,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     return
                 } catch {
                     logger.debug("Could not reconnect: \(error)")
+                    // This failure comes before any TLS handshake, so no channel error reports it.
+                    if let error = error as? NatsError.ConnectError,
+                        case .tlsFailure(let cause) = error, cause is NatsError.TlsNotOffered
+                    {
+                        self.fire(.error(error))
+                    }
                     if !Task.isCancelled {
                         try await Task.sleep(nanoseconds: self.reconnectWait)
                     }

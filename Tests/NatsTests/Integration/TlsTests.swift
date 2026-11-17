@@ -52,6 +52,14 @@ class TlsTests: XCTestCase {
             "testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor",
             testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor
         ),
+        (
+            "testServerWithoutTlsFailsBeforeConnectNamingTheSetting",
+            testServerWithoutTlsFailsBeforeConnectNamingTheSetting
+        ),
+        (
+            "testServerWithoutTlsIsReportedOnReconnect",
+            testServerWithoutTlsIsReportedOnReconnect
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -103,6 +111,17 @@ class TlsTests: XCTestCase {
         let server = try FakeNatsServer(script)
         fakeServers.append(server)
         return server
+    }
+
+    /// Waits up to 2 s for `server` to see its first connection closed.
+    private func firstConnectionClosed(on server: FakeNatsServer) async throws -> Bool {
+        for _ in 0..<40 {
+            if server.connections.first?.closed == true {
+                return true
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return false
     }
 
     /// A scripted server whose INFO offers TLS without requiring it.
@@ -507,5 +526,88 @@ class TlsTests: XCTestCase {
         XCTAssertNotNil(ws.connections.first, "the reported ws:// URL was not tried")
         XCTAssertFalse(
             ws.lines.contains { $0.hasPrefix("CONNECT") }, "CONNECT without TLS: \(ws.lines)")
+    }
+
+    func testServerWithoutTlsFailsBeforeConnectNamingTheSetting() async throws {
+        let optOut = "tlsOptional() leaves TLS to each server"
+        let variants: [(String, String, Bool, (NatsClientOptions) -> NatsClientOptions)] = [
+            ("nats", "rootCertificates(_:)", true, { $0.rootCertificates(self.rootCA) }),
+            (
+                "nats", "clientCertificate(_:_:)", true,
+                { $0.clientCertificate(self.pem("client-cert"), self.pem("client-key")) }
+            ),
+            ("nats", "requireTls()", true, { $0.requireTls() }),
+            ("tls", "the URL \"tls://", true, { $0 }),
+            // the URL alone asks for TLS, so the opt-out would change nothing
+            ("tls", "the URL \"tls://", false, { $0.tlsOptional() }),
+        ]
+        for (scheme, askedBy, namesOptOut, configure) in variants {
+            let server = try fake(.init(greeting: FakeNatsServer.info()))
+            let url = URL(string: "\(scheme)://u:urlsecret@127.0.0.1:\(server.port)")!
+            let client = configure(NatsClientOptions().url(url))
+                .usernameAndPassword("user", "secret")
+                .build()
+            let name = namesOptOut ? askedBy : "\(askedBy) with tlsOptional()"
+
+            let connected = await result(within: 5) { try await client.connect() }
+            guard case .failure(NatsError.ConnectError.tlsFailure(let cause))? = connected else {
+                XCTFail("\(name): expected a TLS failure, got \(String(describing: connected))")
+                continue
+            }
+            let message = "\(cause)"
+            XCTAssertTrue(message.contains(askedBy), "\(name): \(message)")
+            XCTAssertFalse(message.contains("urlsecret"), "\(name): \(message)")
+            XCTAssertTrue(
+                message.contains("\"\(scheme)://127.0.0.1:\(server.port)\" does not offer it"),
+                "\(name): \(message)")
+            XCTAssertEqual(message.contains(optOut), namesOptOut, "\(name): \(message)")
+            let isClosed = try await firstConnectionClosed(on: server)
+            XCTAssertTrue(isClosed, "\(name): connection of the failed attempt left open")
+            let sent = server.connections.first?.firstBytes ?? []
+            XCTAssertTrue(
+                sent.isEmpty, "\(name): sent " + String(decoding: sent, as: UTF8.self))
+        }
+    }
+
+    // On a reconnect, and on every attempt under retryOnfailedConnect(), no connect() call
+    // returns the failure: an error event reports it.
+    func testServerWithoutTlsIsReportedOnReconnect() async throws {
+        let withoutTls = try fake(.init(greeting: FakeNatsServer.info()))
+        // only the INFO of the first connection offers TLS
+        let laterWithoutTls = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                laterGreeting: FakeNatsServer.info(), tls: try FakeNatsServer.tlsContext()))
+        let variants = [
+            ("retryOnfailedConnect()", withoutTls, true),
+            ("reconnect", laterWithoutTls, false),
+        ]
+        for (name, server, retry) in variants {
+            let url = URL(string: "nats://localhost:\(server.port)")!
+            let options = NatsClientOptions()
+                .url(url)
+                .requireTls()
+                .rootCertificates(rootCA)
+                .reconnectWait(0.2)
+            let client = (retry ? options.retryOnfailedConnect() : options).build()
+            let reported = XCTestExpectation(description: "\(name): the failure was not reported")
+            reported.assertForOverFulfill = false
+            client.on(.error) { event in
+                guard case .error(let error) = event else { return }
+                let message = "\(error)"
+                if message.contains("requireTls()")
+                    && message.contains("\"\(url.absoluteString)\" does not offer it")
+                    && message.contains("tlsOptional()")
+                {
+                    reported.fulfill()
+                }
+            }
+            try await client.connect()
+            if !retry {
+                server.closeConnection(0)
+            }
+            await fulfillment(of: [reported], timeout: 2)
+            try? await client.close()
+        }
     }
 }
