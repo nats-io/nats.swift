@@ -22,6 +22,15 @@ class ParserTests: XCTestCase {
         ("testParseNonUtf8LineThrows", testParseNonUtf8LineThrows),
         ("testParseInvalidMessageSizesThrow", testParseInvalidMessageSizesThrow),
         ("testParseHugeMessageSizeWaitsForPayload", testParseHugeMessageSizeWaitsForPayload),
+        ("testParseEmptyHeaderBlockThrows", testParseEmptyHeaderBlockThrows),
+        (
+            "testHeaderBlockThatDoesNotParseDropsOnlyThatMessage",
+            testHeaderBlockThatDoesNotParseDropsOnlyThatMessage
+        ),
+        (
+            "testHeaderWithEmptyValueOrFoldedLineIsDelivered",
+            testHeaderWithEmptyValueOrFoldedLineIsDelivered
+        ),
     ]
 
     override func setUp() {
@@ -289,6 +298,66 @@ class ParserTests: XCTestCase {
             let result = try data.parseOutMessages()
             XCTAssertTrue(result.ops.isEmpty, input)
             XCTAssertEqual(result.remainder, data, input)
+        }
+    }
+
+    func testParseEmptyHeaderBlockThrows() {
+        XCTAssertThrowsError(try NatsHeaderMap(from: ""))
+    }
+
+    func testHeaderBlockThatDoesNotParseDropsOnlyThatMessage() throws {
+        var headerBlocks = [
+            "",
+            "NATS/2.0\r\n\r\n",
+            "NATS/1.0 abc\r\n\r\n",
+            "NATS/1.0\r\na b:c\r\n\r\n",
+            "NATS/1.0\r\n\u{e9}l:x\r\n\r\n",
+            "NATS/1.0\r\nbad\r\n\r\n",
+            "NATS/1.0 503\r\nbad line\r\n\r\n",
+            "NATS/1.0\r\n:v\r\n\r\n",
+        ].map { Data($0.utf8) }
+        // a header block that is not valid UTF-8
+        headerBlocks.append(Data("NATS/1.0\r\nX: ".utf8) + Data([0xff]) + Data("\r\n\r\n".utf8))
+        var inputs = headerBlocks.map { headers in
+            Data("HMSG foo 1 \(headers.count) \(headers.count + 5)\r\n".utf8) + headers
+                + Data("hello\r\nMSG foo 1 5\r\nworld\r\nPING\r\n".utf8)
+        }
+        // a message without a header block
+        inputs.append(Data("HMSG foo 1 0 0\r\n\r\nMSG foo 1 5\r\nworld\r\nPING\r\n".utf8))
+        for input in inputs {
+            let name = String(decoding: input, as: UTF8.self)
+            let result = try input.parseOutMessages()
+            XCTAssertNil(result.remainder, name)
+            guard result.ops.count == 2, case .message(let msg) = result.ops[0],
+                case .ping = result.ops[1]
+            else {
+                XCTFail("expected the second message and PING only: \(name)")
+                continue
+            }
+            XCTAssertEqual(msg.payload, Data("world".utf8), name)
+        }
+    }
+
+    func testHeaderWithEmptyValueOrFoldedLineIsDelivered() throws {
+        let cases: [(String, [(String, String)])] = [
+            ("NATS/1.0\r\nX-A:\r\nX-B: b\r\n\r\n", [("X-A", ""), ("X-B", "b")]),
+            ("NATS/1.0\r\nX: a\r\n b\r\n\r\n", [("X", "a")]),
+        ]
+        for (headers, expected) in cases {
+            let size = headers.utf8.count
+            let input = "HMSG foo 1 \(size) \(size + 5)\r\n\(headers)hello\r\n"
+            let result = try Data(input.utf8).parseOutMessages()
+            XCTAssertNil(result.remainder, input)
+            guard result.ops.count == 1, case .hMessage(let msg) = result.ops[0] else {
+                XCTFail("expected the message: \(input)")
+                continue
+            }
+            XCTAssertEqual(msg.payload, Data("hello".utf8), input)
+            var expectedHeaders = NatsHeaderMap()
+            for (name, value) in expected {
+                expectedHeaders.append(try NatsHeaderName(name), NatsHeaderValue(value))
+            }
+            XCTAssertEqual(msg.headers, expectedHeaders, input)
         }
     }
 }
