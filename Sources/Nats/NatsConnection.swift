@@ -43,11 +43,18 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     // Connection options
     internal let retryOnFailedConnect: Bool
-    private let _urls: NIOLockedValueBox<[URL]>
-    private var urls: [URL] {
-        get { _urls.withLockedValue { $0 } }
-        set { _urls.withLockedValue { $0 = newValue } }
+    private let pool: NIOLockedValueBox<ServerPool>
+    /// The configured servers, then the discovered ones.
+    internal var servers: [Server] {
+        pool.withLockedValue { $0.servers }
     }
+    /// The server of the current connection attempt or connection, and whether that
+    /// connection has TLS. The servers its INFOs report are learned on it.
+    private struct CurrentServer: Sendable {
+        let server: Server
+        var tls: Bool
+    }
+    private let current = NIOLockedValueBox<CurrentServer?>(nil)
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
     private let maxReconnects: Int?
@@ -140,7 +147,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         tlsOptional: Bool, clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
-        self._urls = NIOLockedValueBox(urls)
+        self.pool = NIOLockedValueBox(ServerPool(configured: urls))
         self.group = .singleton
         self._inputBuffer = NIOLockedValueBox(allocator.buffer(capacity: 1024))
         self.reconnectWait = UInt64(reconnectWait * 1_000_000_000)
@@ -480,16 +487,20 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     func connect() async throws {
         self.setState(.connecting)
-        var servers = self.urls
+        var servers = self.servers
         if !self.retainServersOrder {
-            servers = self.urls.shuffled()
+            servers.shuffle()
         }
         var lastErr: Error?
 
         // if there are more reconnect attempts than the number of servers,
         // we are after the initial connect, so sleep between servers
-        let shouldSleep = self.reconnectAttempts >= self.urls.count
-        for s in servers {
+        let shouldSleep = self.reconnectAttempts >= servers.count
+        for server in servers {
+            // a discovered server as the pool has it now: it may have gained TLS in this round
+            guard let s = self.pool.withLockedValue({ $0.latest(server) }) else {
+                continue
+            }
             if let maxReconnects {
                 if reconnectAttempts > 0 && reconnectAttempts >= maxReconnects {
                     throw NatsError.ClientError.maxReconnects
@@ -501,7 +512,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             }
 
             do {
-                try await connectToServer(s: s)
+                try await connectToServer(s)
             } catch let error as NatsError.ConnectError {
                 if case .invalidConfig(_) = error {
                     throw error
@@ -570,10 +581,14 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return
     }
 
-    private func connectToServer(s: URL) async throws {
+    private func connectToServer(_ server: Server) async throws {
+        let s = server.url
         // the first line of every attempt must be INFO
         readPhase.withLockedValue { $0 = .expectingInfo }
         capturedConnectionError.withLockedValue { $0 = nil }
+        // a websocket with TLS and TLS first have TLS from the start
+        let tls = s.lowercasedScheme == "wss" || (self.tlsFirst && !s.isWebsocket)
+        current.withLockedValue { $0 = CurrentServer(server: server, tls: tls) }
         parseRemainder.withLockedValue { $0 = nil }
         _inputBuffer.withLockedValue { $0.clear() }
         var infoTask: Task<(), Never>? = nil
@@ -642,7 +657,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             guard let channel = dialed.withLockedValue({ $0 }) else {
                 throw NatsError.ClientError.internalError("empty channel")
             }
-            try await completeConnection(to: s, info: info, on: channel)
+            try await completeConnection(to: server, info: info, on: channel)
         } catch {
             // The wait for INFO also ends when another channel closes or reads a line, and the
             // dial of this attempt may still be running then: wait for it. Then close the channel
@@ -661,9 +676,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// Upgrades the attempt's channel to TLS when needed, then sends CONNECT and waits for the
     /// server's answer.
     private func completeConnection(
-        to s: URL, info: ServerInfo, on channel: Channel
+        to server: Server, info: ServerInfo, on channel: Channel
     ) async throws {
-        if try upgradesToTls(server: s, info: info) {
+        let s = server.url
+        if try upgradesToTls(server: server, info: info) {
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -684,6 +700,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                         self.parseRemainder.withLockedValue { $0 = nil }
                         phase = .processing
                     }
+                    self.current.withLockedValue { $0?.tls = true }
                     try channel.pipeline.syncOperations.addHandlers(
                         [sslHandlerBox.value, self.makeNameCheck(for: s)], position: .first)
                     // writes reach this connection only from here on, through TLS
@@ -722,21 +739,36 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// connection and a TLS-first connection have TLS from the start, and a `ws://` connection
     /// is never upgraded: its TLS would start below the websocket framing after the upgrade.
     /// While TLS is asked for, ``NatsClient/connect()`` refuses a `ws://` URL of the list, so
-    /// no server is dialed over `ws://`. Throws when TLS is asked for and `info` offers none.
-    private func upgradesToTls(server: URL, info: ServerInfo) throws -> Bool {
-        if server.isWebsocket || self.tlsFirst {
+    /// no server is dialed over `ws://`: a discovered server gets `ws://` only from a `ws://`
+    /// connection. Throws when TLS is asked for and `info` offers none.
+    private func upgradesToTls(server: Server, info: ServerInfo) throws -> Bool {
+        let url = server.url
+        if url.isWebsocket || self.tlsFirst {
             return false
         }
-        // With TLS optional nothing asks for TLS, but a tls:// URL still gets it.
-        let urlAsksForTls = server.lowercasedScheme == "tls" ? "the URL \(server.quoted)" : nil
-        guard let askedBy = self.tlsAskedBy ?? urlAsksForTls else {
+        // With TLS optional nothing asks for TLS, but a tls:// URL, and a server learned on a
+        // connection with TLS, still get it.
+        let serverAsksForTls: String?
+        if server.learnedOverTls {
+            serverAsksForTls = "\(url.quoted) was discovered on a connection with TLS"
+        } else if url.lowercasedScheme == "tls" {
+            serverAsksForTls = "the URL \(url.quoted) asks for TLS"
+        } else {
+            serverAsksForTls = nil
+        }
+        guard let askedBy = self.tlsAskedBy.map({ "\($0) asks for TLS" }) ?? serverAsksForTls
+        else {
             return info.tlsRequired ?? false
         }
         // An INFO with neither tls_required nor tls_available says that the server offers no
         // TLS: instead of starting a handshake, say which server it is and what asked for TLS.
         guard info.tlsRequired ?? false || info.tlsAvailable ?? false else {
-            var message = "\(askedBy) asks for TLS, but \(server.quoted) does not offer it"
-            if self.tlsAskedBy != nil {
+            var message =
+                self.tlsAskedBy == nil && server.learnedOverTls
+                ? "\(askedBy), but does not offer it"
+                : "\(askedBy), but \(url.quoted) does not offer it"
+            // tlsOptional() does not take TLS away from a server learned over TLS
+            if self.tlsAskedBy != nil && !server.learnedOverTls {
                 message += "; tlsOptional() leaves TLS to each server"
             }
             throw NatsError.ConnectError.tlsFailure(NatsError.TlsNotOffered(description: message))
@@ -1026,21 +1058,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private func updateServersList(info: ServerInfo) {
-        if let connectUrls = info.connectUrls {
-            for entry in connectUrls {
-                let discovered = DiscoveredEntry(entry)
-                if case .skipped(let reason) = discovered {
-                    logger.warning(
-                        "skipping the connect_urls entry \(DiscoveredEntry.quoted(entry)): \(reason)"
-                    )
-                }
-                guard let url = discovered.url(scheme: "nats") else {
-                    continue
-                }
-                if !self.urls.contains(url) {
-                    urls.append(url)
-                }
-            }
+        guard let connectUrls = info.connectUrls, let current = current.withLockedValue({ $0 })
+        else {
+            return
+        }
+        pool.withLockedValue {
+            $0.add(connectUrls, websocket: current.server.url.isWebsocket, tls: current.tls)
         }
     }
 
