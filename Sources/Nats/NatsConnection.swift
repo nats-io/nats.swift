@@ -594,7 +594,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func completeConnection(
         to s: URL, info: ServerInfo, on channel: Channel
     ) async throws {
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
+        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst
+            && s.lowercasedScheme != "wss"
+        {
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -831,7 +833,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                         return channel.eventLoop.makeFailedFuture(tlsError)
                     }
                 } else {
-                    if server.scheme == "ws" || server.scheme == "wss" {
+                    if server.isWebsocket {
                         let httpUpgradeRequestHandler = HTTPUpgradeRequestHandler(
                             host: server.host ?? "localhost",
                             path: server.path,
@@ -870,7 +872,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                             }
                         )
 
-                        if server.scheme == "wss" {
+                        if server.lowercasedScheme == "wss" {
                             do {
                                 let sslHandler = try self.makeSSLHandler(for: server)
                                 // The sync methods here are safe because we're on the channel event loop
@@ -1353,6 +1355,17 @@ public enum NatsEvent: Sendable {
         case .error(_):
             return .error
         }
+    }
+}
+
+extension URL {
+    /// The scheme in lower case: schemes are compared without regard to case.
+    fileprivate var lowercasedScheme: String? {
+        scheme?.lowercased()
+    }
+
+    fileprivate var isWebsocket: Bool {
+        lowercasedScheme == "ws" || lowercasedScheme == "wss"
     }
 }
 
