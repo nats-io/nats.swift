@@ -176,9 +176,20 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             inputChunk.prepend(remainder)
         }
 
+        // Once connected, an INFO that does not parse is skipped and reported, and the
+        // connection stays up. During a connection attempt it fails the parse.
+        let reportSkippedInfo: ((Error) -> Void)? =
+            state == .connected
+            ? { error in
+                logger.warning("skipping INFO that does not parse: \(error)")
+                self.fire(
+                    .error(NatsError.ProtocolError.parserFailure("INFO does not parse: \(error)")))
+            } : nil
+
         let parseResult: (ops: [ServerOp], remainder: Data?)
         do {
-            parseResult = try inputChunk.parseOutMessages()
+            parseResult = try inputChunk.parseOutMessages(
+                onInfoThatDoesNotParse: reportSkippedInfo)
         } catch {
             // if parsing throws an error, clear buffer and remainder, then reconnect
             _inputBuffer.withLockedValue { $0.clear() }

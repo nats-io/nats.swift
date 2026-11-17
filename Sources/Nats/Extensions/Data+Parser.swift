@@ -80,7 +80,14 @@ extension Data {
         self = other + self
     }
 
-    internal func parseOutMessages() throws -> (ops: [ServerOp], remainder: Data?) {
+    /// Parses the protocol operations in this data.
+    ///
+    /// - Parameter onInfoThatDoesNotParse: when set, an INFO that does not parse is passed to it
+    ///   and skipped, and the rest of the data is parsed. Otherwise it fails the parse, as any
+    ///   other line that does not parse does.
+    internal func parseOutMessages(
+        onInfoThatDoesNotParse: ((Error) -> Void)? = nil
+    ) throws -> (ops: [ServerOp], remainder: Data?) {
         var serverOps = [ServerOp]()
         var startIndex = self.startIndex
         var remainder: Data?
@@ -103,7 +110,17 @@ extension Data {
                 continue
             }
 
-            let serverOp = try ServerOp.parse(from: lineData)
+            let serverOp: ServerOp
+            do {
+                serverOp = try ServerOp.parse(from: lineData)
+            } catch {
+                guard let onInfoThatDoesNotParse, lineData.getMessageType() == .info else {
+                    throw error
+                }
+                onInfoThatDoesNotParse(error)
+                startIndex = nextLineStartIndex
+                continue
+            }
 
             // if it's a message, get the full payload and add to returned data
             if case .message(var msg) = serverOp {
