@@ -28,6 +28,8 @@ final class FakeNatsServer: Sendable {
     struct Script: Sendable {
         /// Bytes written right after accept, or `greetingDelay` seconds later.
         var greeting: String = ""
+        /// When set, written in place of `greeting` on every connection after the first.
+        var laterGreeting: String? = nil
         var greetingDelay: TimeInterval = 0
         /// When set, the server expects TLS: after the greeting, or before it with `tlsFirst`.
         var tls: NIOSSLContext? = nil
@@ -293,7 +295,8 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
         if let tls = script.tls, script.tlsFirst {
             addTls(context: context, tls: tls)
         }
-        write(context: context, script.greeting)
+        let greeting = index > 0 ? script.laterGreeting ?? script.greeting : script.greeting
+        write(context: context, greeting)
         if script.closeAfterGreeting {
             if script.closeDelay > 0 {
                 let channel = context.channel

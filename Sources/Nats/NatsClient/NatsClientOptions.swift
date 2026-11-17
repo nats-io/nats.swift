@@ -50,6 +50,9 @@ public class NatsClientOptions {
     }
 
     /// A list of server urls that a client can connect to.
+    ///
+    /// A `tls://` or `wss://` URL among them asks for TLS for every server, as
+    /// ``requireTls()`` does.
     public func urls(_ urls: [URL]) -> NatsClientOptions {
         self.urls = urls.map { self.applyDefaultPort(to: $0) }
         return self
@@ -57,6 +60,8 @@ public class NatsClientOptions {
     }
 
     /// A single url that the client can connect to.
+    ///
+    /// A `tls://` or `wss://` URL asks for TLS, as ``requireTls()`` does.
     public func url(_ url: URL) -> NatsClientOptions {
         self.urls = [self.applyDefaultPort(to: url)]
         return self
@@ -137,6 +142,12 @@ public class NatsClientOptions {
     }
 
     /// Indicates whether the client requires an SSL connection.
+    ///
+    /// It asks for TLS for every server: the servers in ``urls(_:)``, the servers the cluster
+    /// reports, and every reconnect. A server that cannot do TLS is not connected to, and
+    /// nothing a server sends turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
+    /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
+    /// TLS for every server too.
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
@@ -145,18 +156,25 @@ public class NatsClientOptions {
     /// Indicates whether the client will attempt to perform a TLS handshake first, that is
     /// before receiving the INFO protocol. This requires the server to also be
     /// configured with such option, otherwise the connection will fail.
+    ///
+    /// It asks for TLS for every server, as ``requireTls()`` does. A `wss://` URL has its TLS
+    /// below the websocket instead.
     public func withTlsFirst() -> NatsClientOptions {
         self.tlsFirst = true
         return self
     }
 
     /// The location of a root CAs file.
+    ///
+    /// It asks for TLS for every server, as ``requireTls()`` does.
     public func rootCertificates(_ rootCertificate: URL) -> NatsClientOptions {
         self.rootCertificate = rootCertificate
         return self
     }
 
     /// The location of a client cert file.
+    ///
+    /// It asks for TLS for every server, as ``requireTls()`` does.
     public func clientCertificate(_ clientCertificate: URL, _ clientKey: URL) -> NatsClientOptions {
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
