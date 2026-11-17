@@ -139,11 +139,30 @@ public class NatsServer {
             return
         }
 
-        self.process?.terminate()
-        process?.waitUntilExit()
-        process = nil
+        guard let process else {
+            return
+        }
+        process.terminate()
+        // A server that does not exit on SIGTERM must not hang the test run forever.
+        if !waitForExit(process, seconds: 10) {
+            FileHandle.standardError.write(
+                Data(
+                    "nats-server \(process.processIdentifier) did not exit on SIGTERM, killing it\n"
+                        .utf8))
+            kill(process.processIdentifier, SIGKILL)
+            _ = waitForExit(process, seconds: 5)
+        }
+        self.process = nil
         natsServerPort = port
         tlsEnabled = false
+    }
+
+    private func waitForExit(_ process: Process, seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while process.isRunning && Date() < deadline {
+            usleep(10_000)
+        }
+        return !process.isRunning
     }
 
     public func sendSignal(_ signal: Signal, file: StaticString = #file, line: UInt = #line) {
