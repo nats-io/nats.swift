@@ -721,17 +721,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// Whether the attempt upgrades its connection to `server` to TLS after `info`. A `wss://`
     /// connection and a TLS-first connection have TLS from the start, and a `ws://` connection
     /// is never upgraded: its TLS would start below the websocket framing after the upgrade.
-    /// Throws for a `ws://` URL while TLS is asked for, and when TLS is asked for and `info`
-    /// offers none.
+    /// While TLS is asked for, ``NatsClient/connect()`` refuses a `ws://` URL of the list, so
+    /// no server is dialed over `ws://`. Throws when TLS is asked for and `info` offers none.
     private func upgradesToTls(server: URL, info: ServerInfo) throws -> Bool {
         if server.isWebsocket || self.tlsFirst {
-            // connect() refuses a ws:// URL of the list while TLS is asked for; one that a
-            // server reported later is refused here, before CONNECT
-            if let tlsAskedBy, server.lowercasedScheme == "ws" {
-                throw NatsError.ConnectError.tlsFailure(
-                    NatsError.TlsNotOffered(
-                        description: Self.wsUrlRefusal(server, tlsAskedBy: tlsAskedBy)))
-            }
             return false
         }
         // With TLS optional nothing asks for TLS, but a tls:// URL still gets it.
@@ -1034,8 +1027,14 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     private func updateServersList(info: ServerInfo) {
         if let connectUrls = info.connectUrls {
-            for connectUrl in connectUrls {
-                guard let url = URL(string: connectUrl) else {
+            for entry in connectUrls {
+                let discovered = DiscoveredEntry(entry)
+                if case .skipped(let reason) = discovered {
+                    logger.warning(
+                        "skipping the connect_urls entry \(DiscoveredEntry.quoted(entry)): \(reason)"
+                    )
+                }
+                guard let url = discovered.url(scheme: "nats") else {
                     continue
                 }
                 if !self.urls.contains(url) {
