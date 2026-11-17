@@ -142,9 +142,12 @@ internal struct Server: Sendable {
     /// Reported by a server rather than set in the options.
     let isDiscovered: Bool
     let key: Key
-    /// For a discovered server given as an IP address, the host name its certificate is
-    /// verified against: the name under which the server that reported it was verified. Nil
-    /// when there is none.
+    /// The name inherited from the server that reported it, nil when there is none. For a
+    /// server given as an IP address, it is the host name its certificate is verified against:
+    /// the name under which the reporting server was verified, or, learned without TLS, the
+    /// host name of the configured server through which it was learned. For any discovered
+    /// server, it is also the name that the servers it lists while connected without TLS
+    /// inherit.
     private(set) var inheritedName: String?
 
     /// Learned on a connection with TLS: it is connected to with TLS, whatever its INFO says.

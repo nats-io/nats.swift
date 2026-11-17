@@ -1005,16 +1005,19 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// The name the certificate of `server` is verified against, and sent as SNI unless it is
     /// an IP address, or nil when there is none: the server is then not connected to with TLS.
     ///
-    /// A configured server is verified against the host of its URL. A discovered server
-    /// learned on a connection with TLS is verified, given as a host name, against that name,
-    /// and given as an IP address against the name under which the server that reported it
-    /// was verified: the address is one more address of a server the client already trusts.
+    /// A configured server is verified against the host of its URL. A discovered server given
+    /// as an IP address is verified against the name it inherited, as one more address of a
+    /// server the client already trusts. A discovered host name is verified against itself
+    /// when it was learned on a connection with TLS, and has no name otherwise: a name
+    /// learned without TLS is not trusted.
     private func tlsName(for server: Server) -> String? {
-        let host = server.url.host
-        guard server.learnedOverTls, let host, Self.isIPAddress(host) else {
-            return host
+        guard server.isDiscovered, let host = server.url.host else {
+            return server.url.host
         }
-        return server.inheritedName
+        if Self.isIPAddress(host) {
+            return server.inheritedName
+        }
+        return server.learnedOverTls ? host : nil
     }
 
     /// Why the discovered server `server` cannot be connected to with TLS.
@@ -1329,10 +1332,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
         let websocket = current.server.url.isWebsocket
         // An IP address it lists is verified against the name this connection was verified
-        // under, when that is a name and not an address.
-        let name =
-            current.tls
-            ? tlsName(for: current.server).flatMap { Self.isIPAddress($0) ? nil : $0 } : nil
+        // under, or, without TLS, against the name of the configured server it was learned
+        // through, when that is a name and not an address.
+        let reporterName =
+            current.tls || !current.server.isDiscovered
+            ? tlsName(for: current.server) : current.server.inheritedName
+        let name = reporterName.flatMap { Self.isIPAddress($0) ? nil : $0 }
         pool.withLockedValue { pool in
             if replacing {
                 pool.replace(
@@ -1584,11 +1589,13 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 } catch {
                     logger.debug("Could not reconnect: \(error)")
                     // No error raised on the channel reports these as an event: no TLS offered,
-                    // or a certificate not issued for the server's name.
+                    // a certificate not issued for the server's name, or a discovered server with
+                    // no name to verify its certificate against.
                     if let error = error as? NatsError.ConnectError,
                         case .tlsFailure(let cause) = error,
                         cause is NatsError.TlsNotOffered
                             || cause is NatsError.CertificateNameMismatch
+                            || cause is NatsError.NoTlsName
                     {
                         self.fire(.error(error))
                     }

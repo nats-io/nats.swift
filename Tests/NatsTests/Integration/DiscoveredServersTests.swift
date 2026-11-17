@@ -132,6 +132,19 @@ class DiscoveredServersTests: XCTestCase {
             "testDiscoveredIpOfWssClusterIsVerifiedAgainstTheNameOfItsReporter",
             testDiscoveredIpOfWssClusterIsVerifiedAgainstTheNameOfItsReporter
         ),
+        (
+            "testDiscoveredIpLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName",
+            testDiscoveredIpLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName
+        ),
+        (
+            "testDiscoveredIpBehindAHostNameLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName",
+            testDiscoveredIpBehindAHostNameLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName
+        ),
+        (
+            "testHostNameLearnedWithoutTlsIsNotConnectedOverTls",
+            testHostNameLearnedWithoutTlsIsNotConnectedOverTls
+        ),
+        ("testReconnectToAServerWithNoNameReportsWhy", testReconnectToAServerWithNoNameReportsWhy),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -1432,5 +1445,131 @@ class DiscoveredServersTests: XCTestCase {
         let rtt = await result(within: 5) { try await client.rtt() }
         XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
         _ = await result(within: 5) { try await client.close() }
+    }
+
+    /// A client of the server without TLS at `port`, as `nats://localhost`, that trusts the
+    /// test CA and leaves TLS to each server.
+    private func plaintextClient(_ port: Int) -> NatsClientOptions {
+        NatsClientOptions()
+            .url(URL(string: "nats://localhost:\(port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .reconnectWait(0.1)
+    }
+
+    /// A scripted server without TLS that lists `entries` in its INFO, then refuses the client,
+    /// so that the first connect tries those servers.
+    private func refusingSeed(listing entries: [String]) throws -> FakeNatsServer {
+        try fake(
+            .init(
+                greeting: FakeNatsServer.info(connectUrls: entries),
+                firstPingReply: "-ERR 'maximum connections exceeded'\r\n"))
+    }
+
+    // The client reaches the cluster without TLS, and the discovered server requires TLS. Its
+    // certificate is issued for localhost and ::1, not 127.0.0.1.
+    func testDiscoveredIpLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try seed(listing: ["127.0.0.1:\(peer.port)"])
+        let client = plaintextClient(seed.port).build()
+
+        let reconnected = try await reconnects(client, from: seed)
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl, URL(string: "nats://127.0.0.1:\(peer.port)"))
+        XCTAssertEqual(peer.connections.first?.serverName, "localhost", "SNI")
+        try? await client.close()
+
+        // over two hops: the server in between has no TLS
+        let last = try tlsAfterInfo()
+        let middle = try self.seed(listing: ["127.0.0.1:\(last.port)"])
+        let first = try self.seed(listing: ["127.0.0.1:\(middle.port)"])
+        let hopping = plaintextClient(first.port).build()
+        let toMiddle = try await reconnects(hopping, from: first)
+        XCTAssertTrue(toMiddle, "client did not reconnect to the first discovered server")
+        let rtt = await result(within: 5) { try await hopping.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG from the first discovered server")
+        let toLast = await reconnects(hopping, after: middle)
+        XCTAssertTrue(toLast, "client did not reconnect to the server it learned there")
+        XCTAssertEqual(hopping.connectedUrl, URL(string: "nats://127.0.0.1:\(last.port)"))
+        XCTAssertEqual(last.connections.first?.serverName, "localhost", "SNI")
+        try? await hopping.close()
+    }
+
+    // The same through a discovered host name: the server in between, localhost, has no TLS.
+    // The configured server is given in upper case, so that the name the address is verified
+    // against is told apart from the host name it was learned through.
+    func testDiscoveredIpBehindAHostNameLearnedWithoutTlsIsVerifiedAgainstTheConfiguredName()
+        async throws
+    {
+        let last = try tlsAfterInfo()
+        let middle = try seed(listing: ["127.0.0.1:\(last.port)"])
+        let first = try seed(listing: ["localhost:\(middle.port)"])
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://LOCALHOST:\(first.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .reconnectWait(0.1)
+            .build()
+
+        let toMiddle = try await reconnects(client, from: first)
+        XCTAssertTrue(toMiddle, "client did not reconnect to the discovered host name")
+        XCTAssertEqual(client.connectedUrl, URL(string: "nats://localhost:\(middle.port)"))
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG from the discovered host name")
+        let toLast = await reconnects(client, after: middle)
+        XCTAssertTrue(toLast, "client did not reconnect to the server it learned there")
+        XCTAssertEqual(client.connectedUrl, URL(string: "nats://127.0.0.1:\(last.port)"))
+        XCTAssertEqual(last.connections.first?.serverName, "LOCALHOST", "SNI")
+        try? await client.close()
+    }
+
+    // The configured server sends its INFO, then refuses the client, so that the first connect
+    // tries the server it lists, which requires TLS.
+    func testHostNameLearnedWithoutTlsIsNotConnectedOverTls() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try refusingSeed(listing: ["localhost:\(peer.port)"])
+        let client = plaintextClient(seed.port).usernameAndPassword("user", "secret").build()
+
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .failure(NatsError.ConnectError.tlsFailure(let cause))? = connected else {
+            try? await client.close()
+            return XCTFail("expected a TLS failure, got \(String(describing: connected))")
+        }
+        let message = "\(cause)"
+        XCTAssertTrue(
+            message.contains(
+                "\"nats://localhost:\(peer.port)\": a discovered server with no name to verify "
+                    + "its certificate against"), message)
+        let closed = try await eventually { peer.connections.first?.closed == true }
+        XCTAssertTrue(closed, "the discovered server was not dialed, or its connection left open")
+        let sent = peer.connections.first?.firstBytes ?? []
+        XCTAssertTrue(sent.isEmpty, "sent " + String(decoding: sent, as: UTF8.self))
+    }
+
+    // The client reaches the cluster without TLS and learns a host name that requires TLS. Each
+    // reconnect attempt to it fails at its INFO, and an error event says why.
+    func testReconnectToAServerWithNoNameReportsWhy() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try seed(listing: ["localhost:\(peer.port)"])
+        // the peer comes last in each round: a round reports the error of its last attempt
+        let client = plaintextClient(seed.port).retainServersOrder().build()
+        let reported = XCTestExpectation(description: "no error event says why")
+        reported.assertForOverFulfill = false
+        client.on(.error) { event in
+            if case .error(let error) = event, "\(error)".contains("with no name to verify") {
+                reported.fulfill()
+            }
+        }
+        try await client.connect()
+        guard case .success? = await result(within: 5, { try await client.rtt() }) else {
+            return XCTFail("no PONG from the seed")
+        }
+        XCTAssertEqual(client.connectionHandler?.servers.count, 2, "setup: host name not learned")
+
+        seed.shutdown()
+        await fulfillment(of: [reported], timeout: 10)
+        let sent = peer.connections.flatMap { $0.firstBytes }
+        XCTAssertTrue(sent.isEmpty, "sent " + String(decoding: sent, as: UTF8.self))
+        try? await client.close()
     }
 }
