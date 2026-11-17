@@ -39,6 +39,7 @@ public class NatsServer {
     private var natsWebsocketPort: Int?
     private var tlsEnabled = false
     private var pidFile: URL?
+    private var inLameDuckMode = false
 
     public init() {}
 
@@ -135,24 +136,26 @@ public class NatsServer {
     }
 
     public func stop() {
-        if process == nil {
-            return
-        }
-
         guard let process else {
             return
         }
-        process.terminate()
-        // A server that does not exit on SIGTERM must not hang the test run forever.
+        if inLameDuckMode {
+            // a server in lame duck mode ignores SIGTERM and exits only when it is done
+            kill(process.processIdentifier, SIGKILL)
+        } else {
+            process.terminate()
+        }
+        // A server that does not exit must not hang the test run forever.
         if !waitForExit(process, seconds: 10) {
             FileHandle.standardError.write(
                 Data(
-                    "nats-server \(process.processIdentifier) did not exit on SIGTERM, killing it\n"
+                    "nats-server \(process.processIdentifier) did not exit, killing it\n"
                         .utf8))
             kill(process.processIdentifier, SIGKILL)
             _ = waitForExit(process, seconds: 5)
         }
         self.process = nil
+        inLameDuckMode = false
         natsServerPort = port
         tlsEnabled = false
     }
@@ -166,14 +169,25 @@ public class NatsServer {
     }
 
     public func sendSignal(_ signal: Signal, file: StaticString = #file, line: UInt = #line) {
+        guard let server = self.process else {
+            XCTFail("nats-server is not running", file: file, line: line)
+            return
+        }
         let process = Process()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["nats-server", "--signal", "\(signal.rawValue)=\(self.pidFile!.path)"]
+        // By process id: the pid file has the same path for every test process on the machine,
+        // so it may name a server that another test run started.
+        process.arguments = [
+            "nats-server", "--signal", "\(signal.rawValue)=\(server.processIdentifier)",
+        ]
 
         XCTAssertNoThrow(
             try process.run(), "error setting signal", file: file, line: line)
-        self.process = nil
+        // The server stays ours to stop: after a reload it keeps running.
+        if signal == .lameDuckMode {
+            inLameDuckMode = true
+        }
     }
 
     private func extractPort(from string: String, for phrase: String) -> Int? {
