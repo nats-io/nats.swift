@@ -25,6 +25,7 @@ class TlsTests: XCTestCase {
         ("testTlsToIpv4Address", testTlsToIpv4Address),
         ("testTlsToIpv6Address", testTlsToIpv6Address),
         ("testTlsToIpAddressVerifiesTheAddress", testTlsToIpAddressVerifiesTheAddress),
+        ("testUppercaseWebsocketSchemeConnects", testUppercaseWebsocketSchemeConnects),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -113,5 +114,20 @@ class TlsTests: XCTestCase {
             return XCTFail(
                 "connect must fail on the certificate, got \(String(describing: connected))")
         }
+    }
+
+    func testUppercaseWebsocketSchemeConnects() async throws {
+        let ws = try natsServer("ws")
+        let wsUrl = ws.clientWebsocketURL.replacingOccurrences(of: "ws://", with: "WS://")
+        await assertConnects(NatsClientOptions().url(URL(string: wsUrl)!), wsUrl)
+        ws.stop()
+
+        let wss = try natsServer("wss", pems: ["server-cert", "server-key", "rootCA"])
+        let wssUrl = wss.clientWebsocketURL.replacingOccurrences(of: "wss://", with: "WSS://")
+        await assertConnects(
+            NatsClientOptions()
+                .url(URL(string: wssUrl)!)
+                .rootCertificates(rootCA)
+                .clientCertificate(pem("client-cert"), pem("client-key")), wssUrl)
     }
 }
