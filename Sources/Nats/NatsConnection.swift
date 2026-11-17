@@ -536,6 +536,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.tlsFailure(err)
             case let err as BoringSSLError:
                 throw NatsError.ConnectError.tlsFailure(err)
+            case let err as NatsError.CertificateNameMismatch:
+                throw NatsError.ConnectError.tlsFailure(err)
             case let err as NatsError.ServerError:
                 throw err
             case let err as NatsError.ConnectError:
@@ -676,8 +678,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                         self.parseRemainder.withLockedValue { $0 = nil }
                         phase = .processing
                     }
-                    try channel.pipeline.syncOperations.addHandler(
-                        sslHandlerBox.value, position: .first)
+                    try channel.pipeline.syncOperations.addHandlers(
+                        [sslHandlerBox.value, self.makeNameCheck(for: s)], position: .first)
                     // writes reach this connection only from here on, through TLS
                     self.batchBuffer = BatchBuffer(channel: channel)
                 }.get()
@@ -749,9 +751,14 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             context: sslContext, serverHostname: tlsServerName(for: server))
     }
 
-    /// The name the certificate of `server` is verified against, also sent as SNI. An IP
-    /// address is neither, as SNI cannot carry one: the certificate must then be valid for that
-    /// address.
+    /// Checks that the certificate of `server` is issued for its host. It goes right after the
+    /// TLS handler.
+    private func makeNameCheck(for server: URL) -> TlsNameCheckHandler {
+        TlsNameCheckHandler(server: server.quoted, name: server.host ?? "")
+    }
+
+    /// The name sent as SNI to `server`: its host, or nil for an IP address, which SNI cannot
+    /// carry.
     private func tlsServerName(for server: URL) -> String? {
         guard let host = server.host, (try? SocketAddress(ipAddress: host, port: 0)) == nil else {
             return nil
@@ -762,6 +769,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func makeTLSConfig() throws -> TLSConfiguration {
         var tlsConfiguration =
             TLSConfiguration.makeClientConfiguration()
+        // The name is checked by TlsNameCheckHandler.
+        tlsConfiguration.certificateVerification = .noHostnameVerification
         if let rootCertificate = self.rootCertificate {
             tlsConfiguration.trustRoots = .file(
                 rootCertificate.path)
@@ -915,7 +924,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     do {
                         let sslHandler = try self.makeSSLHandler(for: server)
                         do {
-                            try channel.pipeline.syncOperations.addHandler(sslHandler)
+                            try channel.pipeline.syncOperations.addHandlers(
+                                sslHandler, self.makeNameCheck(for: server))
                         } catch {
                             let tlsError = NatsError.ConnectError.tlsFailure(error)
                             return channel.eventLoop.makeFailedFuture(tlsError)
@@ -970,7 +980,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                                 let sslHandler = try self.makeSSLHandler(for: server)
                                 // The sync methods here are safe because we're on the channel event loop
                                 // due to the promise originating on the event loop of the channel.
-                                try channel.pipeline.syncOperations.addHandler(sslHandler)
+                                try channel.pipeline.syncOperations.addHandlers(
+                                    sslHandler, self.makeNameCheck(for: server))
                             } catch {
                                 let tlsError = NatsError.ConnectError.tlsFailure(error)
                                 upgradePromise.fail(tlsError)
@@ -1259,9 +1270,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     return
                 } catch {
                     logger.debug("Could not reconnect: \(error)")
-                    // This failure comes before any TLS handshake, so no channel error reports it.
+                    // No error raised on the channel reports these as an event: no TLS offered,
+                    // or a certificate not issued for the server's name.
                     if let error = error as? NatsError.ConnectError,
-                        case .tlsFailure(let cause) = error, cause is NatsError.TlsNotOffered
+                        case .tlsFailure(let cause) = error,
+                        cause is NatsError.TlsNotOffered
+                            || cause is NatsError.CertificateNameMismatch
                     {
                         self.fire(.error(error))
                     }

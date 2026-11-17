@@ -218,6 +218,12 @@ public enum NatsError {
         let description: String
     }
 
+    /// The cause of ``ConnectError/tlsFailure(_:)`` when the server's certificate is not issued
+    /// for the name the client verifies it against.
+    internal struct CertificateNameMismatch: Error, CustomStringConvertible {
+        let description: String
+    }
+
     public enum RequestError: NatsErrorProtocol, Equatable {
         case noResponders
         case timeout

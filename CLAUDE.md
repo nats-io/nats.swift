@@ -92,6 +92,6 @@ Integration tests use `NatsServer` helper to spawn local NATS server instances w
 ## Development Notes
 
 - Minimum deployment targets: macOS 13.0, iOS 13.0
-- Swift 5.7+ required
+- Swift 5.10+ required
 - WebSocket upgrade support available for browser-compatible connections
 - Batch message processing optimized with `BatchBuffer` for performance
