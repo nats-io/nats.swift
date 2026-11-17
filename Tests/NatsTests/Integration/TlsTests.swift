@@ -36,6 +36,7 @@ class TlsTests: XCTestCase {
         ("testRootCertificatesUseTls", testRootCertificatesUseTls),
         ("testClientCertificateUsesTls", testClientCertificateUsesTls),
         ("testTlsServerNameUsesTls", testTlsServerNameUsesTls),
+        ("testVerifyDiscoveredServersByIpUsesTls", testVerifyDiscoveredServersByIpUsesTls),
         ("testTlsUrlMakesEveryListedServerTls", testTlsUrlMakesEveryListedServerTls),
         ("testWssUrlWithTlsFirstConnects", testWssUrlWithTlsFirstConnects),
         ("testTlsOptionalDialsEachUrlByItsScheme", testTlsOptionalDialsEachUrlByItsScheme),
@@ -425,6 +426,14 @@ class TlsTests: XCTestCase {
             NatsClientOptions()
                 .url(URL(string: "nats://localhost:\(server.port)")!)
                 .tlsServerName("localhost"), on: server)
+    }
+
+    func testVerifyDiscoveredServersByIpUsesTls() async throws {
+        let server = try fakeOfferingTls()
+        await assertStartsTls(
+            NatsClientOptions()
+                .url(URL(string: "nats://localhost:\(server.port)")!)
+                .verifyDiscoveredServersByIp(), on: server)
     }
 
     func testTlsUrlMakesEveryListedServerTls() async throws {

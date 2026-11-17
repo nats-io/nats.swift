@@ -40,13 +40,14 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
     private let server: String
     /// The host name or IP address the certificate must be issued for.
     private let name: String
-    /// What the error adds when the certificate is not issued for the name.
-    private let remedy: String
+    /// What the error adds when the certificate, issued for the names given, is not issued for
+    /// the name.
+    private let remedy: ([String]) -> String
     private var state = State.handshaking
     private var heldWrites: [(data: NIOAny, promise: EventLoopPromise<Void>?)] = []
     private var heldFlush = false
 
-    init(server: String, name: String, remedy: String = "") {
+    init(server: String, name: String, remedy: @escaping ([String]) -> String = { _ in "" }) {
         self.server = server
         self.name = name
         self.remedy = remedy
@@ -64,7 +65,8 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
             let names = certificate.map { Self.names(of: $0) } ?? []
             fail(
                 context: context,
-                error: Self.mismatch(server: server, name: name, names: names, remedy: remedy))
+                error: Self.mismatch(
+                    server: server, name: name, names: names, remedy: remedy(names)))
             return
         }
         state = .checked
