@@ -25,7 +25,11 @@ class ServerInputTests: XCTestCase {
         (
             "testInfoThatDoesNotParseIsSkippedOnceConnected",
             testInfoThatDoesNotParseIsSkippedOnceConnected
-        )
+        ),
+        (
+            "testLineThatDoesNotParseMakesTheClientReconnect",
+            testLineThatDoesNotParseMakesTheClientReconnect
+        ),
     ]
 
     var natsServer = NatsServer()
@@ -65,6 +69,30 @@ class ServerInputTests: XCTestCase {
         await fulfillment(of: [reported, received], timeout: 5.0)
         await fulfillment(of: [disconnected], timeout: 0.5)
         reader.cancel()
+        try await client.close()
+    }
+
+    func testLineThatDoesNotParseMakesTheClientReconnect() async throws {
+        natsServer.start()
+        logger.logLevel = .critical
+
+        let client = NatsClientOptions().url(URL(string: natsServer.clientURL)!).build()
+        let reported = XCTestExpectation(description: "line that does not parse was not reported")
+        let disconnected = XCTestExpectation(description: "client did not disconnect")
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        client.on(.error) { event in
+            if case .error(let error) = event, error is NatsError.ProtocolError {
+                reported.fulfill()
+            }
+        }
+        client.on(.disconnected) { _ in disconnected.fulfill() }
+        try await client.connect()
+        client.on(.connected) { _ in reconnected.fulfill() }
+
+        try await receive("FOO\r\n", on: client)
+
+        await fulfillment(of: [reported, disconnected, reconnected], timeout: 5.0)
+        _ = try await client.rtt()
         try await client.close()
     }
 
