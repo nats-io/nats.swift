@@ -111,13 +111,14 @@ extension Data {
                     serverOps.append(serverOp)
                 } else {
                     var payload = Data()
-                    let payloadEndIndex = nextLineStartIndex + msg.length
-                    let payloadStartIndex = nextLineStartIndex
-                    // include crlf in the expected payload leangth
-                    if payloadEndIndex + Data.crlf.count > endIndex {
+                    // include crlf in the expected payload length; compare against the bytes
+                    // left so that a size close to Int.max cannot overflow
+                    if msg.length > endIndex - nextLineStartIndex - Data.crlf.count {
                         remainder = self[startIndex..<self.endIndex]
                         break
                     }
+                    let payloadEndIndex = nextLineStartIndex + msg.length
+                    let payloadStartIndex = nextLineStartIndex
                     payload.append(self[payloadStartIndex..<payloadEndIndex])
                     msg.payload = payload
                     startIndex =
@@ -132,6 +133,13 @@ extension Data {
                 if msg.length == 0 {
                     serverOps.append(serverOp)
                 } else {
+                    // if the whole msg length (including trailing crlf) is longer
+                    // than the remaining chunk, break and return the remainder
+                    if msg.length > endIndex - nextLineStartIndex - Data.crlf.count {
+                        remainder = self[startIndex..<self.endIndex]
+                        break
+                    }
+
                     let headersStartIndex = nextLineStartIndex
                     let headersEndIndex = nextLineStartIndex + msg.headersLength
                     let payloadStartIndex = headersEndIndex
@@ -142,13 +150,6 @@ extension Data {
                         payload = Data()
                     }
                     var headers = NatsHeaderMap()
-
-                    // if the whole msg length (including training crlf) is longer
-                    // than the remaining chunk, break and return the remainder
-                    if payloadEndIndex + Data.crlf.count > endIndex {
-                        remainder = self[startIndex..<self.endIndex]
-                        break
-                    }
 
                     let headersData = self[headersStartIndex..<headersEndIndex]
                     if let headersString = String(data: headersData, encoding: .utf8) {

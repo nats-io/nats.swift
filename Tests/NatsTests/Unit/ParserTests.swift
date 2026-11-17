@@ -18,7 +18,10 @@ import XCTest
 class ParserTests: XCTestCase {
 
     static var allTests = [
-        ("testParseOutMessages", testParseOutMessages)
+        ("testParseOutMessages", testParseOutMessages),
+        ("testParseNonUtf8LineThrows", testParseNonUtf8LineThrows),
+        ("testParseInvalidMessageSizesThrow", testParseInvalidMessageSizesThrow),
+        ("testParseHugeMessageSizeWaitsForPayload", testParseHugeMessageSizeWaitsForPayload),
     ]
 
     override func setUp() {
@@ -248,6 +251,44 @@ class ParserTests: XCTestCase {
                     }
                 }
             }
+        }
+    }
+
+    func testParseNonUtf8LineThrows() {
+        let cases: [(String, Data)] = [
+            ("short line", Data([0xff, 0x0d, 0x0a])),
+            ("unknown operation", Data([0xff, 0xfe, 0xfd, 0x0d, 0x0a])),
+            ("client operation", Data("PUB ".utf8) + Data([0xff, 0x0d, 0x0a])),
+        ]
+        for (name, input) in cases {
+            XCTAssertThrowsError(try input.parseOutMessages(), name)
+        }
+    }
+
+    func testParseInvalidMessageSizesThrow() {
+        let cases = [
+            "MSG foo 1 -5\r\nhello\r\n",
+            "MSG foo 1 abc\r\n",
+            "HMSG foo 1 -1 5\r\nhello\r\n",
+            "HMSG foo 1 abc 5\r\nhello\r\n",
+            "HMSG foo 1 0 abc\r\n",
+            "HMSG foo 1 30 5\r\nhello\r\n",
+        ]
+        for input in cases {
+            XCTAssertThrowsError(try Data(input.utf8).parseOutMessages(), input)
+        }
+    }
+
+    func testParseHugeMessageSizeWaitsForPayload() throws {
+        let cases = [
+            "MSG foo 1 9223372036854775807\r\nhello\r\n",
+            "HMSG foo 1 12 9223372036854775807\r\nNATS/1.0\r\n\r\nhello\r\n",
+        ]
+        for input in cases {
+            let data = Data(input.utf8)
+            let result = try data.parseOutMessages()
+            XCTAssertTrue(result.ops.isEmpty, input)
+            XCTAssertEqual(result.remainder, data, input)
         }
     }
 }
