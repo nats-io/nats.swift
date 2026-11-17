@@ -81,6 +81,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     private let auth: Auth?
     private let parseRemainder = NIOLockedValueBox<Data?>(nil)
+
+    /// What the handler does with the bytes of the current connection attempt.
+    private enum ReadPhase {
+        /// The first line from the server must be INFO.
+        case expectingInfo
+        /// Lines are parsed and handled.
+        case processing
+    }
+    private let readPhase = NIOLockedValueBox(ReadPhase.expectingInfo)
     private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
     private var pingTask: RepeatedTask? {
         get { _pingTask.withLockedValue { $0 } }
@@ -176,6 +185,14 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             inputChunk.prepend(remainder)
         }
 
+        if readPhase.withLockedValue({ $0 }) == .expectingInfo {
+            _inputBuffer.withLockedValue { $0.clear() }
+            guard let afterInfo = readExpectedInfo(inputChunk, context: context) else {
+                return
+            }
+            inputChunk = afterInfo
+        }
+
         // Once connected, an INFO that does not parse is skipped and reported, and the
         // connection stays up. During a connection attempt it fails the parse.
         let reportSkippedInfo: ((Error) -> Void)? =
@@ -208,33 +225,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = remainder }
         }
         for op in parseResult.ops {
-            // Only resume the server info continuation when we actually receive
-            // an INFO or -ERR op. Do NOT clear it for unrelated ops.
-            switch op {
-            case .error(let err):
-                if let continuation = serverInfoContinuation.withLockedValue({ cont in
-                    let toResume = cont
-                    cont = nil
-                    return toResume
-                }) {
-                    logger.debug("server info error")
-                    continuation.resume(throwing: err)
-                    continue
-                }
-            case .info(let info):
-                if let continuation = serverInfoContinuation.withLockedValue({ cont in
-                    let toResume = cont
-                    cont = nil
-                    return toResume
-                }) {
-                    logger.debug("server info")
-                    continuation.resume(returning: info)
-                    continue
-                }
-            default:
-                break
-            }
-
             let connEstablishedCont = connectionEstablishedContinuation.withLockedValue { cont in
                 let toResume = cont
                 cont = nil
@@ -322,6 +312,50 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             }
         }
         _inputBuffer.withLockedValue { $0.clear() }
+    }
+
+    /// Reads the first line of a connection attempt, which must be INFO, and hands the INFO to
+    /// the attempt. Any other line, or an INFO that does not parse, fails the attempt, is
+    /// reported as an error event, and closes its channel. Returns the bytes after the line, or
+    /// nil when the line is not complete yet or the attempt failed.
+    private func readExpectedInfo(_ chunk: Data, context: ChannelHandlerContext) -> Data? {
+        guard let lineEnd = chunk.range(of: Data([UInt8(ascii: "\r"), UInt8(ascii: "\n")])) else {
+            parseRemainder.withLockedValue { $0 = chunk }
+            return nil
+        }
+        let line = chunk[chunk.startIndex..<lineEnd.lowerBound]
+        let result: Result<ServerInfo, NatsError.ProtocolError>
+        if line.getMessageType() != .info {
+            result = .failure(
+                NatsError.ProtocolError.parserFailure(
+                    "expected INFO as the first line from the server"))
+        } else {
+            do {
+                result = .success(try ServerInfo.parse(data: line))
+            } catch {
+                result = .failure(
+                    NatsError.ProtocolError.parserFailure("INFO does not parse: \(error)"))
+            }
+        }
+
+        let continuation = serverInfoContinuation.withLockedValue { cont in
+            let toResume = cont
+            cont = nil
+            return toResume
+        }
+        switch result {
+        case .success(let info):
+            logger.debug("server info")
+            readPhase.withLockedValue { $0 = .processing }
+            continuation?.resume(returning: info)
+            return Data(chunk[lineEnd.upperBound...])
+        case .failure(let error):
+            logger.debug("connection attempt failed: \(error)")
+            context.close(promise: nil)
+            continuation?.resume(throwing: error)
+            fire(.error(error))
+            return nil
+        }
     }
 
     private func handleIncomingMessage(_ message: MessageInbound) {
@@ -435,9 +469,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private func connectToServer(s: URL) async throws {
+        // the first line of every attempt must be INFO
+        readPhase.withLockedValue { $0 = .expectingInfo }
+        parseRemainder.withLockedValue { $0 = nil }
+        _inputBuffer.withLockedValue { $0.clear() }
         var infoTask: Task<(), Never>? = nil
-        // this continuation can throw NatsError.ServerError if server responds with
-        // -ERR to client connect (e.g. auth error)
         let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
             serverInfoContinuation.withLockedValue { $0 = continuation }
             infoTask = Task {
@@ -905,6 +941,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             let captured = err
             err = nil  // Clear after using
             if let capturedError = captured {
+                // a line from the server that does not parse is not a TLS failure
+                if capturedError is NatsError.ProtocolError {
+                    return NatsError.ConnectError.io(capturedError)
+                }
                 return NatsError.ConnectError.tlsFailure(capturedError)
             } else {
                 return NatsError.ClientError.connectionClosed
