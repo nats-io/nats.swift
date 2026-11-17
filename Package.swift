@@ -47,7 +47,11 @@ let package = Package(
 
         .testTarget(
                 name: "NatsTests",
-                dependencies: ["Nats", "NatsServer"],
+                dependencies: [
+                    "Nats", "NatsServer",
+                    .product(name: "NIOEmbedded", package: "swift-nio"),
+                    .product(name: "NIOWebSocket", package: "swift-nio"),
+                ],
                 resources: [
                 .process("Integration/Resources")
                 ]
