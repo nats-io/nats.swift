@@ -131,7 +131,9 @@ extension Data {
                 //TODO(jrm): Add HMSG handling here too.
             } else if case .hMessage(var msg) = serverOp {
                 if msg.length == 0 {
-                    serverOps.append(serverOp)
+                    // a message without a header block is dropped, as one whose header block
+                    // does not parse is
+                    logger.error("dropping message on \(msg.subject): no header block")
                 } else {
                     // if the whole msg length (including trailing crlf) is longer
                     // than the remaining chunk, break and return the remainder
@@ -144,6 +146,10 @@ extension Data {
                     let headersEndIndex = nextLineStartIndex + msg.headersLength
                     let payloadStartIndex = headersEndIndex
                     let payloadEndIndex = nextLineStartIndex + msg.length
+                    startIndex =
+                        self.index(
+                            payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
+                        ?? self.endIndex
 
                     var payload: Data?
                     if msg.length > msg.headersLength {
@@ -152,8 +158,17 @@ extension Data {
                     var headers = NatsHeaderMap()
 
                     let headersData = self[headersStartIndex..<headersEndIndex]
-                    if let headersString = String(data: headersData, encoding: .utf8) {
+                    do {
+                        guard let headersString = String(data: headersData, encoding: .utf8)
+                        else {
+                            throw NatsError.ProtocolError.parserFailure(
+                                "header block is not valid UTF-8")
+                        }
                         headers = try NatsHeaderMap(from: headersString)
+                    } catch {
+                        // a header block that does not parse drops only its message
+                        logger.error("dropping message on \(msg.subject): \(error)")
+                        continue
                     }
                     msg.status = headers.status
                     msg.description = headers.description
@@ -164,10 +179,6 @@ extension Data {
                         msg.payload = payload
                     }
 
-                    startIndex =
-                        self.index(
-                            payloadEndIndex, offsetBy: Data.crlf.count, limitedBy: self.endIndex)
-                        ?? self.endIndex
                     serverOps.append(.hMessage(msg))
                     continue
                 }

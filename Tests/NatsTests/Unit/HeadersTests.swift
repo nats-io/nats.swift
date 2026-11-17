@@ -29,6 +29,7 @@ class HeadersTests: XCTestCase {
             "testInvalidNatsHeaderNameWithSpecialCharacters",
             testInvalidNatsHeaderNameWithSpecialCharacters
         ),
+        ("testHeaderNameWithNonAsciiCharacterThrows", testHeaderNameWithNonAsciiCharacterThrows),
 
     ]
 
@@ -74,6 +75,14 @@ class HeadersTests: XCTestCase {
 
     func testInvalidNatsHeaderNameWithSpecialCharacters() {
         XCTAssertThrowsError(try NatsHeaderName("Invalid:Header:Name"))
+    }
+
+    func testHeaderNameWithNonAsciiCharacterThrows() {
+        for name in ["caf\u{e9}", "\u{e9}l", "na\u{ef}ve-header"] {
+            XCTAssertThrowsError(try NatsHeaderName(name), name) { error in
+                XCTAssertEqual(error as? NatsError.ParseHeaderError, .invalidCharacter)
+            }
+        }
     }
 
     func testSubscript() {

@@ -31,7 +31,10 @@ public struct NatsHeaderName: Equatable, Hashable, CustomStringConvertible, Send
     private var inner: String
 
     public init(_ value: String) throws {
-        if value.contains(where: { $0 == ":" || $0.asciiValue! < 33 || $0.asciiValue! > 126 }) {
+        if value.contains(where: { char in
+            guard let ascii = char.asciiValue else { return true }
+            return char == ":" || ascii < 33 || ascii > 126
+        }) {
             throw NatsError.ParseHeaderError.invalidCharacter
         }
         self.inner = value
@@ -62,8 +65,8 @@ public struct NatsHeaderMap: Equatable, Sendable {
     public init(from headersString: String) throws {
         self.inner = [:]
         let headersArray = headersString.split(separator: "\r\n")
-        let versionLine = headersArray[0]
-        guard versionLine.hasPrefix(Data.versionLinePrefix) else {
+        guard let versionLine = headersArray.first, versionLine.hasPrefix(Data.versionLinePrefix)
+        else {
             throw NatsError.ProtocolError.parserFailure(
                 "header version line does not begin with `NATS/1.0`")
         }
@@ -86,14 +89,21 @@ public struct NatsHeaderMap: Equatable, Sendable {
         }
 
         for header in headersArray.dropFirst() {
-            let headerParts = header.split(separator: ":", maxSplits: 1)
-            if headerParts.count == 2 {
-                self.append(
-                    try NatsHeaderName(String(headerParts[0])),
-                    NatsHeaderValue(String(headerParts[1]).trimmingCharacters(in: .whitespaces)))
-            } else {
+            // a line that begins with a space or a tab continues the value above it; it is
+            // not joined to that value
+            if header.first == " " || header.first == "\t" {
                 logger.error("Error parsing header: \(header)")
+                continue
             }
+            guard let colon = header.firstIndex(of: ":"), colon != header.startIndex else {
+                throw NatsError.ProtocolError.parserFailure(
+                    "header line does not begin with a name and a colon")
+            }
+            self.append(
+                try NatsHeaderName(String(header[..<colon])),
+                NatsHeaderValue(
+                    String(header[header.index(after: colon)...])
+                        .trimmingCharacters(in: .whitespaces)))
         }
     }
 
