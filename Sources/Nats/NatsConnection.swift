@@ -53,7 +53,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let maxReconnects: Int?
     private let retainServersOrder: Bool
     private let pingInterval: TimeInterval
-    private let requireTls: Bool
+    /// The setting that asks for TLS, as messages name it, or nil when none does. When one
+    /// does, every connection to every server uses TLS.
+    private let tlsAskedBy: String?
     private let tlsFirst: Bool
     private let rootCertificate: URL?
     private let clientCertificate: URL?
@@ -144,12 +146,34 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.retainServersOrder = retainServersOrder
         self.auth = auth
         self.pingInterval = pingInterval
-        self.requireTls = requireTls
+        self.tlsAskedBy = Self.tlsAskedBy(
+            urls: urls, requireTls: requireTls, tlsFirst: tlsFirst,
+            rootCertificate: rootCertificate, clientCertificate: clientCertificate)
         self.tlsFirst = tlsFirst
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
         self.retryOnFailedConnect = retryOnFailedConnect
+    }
+
+    /// The setting that asks for TLS for every server, as messages name it: an option by its
+    /// name, or the first `tls://` or `wss://` URL of the list. Nil when nothing asks for TLS.
+    private static func tlsAskedBy(
+        urls: [URL], requireTls: Bool, tlsFirst: Bool, rootCertificate: URL?,
+        clientCertificate: URL?
+    ) -> String? {
+        if tlsFirst {
+            return "withTlsFirst()"
+        } else if requireTls {
+            return "requireTls()"
+        } else if let url = urls.first(where: { ["tls", "wss"].contains($0.lowercasedScheme) }) {
+            return "the URL \(url.quoted)"
+        } else if rootCertificate != nil {
+            return "rootCertificates(_:)"
+        } else if clientCertificate != nil {
+            return "clientCertificate(_:_:)"
+        }
+        return nil
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -594,9 +618,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func completeConnection(
         to s: URL, info: ServerInfo, on channel: Channel
     ) async throws {
-        if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst
-            && s.lowercasedScheme != "wss"
-        {
+        if upgradesToTls(server: s, info: info) {
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -649,6 +671,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
 
         try await sendClientConnectInit(on: channel)
+    }
+
+    /// Whether the attempt upgrades its connection to `server` to TLS after `info`. A `wss://`
+    /// connection and a TLS-first connection have TLS from the start.
+    private func upgradesToTls(server: URL, info: ServerInfo) -> Bool {
+        if server.lowercasedScheme == "wss" || (self.tlsFirst && !server.isWebsocket) {
+            return false
+        }
+        return self.tlsAskedBy != nil || info.tlsRequired ?? false
     }
 
     private func makeSSLHandler(for server: URL) throws -> NIOSSLClientHandler {
@@ -817,7 +848,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 value: 1
             )
             .channelInitializer { channel in
-                if self.requireTls && self.tlsFirst {
+                // A websocket URL gets TLS below the websocket, from its scheme.
+                if self.tlsFirst && !server.isWebsocket {
                     upgradePromise.succeed(())
                     do {
                         let sslHandler = try self.makeSSLHandler(for: server)
@@ -1366,6 +1398,14 @@ extension URL {
 
     fileprivate var isWebsocket: Bool {
         lowercasedScheme == "ws" || lowercasedScheme == "wss"
+    }
+
+    /// The URL as messages print it: in quotes, without user and password.
+    fileprivate var quoted: String {
+        var components = URLComponents(url: self, resolvingAgainstBaseURL: false)
+        components?.user = nil
+        components?.password = nil
+        return "\"\(components?.string ?? host ?? "")\""
     }
 }
 
