@@ -54,10 +54,10 @@ enum ServerOp {
     static func parse(from msg: Data) throws -> ServerOp {
         guard msg.count > 2 else {
             throw NatsError.ProtocolError.parserFailure(
-                "unable to parse inbound message: \(String(data: msg, encoding: .utf8)!)")
+                "unable to parse inbound message: \(String(decoding: msg, as: UTF8.self))")
         }
         guard let msgType = msg.getMessageType() else {
-            throw NatsError.ProtocolError.invalidOperation(String(data: msg, encoding: .utf8)!)
+            throw NatsError.ProtocolError.invalidOperation(String(decoding: msg, as: UTF8.self))
         }
         switch msgType {
         case .message:
@@ -79,7 +79,7 @@ enum ServerOp {
             return pong
         default:
             throw NatsError.ProtocolError.invalidOperation(
-                "unknown server op: \(String(data: msg, encoding: .utf8)!)")
+                "unknown server op: \(String(decoding: msg, as: UTF8.self))")
         }
     }
 }
@@ -116,8 +116,12 @@ internal struct HMessageInbound: Equatable {
             if let replyData = replyData {
                 replySubject = String(decoding: replyData, as: UTF8.self)
             }
-            let headersLength = Int(String(decoding: lengthHeaders, as: UTF8.self)) ?? 0
-            let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
+            guard let headersLength = Int(String(decoding: lengthHeaders, as: UTF8.self)),
+                let length = Int(String(decoding: lengthData, as: UTF8.self)),
+                headersLength >= 0, headersLength <= length
+            else {
+                throw NatsError.ProtocolError.parserFailure("invalid message size")
+            }
             return HMessageInbound(
                 subject: subject, sid: sid, reply: replySubject, payload: nil,
                 headers: NatsHeaderMap(),
@@ -170,7 +174,9 @@ internal struct MessageInbound: Equatable {
             if let replyData = replyData {
                 replySubject = String(decoding: replyData, as: UTF8.self)
             }
-            let length = Int(String(decoding: lengthData, as: UTF8.self)) ?? 0
+            guard let length = Int(String(decoding: lengthData, as: UTF8.self)), length >= 0 else {
+                throw NatsError.ProtocolError.parserFailure("invalid message size")
+            }
             return MessageInbound(
                 subject: subject, sid: sid, reply: replySubject, payload: nil, length: length)
         }
