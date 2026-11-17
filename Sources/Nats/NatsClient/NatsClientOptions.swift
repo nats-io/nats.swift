@@ -32,6 +32,7 @@ public class NatsClientOptions {
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
+    private var serverName: String? = nil
     private var inboxPrefix: String = "_INBOX."
 
     public init() {}
@@ -153,8 +154,9 @@ public class NatsClientOptions {
     /// ``NatsError/ConnectError/tlsFailure(_:)`` before CONNECT, and nothing a server sends
     /// turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
     /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
-    /// TLS for every server too. A `ws://` URL is then refused, as it cannot be upgraded to TLS;
-    /// `wss://` is the form with TLS. ``tlsOptional()`` cannot be set together with this option.
+    /// TLS for every server too, and so does ``tlsServerName(_:)``. A `ws://` URL is then
+    /// refused, as it cannot be upgraded to TLS; `wss://` is the form with TLS.
+    /// ``tlsOptional()`` cannot be set together with this option.
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
@@ -190,10 +192,24 @@ public class NatsClientOptions {
         return self
     }
 
-    /// Leaves TLS to each server: ``rootCertificates(_:)``, ``clientCertificate(_:_:)`` and a
-    /// `tls://` or `wss://` URL then no longer ask for TLS for every server. Each server is
-    /// connected to as its own URL says, or, for a `nats://` URL, with TLS when its INFO
-    /// requires it. A `tls://` or `wss://` URL still gets TLS.
+    /// The name the certificate of every server is verified against, and that is sent as SNI
+    /// unless it is an IP address: the servers in ``urls(_:)`` and the servers the cluster
+    /// reports alike.
+    ///
+    /// It is the first remedy when a certificate is not valid for the name the client verifies
+    /// it against, for example for a server given by its IP address, and keeps verification
+    /// on. It overrides the name a discovered server inherits from the server it was learned
+    /// from. It asks for TLS for every server, as ``requireTls()`` does, unless
+    /// ``tlsOptional()`` is set.
+    public func tlsServerName(_ name: String) -> NatsClientOptions {
+        self.serverName = name
+        return self
+    }
+
+    /// Leaves TLS to each server: ``rootCertificates(_:)``, ``clientCertificate(_:_:)``,
+    /// ``tlsServerName(_:)`` and a `tls://` or `wss://` URL then no longer ask for TLS for
+    /// every server. Each server is connected to as its own URL says, or, for a `nats://` URL,
+    /// with TLS when its INFO requires it. A `tls://` or `wss://` URL still gets TLS.
     ///
     /// It cannot be set together with ``requireTls()`` or ``withTlsFirst()``:
     /// ``NatsClient/connect()`` then throws ``NatsError/ConnectError/invalidConfig(_:)``.
@@ -245,6 +261,7 @@ public class NatsClientOptions {
             clientCertificate: clientCertificate,
             clientKey: clientKey,
             rootCertificate: rootCertificate,
+            tlsServerName: serverName,
             retryOnFailedConnect: initialReconnect,
             ignoreDiscoveredServers: ignoreDiscovered
         )
