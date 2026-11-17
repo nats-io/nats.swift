@@ -265,6 +265,22 @@ struct ServerInfo: Codable, Equatable {
         let info = data.removePrefix(prefix)
         return try JSONDecoder().decode(self, from: info)
     }
+
+    /// Whether a server whose INFO has `version` sends another INFO after the first PONG,
+    /// which nats-server does from 2.12.0 on. As nats-server compares versions, only the three
+    /// numbers count, so a pre-release counts as its release. A version whose part before any
+    /// `-` or `+` is not exactly three numbers counts as earlier.
+    internal static func sendsInfoAfterFirstPong(version: String) -> Bool {
+        let core = version.prefix { $0 != "-" && $0 != "+" }
+        let parts = core.split(separator: ".", omittingEmptySubsequences: false).map {
+            UInt64($0)
+        }
+        guard parts.count == 3, let major = parts[0], let minor = parts[1], let patch = parts[2]
+        else {
+            return false
+        }
+        return (major, minor, patch) >= (2, 12, 0)
+    }
 }
 
 enum ClientOp: Sendable {

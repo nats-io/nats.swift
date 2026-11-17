@@ -36,6 +36,7 @@ class ParserTests: XCTestCase {
         ),
         ("testWebsocketTextFrameIsAnError", testWebsocketTextFrameIsAnError),
         ("testWebsocketContinuationFrameIsAnError", testWebsocketContinuationFrameIsAnError),
+        ("testSendsInfoAfterFirstPong", testSendsInfoAfterFirstPong),
     ]
 
     override func setUp() {
@@ -390,5 +391,17 @@ class ParserTests: XCTestCase {
                 .parserFailure("unexpected websocket continuation frame"))
         }
         XCTAssertNil(try channel.readInbound(as: ByteBuffer.self))
+    }
+
+    func testSendsInfoAfterFirstPong() {
+        for version in ["2.12.0", "2.12.0-beta.1", "2.12.1+build", "2.14.0", "3.0.0", "2.13.10"] {
+            XCTAssertTrue(ServerInfo.sendsInfoAfterFirstPong(version: version), version)
+        }
+        for version in [
+            "2.11.9", "2.11.99", "1.99.0", "2.12", "2.12.0.1", "v2.14.0", "2.x.0", "", "-2.12.0",
+            "2..12.0", "2.12.-1",
+        ] {
+            XCTAssertFalse(ServerInfo.sendsInfoAfterFirstPong(version: version), version)
+        }
     }
 }

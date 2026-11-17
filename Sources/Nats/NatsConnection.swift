@@ -106,6 +106,27 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let readPhase = NIOLockedValueBox(ReadPhase.expectingInfo)
     /// The channel of the attempt whose lines are handled.
     private let attemptChannel = NIOLockedValueBox<ObjectIdentifier?>(nil)
+
+    /// What the current connection attempt waits for after CONNECT.
+    private enum ConnectReply {
+        /// Nothing: no attempt waits for the answer to CONNECT.
+        case none
+        /// The PONG that answers CONNECT.
+        case pong
+        /// The PONG that answers CONNECT, then the INFO that nats-server 2.12.0 and later send
+        /// right after it.
+        case pongThenInfo
+        /// The INFO after the first PONG, on `channel`, until `timer` fires.
+        case infoAfterPong(channel: ObjectIdentifier, timer: Scheduled<Void>)
+    }
+    private let connectReply = NIOLockedValueBox(ConnectReply.none)
+    /// The last INFO received between CONNECT and the PONG that answers it. Its servers are
+    /// used once that PONG arrives, unless the attempt then waits for the INFO that follows
+    /// the PONG, and not when the attempt fails.
+    private let infoBeforePong = NIOLockedValueBox<ServerInfo?>(nil)
+    /// How long an attempt may take to connect, and how long it waits for the INFO that
+    /// follows the first PONG.
+    private static let connectTimeout = TimeAmount.seconds(5)
     private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
     private var pingTask: RepeatedTask? {
         get { _pingTask.withLockedValue { $0 } }
@@ -329,22 +350,22 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             // CONNECT is answered by PONG and refused by -ERR. Any other line, such as an INFO
             // the server sends first, is handled as usual.
             switch op {
-            case .pong, .error:
-                let connEstablishedCont = connectionEstablishedContinuation.withLockedValue {
-                    cont in
-                    let toResume = cont
-                    cont = nil
-                    return toResume
-                }
-                if let continuation = connEstablishedCont {
-                    if case .error(let err) = op {
-                        continuation.resume(throwing: err)
-                    } else {
-                        logger.debug("conn established")
-                        continuation.resume()
-                    }
+            case .pong:
+                if answerConnect(on: context) {
                     continue
                 }
+            case .error(let err):
+                if case .none = connectReply.withLockedValue({ $0 }) {
+                    break
+                }
+                endConnectReply()
+                infoBeforePong.withLockedValue { $0 = nil }
+                takeConnectionEstablishedContinuation()?.resume(throwing: err)
+                // the attempt failed: nothing more this connection sends is handled
+                _inputBuffer.withLockedValue { $0.clear() }
+                parseRemainder.withLockedValue { $0 = nil }
+                context.close(promise: nil)
+                return
             default:
                 break
             }
@@ -413,12 +434,101 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 if serverInfo.lameDuckMode {
                     self.fire(.lameDuckMode)
                 }
-                updateServersList(info: serverInfo)
+                switch connectReply.withLockedValue({ $0 }) {
+                case .pong, .pongThenInfo:
+                    infoBeforePong.withLockedValue { $0 = serverInfo }
+                case .infoAfterPong:
+                    updateServersList(info: serverInfo)
+                    endWaitForInfo(on: ObjectIdentifier(context.channel))
+                case .none:
+                    updateServersList(info: serverInfo)
+                }
             default:
                 logger.debug("unknown operation type: \(op)")
             }
         }
         _inputBuffer.withLockedValue { $0.clear() }
+    }
+
+    /// Handles a PONG while an attempt waits for the answer to CONNECT: the servers of an INFO
+    /// received before it are used, and the attempt is connected, or, against nats-server
+    /// 2.12.0 and later on a connection that started TLS after INFO, waits for the INFO that
+    /// follows, up to the connection timeout, and takes servers only from that INFO. Returns
+    /// false for any other PONG.
+    private func answerConnect(on context: ChannelHandlerContext) -> Bool {
+        let channel = ObjectIdentifier(context.channel)
+        let waitsForInfo: Bool? = connectReply.withLockedValue { reply in
+            switch reply {
+            case .pong:
+                reply = .none
+                return false
+            case .pongThenInfo:
+                let timer = context.eventLoop.scheduleTask(in: Self.connectTimeout) {
+                    // connected without that INFO, which is applied when it arrives
+                    self.endWaitForInfo(on: channel)
+                }
+                reply = .infoAfterPong(channel: channel, timer: timer)
+                return true
+            case .none, .infoAfterPong:
+                return nil
+            }
+        }
+        guard let waitsForInfo else {
+            return false
+        }
+        let info = infoBeforePong.withLockedValue { info in
+            defer { info = nil }
+            return info
+        }
+        if let info, !waitsForInfo {
+            updateServersList(info: info)
+        }
+        if !waitsForInfo {
+            logger.debug("conn established")
+            takeConnectionEstablishedContinuation()?.resume()
+        }
+        return true
+    }
+
+    /// Ends the wait for the INFO after the first PONG on `channel`, and with it the attempt,
+    /// which is connected.
+    private func endWaitForInfo(on channel: ObjectIdentifier) {
+        let ended = connectReply.withLockedValue { reply -> Bool in
+            guard case .infoAfterPong(channel, let timer) = reply else {
+                return false
+            }
+            timer.cancel()
+            reply = .none
+            return true
+        }
+        if ended {
+            logger.debug("conn established")
+            takeConnectionEstablishedContinuation()?.resume()
+        }
+    }
+
+    /// Stops waiting for the answer to CONNECT. With `channel`, only a wait for the INFO after
+    /// the first PONG on that channel.
+    private func endConnectReply(on channel: ObjectIdentifier? = nil) {
+        connectReply.withLockedValue { reply in
+            if case .infoAfterPong(let waiting, let timer) = reply {
+                guard channel == nil || channel == waiting else {
+                    return
+                }
+                timer.cancel()
+            } else if channel != nil {
+                return
+            }
+            reply = .none
+        }
+    }
+
+    private func takeConnectionEstablishedContinuation() -> CheckedContinuation<Void, Error>? {
+        connectionEstablishedContinuation.withLockedValue { cont in
+            let toResume = cont
+            cont = nil
+            return toResume
+        }
     }
 
     /// Reads the first line of a connection attempt, which must be INFO, and hands the INFO to
@@ -491,12 +601,26 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         if !self.retainServersOrder {
             servers.shuffle()
         }
+        var listed = Set(servers.map { $0.key })
         var lastErr: Error?
 
         // if there are more reconnect attempts than the number of servers,
         // we are after the initial connect, so sleep between servers
         let shouldSleep = self.reconnectAttempts >= servers.count
-        for server in servers {
+        var next = 0
+        while true {
+            // the servers that a failed attempt learned are tried in this round too
+            var learned = self.servers.filter { !listed.contains($0.key) }
+            if !self.retainServersOrder {
+                learned.shuffle()
+            }
+            listed.formUnion(learned.map { $0.key })
+            servers += learned
+            guard next < servers.count else {
+                break
+            }
+            let server = servers[next]
+            next += 1
             // a discovered server as the pool has it now: it may have gained TLS in this round
             guard let s = self.pool.withLockedValue({ $0.latest(server) }) else {
                 continue
@@ -586,6 +710,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         // the first line of every attempt must be INFO
         readPhase.withLockedValue { $0 = .expectingInfo }
         capturedConnectionError.withLockedValue { $0 = nil }
+        endConnectReply()
+        infoBeforePong.withLockedValue { $0 = nil }
         // a websocket with TLS and TLS first have TLS from the start
         let tls = s.lowercasedScheme == "wss" || (self.tlsFirst && !s.isWebsocket)
         current.withLockedValue { $0 = CurrentServer(server: server, tls: tls) }
@@ -679,7 +805,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         to server: Server, info: ServerInfo, on channel: Channel
     ) async throws {
         let s = server.url
+        // Discovered servers come from INFOs received inside TLS: on a connection that starts
+        // TLS after INFO, the INFO that nats-server 2.12.0 and later send after the first PONG.
+        let waitsForInfo: Bool
         if try upgradesToTls(server: server, info: info) {
+            // The version of this INFO, read before TLS, decides only whether to wait.
+            waitsForInfo = ServerInfo.sendsInfoAfterFirstPong(version: info.version)
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -711,11 +842,14 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.tlsFailure(error)
             }
         } else {
+            waitsForInfo = false
             try await channel.eventLoop.submit {
+                // No TLS upgrade follows: the servers this INFO lists are used, also when the
+                // attempt fails later, and the bytes that arrived after it are handled now.
+                self.updateServersList(info: info)
                 guard channel.isActive else {
                     throw NatsError.ClientError.connectionClosed
                 }
-                // No TLS upgrade follows: handle the bytes that arrived after INFO now.
                 self.attemptChannel.withLockedValue { $0 = ObjectIdentifier(channel) }
                 self.readPhase.withLockedValue { $0 = .processing }
                 // before the held bytes, so that a reply to them goes to this connection
@@ -732,7 +866,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             }.get()
         }
 
-        try await sendClientConnectInit(on: channel)
+        try await sendClientConnectInit(on: channel, waitingForInfoAfterPong: waitsForInfo)
     }
 
     /// Whether the attempt upgrades its connection to `server` to TLS after `info`. A `wss://`
@@ -824,7 +958,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return tlsConfiguration
     }
 
-    private func sendClientConnectInit(on channel: Channel) async throws {
+    /// Sends CONNECT and PING, and waits for the PONG that answers them, then, with
+    /// `waitingForInfoAfterPong`, for the INFO that follows it, up to the connection timeout.
+    private func sendClientConnectInit(
+        on channel: Channel, waitingForInfoAfterPong: Bool
+    ) async throws {
         var initialConnect = ConnectInfo(
             verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
             lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
@@ -888,6 +1026,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         // -ERR to client connect (e.g. auth error)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                connectReply.withLockedValue {
+                    $0 = waitingForInfoAfterPong ? .pongThenInfo : .pong
+                }
                 connectionEstablishedContinuation.withLockedValue { $0 = continuation }
                 // channelInactive fails the continuation only once it is set: a connection that
                 // closed before is found here, on its event loop
@@ -1053,7 +1194,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     }
                     return channel.eventLoop.makeSucceededFuture(())
                 }
-            }.connectTimeout(.seconds(5))
+            }.connectTimeout(Self.connectTimeout)
         return (bootstrap, upgradePromise)
     }
 
@@ -1187,6 +1328,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             defer { cont = nil }
             return cont
         }
+        // a connection lost while the attempt waits for the INFO after the first PONG fails it
+        endConnectReply(on: ObjectIdentifier(context.channel))
         let establishedCont = connectionEstablishedContinuation.withLockedValue { cont in
             defer { cont = nil }
             return cont
