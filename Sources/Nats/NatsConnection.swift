@@ -56,6 +56,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// The setting that asks for TLS, as messages name it, or nil when none does. When one
     /// does, every connection to every server uses TLS.
     private let tlsAskedBy: String?
+    /// Why no connection attempt can succeed with these settings, or nil.
+    private let configurationError: String?
     private let tlsFirst: Bool
     private let rootCertificate: URL?
     private let clientCertificate: URL?
@@ -135,7 +137,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         urls: [URL], reconnectWait: TimeInterval, maxReconnects: Int?,
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
-        clientCertificate: URL?, clientKey: URL?,
+        tlsOptional: Bool, clientCertificate: URL?, clientKey: URL?,
         rootCertificate: URL?, retryOnFailedConnect: Bool
     ) {
         self._urls = NIOLockedValueBox(urls)
@@ -147,8 +149,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.auth = auth
         self.pingInterval = pingInterval
         self.tlsAskedBy = Self.tlsAskedBy(
-            urls: urls, requireTls: requireTls, tlsFirst: tlsFirst,
+            urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
             rootCertificate: rootCertificate, clientCertificate: clientCertificate)
+        self.configurationError = Self.configurationError(
+            requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional)
         self.tlsFirst = tlsFirst
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
@@ -157,12 +161,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     /// The setting that asks for TLS for every server, as messages name it: an option by its
-    /// name, or the first `tls://` or `wss://` URL of the list. Nil when nothing asks for TLS.
+    /// name, or the first `tls://` or `wss://` URL of the list. Nil when nothing asks for TLS,
+    /// as with TLS optional.
     private static func tlsAskedBy(
-        urls: [URL], requireTls: Bool, tlsFirst: Bool, rootCertificate: URL?,
+        urls: [URL], requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool, rootCertificate: URL?,
         clientCertificate: URL?
     ) -> String? {
-        if tlsFirst {
+        if tlsOptional {
+            return nil
+        } else if tlsFirst {
             return "withTlsFirst()"
         } else if requireTls {
             return "requireTls()"
@@ -174,6 +181,25 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return "clientCertificate(_:_:)"
         }
         return nil
+    }
+
+    private static func configurationError(
+        requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool
+    ) -> String? {
+        if tlsOptional && tlsFirst {
+            return "tlsOptional() cannot be set together with withTlsFirst()"
+        } else if tlsOptional && requireTls {
+            return "tlsOptional() cannot be set together with requireTls()"
+        }
+        return nil
+    }
+
+    /// Throws the configuration error of the client's settings, if they have one. No connection
+    /// attempt can fix it, so ``NatsClient/connect()`` reports it before the first.
+    internal func checkConfiguration() throws {
+        if let configurationError {
+            throw NatsError.ConnectError.invalidConfig(configurationError)
+        }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -679,7 +705,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         if server.lowercasedScheme == "wss" || (self.tlsFirst && !server.isWebsocket) {
             return false
         }
-        return self.tlsAskedBy != nil || info.tlsRequired ?? false
+        // With TLS optional nothing asks for TLS, but a tls:// URL still gets it.
+        return self.tlsAskedBy != nil || server.lowercasedScheme == "tls"
+            || info.tlsRequired ?? false
     }
 
     private func makeSSLHandler(for server: URL) throws -> NIOSSLClientHandler {

@@ -37,6 +37,15 @@ class TlsTests: XCTestCase {
         ("testClientCertificateUsesTls", testClientCertificateUsesTls),
         ("testTlsUrlMakesEveryListedServerTls", testTlsUrlMakesEveryListedServerTls),
         ("testWssUrlWithTlsFirstConnects", testWssUrlWithTlsFirstConnects),
+        ("testTlsOptionalDialsEachUrlByItsScheme", testTlsOptionalDialsEachUrlByItsScheme),
+        (
+            "testTlsOptionalWithRequireTlsIsAConfigurationError",
+            testTlsOptionalWithRequireTlsIsAConfigurationError
+        ),
+        (
+            "testTlsOptionalWithTlsFirstIsAConfigurationError",
+            testTlsOptionalWithTlsFirstIsAConfigurationError
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -118,6 +127,39 @@ class TlsTests: XCTestCase {
         XCTAssertFalse(
             server.lines.contains { $0.hasPrefix("CONNECT") }, "\(message) CONNECT in plaintext",
             file: file, line: line)
+    }
+
+    /// Checks that `connect()` of a client built from `options()` fails at once with a
+    /// configuration error that names every string in `naming`, also with
+    /// `retryOnfailedConnect()`, and that `server`, when given, was not connected to.
+    private func assertConfigurationError(
+        _ options: () -> NatsClientOptions, naming: [String], server: FakeNatsServer? = nil,
+        file: StaticString = #filePath, line: UInt = #line
+    ) async throws {
+        for retry in [false, true] {
+            let client = (retry ? options().retryOnfailedConnect() : options()).build()
+            let connected = await result(within: 5) { try await client.connect() }
+            guard case .failure(NatsError.ConnectError.invalidConfig(let reason))? = connected
+            else {
+                XCTFail(
+                    "retry \(retry): expected a configuration error, got "
+                        + String(describing: connected), file: file, line: line)
+                try? await client.close()
+                continue
+            }
+            for name in naming {
+                XCTAssertTrue(
+                    reason.contains(name), "retry \(retry): \(name) not in: \(reason)", file: file,
+                    line: line)
+            }
+            try? await client.close()
+        }
+        if let server {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertEqual(
+                server.connections.count, 0, "connected although the settings are refused",
+                file: file, line: line)
+        }
     }
 
     /// Connects a client built from `options`, flushes and closes it, within 10 s.
@@ -300,5 +342,62 @@ class TlsTests: XCTestCase {
                     .rootCertificates(rootCA)
                     .clientCertificate(pem("client-cert"), pem("client-key")), name)
         }
+    }
+
+    func testTlsOptionalDialsEachUrlByItsScheme() async throws {
+        let plain = try fake(.init(greeting: FakeNatsServer.info()))
+        let tls = try fakeOfferingTls()
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "nats://127.0.0.1:\(plain.port)")!,
+                URL(string: "TLS://localhost:\(tls.port)")!,
+            ])
+            .retainServersOrder()
+            .rootCertificates(rootCA)
+            .tlsOptional()
+            .usernameAndPassword("user", "secret")
+            .reconnectWait(0.1)
+            .build()
+
+        let connected = await result(within: 5) { try await client.connect() }
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        XCTAssertTrue(
+            plain.lines.contains { $0.hasPrefix("CONNECT") }, "nats:// URL: \(plain.lines)")
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        plain.shutdown()
+        await fulfillment(of: [reconnected], timeout: 5)
+        let first = tls.connections.first?.firstBytes ?? []
+        XCTAssertEqual(
+            first.first, 0x16,
+            "tls:// URL: first bytes are not a TLS record: "
+                + String(decoding: first, as: UTF8.self))
+        try? await client.close()
+    }
+
+    func testTlsOptionalWithRequireTlsIsAConfigurationError() async throws {
+        let server = try fake(.init(greeting: FakeNatsServer.info()))
+        try await assertConfigurationError(
+            {
+                NatsClientOptions()
+                    .url(URL(string: "nats://127.0.0.1:\(server.port)")!)
+                    .requireTls()
+                    .tlsOptional()
+            }, naming: ["tlsOptional()", "requireTls()"], server: server)
+    }
+
+    func testTlsOptionalWithTlsFirstIsAConfigurationError() async throws {
+        let server = try fake(.init(greeting: FakeNatsServer.info()))
+        try await assertConfigurationError(
+            {
+                NatsClientOptions()
+                    .url(URL(string: "nats://127.0.0.1:\(server.port)")!)
+                    .withTlsFirst()
+                    .tlsOptional()
+            }, naming: ["tlsOptional()", "withTlsFirst()"], server: server)
     }
 }
