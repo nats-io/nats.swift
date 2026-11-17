@@ -131,3 +131,113 @@ internal enum DiscoveredEntry: Equatable {
         (try? SocketAddress(ipAddress: host, port: 0)) != nil
     }
 }
+
+/// A server the client can connect to: one set in the options, or one that a server reported
+/// in the `connect_urls` of its INFO.
+internal struct Server: Sendable {
+    /// Host and port as written: two servers with the same key are one server.
+    struct Key: Hashable, Sendable {
+        let host: String
+        let port: Int
+    }
+
+    /// For a discovered server, `nats://host:port`, or `ws://host:port` when it was learned on
+    /// a websocket connection; `tls://` or `wss://` once it was learned on a connection with
+    /// TLS.
+    private(set) var url: URL
+    /// Reported by a server rather than set in the options.
+    let isDiscovered: Bool
+    let key: Key
+
+    /// Learned on a connection with TLS: it is connected to with TLS, whatever its INFO says.
+    var learnedOverTls: Bool {
+        isDiscovered && (url.scheme == "tls" || url.scheme == "wss")
+    }
+
+    init(configured url: URL) {
+        self.url = url
+        self.isDiscovered = false
+        self.key = Key(host: url.host ?? "", port: url.port ?? 0)
+    }
+
+    /// The server of `entry`, learned on a connection that is a websocket when `websocket` is
+    /// set and has TLS when `tls` is set. It is connected to with the same transport and, when
+    /// that connection had TLS, with TLS.
+    init?(discovered entry: DiscoveredEntry, websocket: Bool, tls: Bool) {
+        let scheme = websocket ? (tls ? "wss" : "ws") : (tls ? "tls" : "nats")
+        guard case .server(let host, let port) = entry, let url = entry.url(scheme: scheme) else {
+            return nil
+        }
+        self.url = url
+        self.isDiscovered = true
+        self.key = Key(host: host, port: port)
+    }
+
+    /// Learned again on a connection with TLS: from now on it is connected to with TLS.
+    mutating func gainTls() {
+        guard isDiscovered, !learnedOverTls,
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            return
+        }
+        components.scheme = url.scheme == "ws" ? "wss" : "tls"
+        if let url = components.url {
+            self.url = url
+        }
+    }
+}
+
+/// The servers the client can connect to: the configured ones in their order, then the
+/// discovered ones in the order they were learned, one per host and port.
+internal struct ServerPool: Sendable {
+    private(set) var servers: [Server]
+    /// The index in `servers` of the first server with each key.
+    private var indices: [Server.Key: Int] = [:]
+
+    init(configured urls: [URL]) {
+        servers = urls.map { Server(configured: $0) }
+        for (index, server) in servers.enumerated() where indices[server.key] == nil {
+            indices[server.key] = index
+        }
+    }
+
+    /// `server` as the pool has it now, or nil for a discovered server the pool no longer
+    /// has. A discovered server may have gained TLS since `server` was read.
+    func latest(_ server: Server) -> Server? {
+        guard server.isDiscovered else {
+            return server
+        }
+        guard let index = indices[server.key], servers[index].isDiscovered else {
+            return nil
+        }
+        return servers[index]
+    }
+
+    /// Adds the servers in `entries`, learned on a connection that is a websocket when
+    /// `websocket` is set and has TLS when `tls` is set, as discovered servers.
+    ///
+    /// An entry that is a server of the pool adds nothing, and a configured server stays as
+    /// configured. A discovered server learned without TLS gains TLS when it is learned again
+    /// on a connection with TLS, and never loses it.
+    mutating func add(_ entries: [String], websocket: Bool, tls: Bool) {
+        for entry in entries {
+            let discovered = DiscoveredEntry(entry)
+            if case .skipped(let reason) = discovered {
+                logger.warning(
+                    "skipping the connect_urls entry \(DiscoveredEntry.quoted(entry)): \(reason)")
+            }
+            guard let server = Server(discovered: discovered, websocket: websocket, tls: tls)
+            else {
+                continue
+            }
+            if let index = indices[server.key] {
+                if tls {
+                    servers[index].gainTls()
+                }
+            } else {
+                indices[server.key] = servers.count
+                servers.append(server)
+            }
+        }
+    }
+}

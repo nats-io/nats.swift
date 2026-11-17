@@ -13,6 +13,7 @@
 
 import Foundation
 import Logging
+import NIOConcurrencyHelpers
 import NatsServer
 import XCTest
 
@@ -29,6 +30,28 @@ class DiscoveredServersTests: XCTestCase {
         (
             "testReconnectsToDiscoveredServerOfTlsCluster",
             testReconnectsToDiscoveredServerOfTlsCluster
+        ),
+        ("testServerLearnedOverTlsIsDialedWithTls", testServerLearnedOverTlsIsDialedWithTls),
+        (
+            "testRefusalOfServerLearnedOverTlsSaysHowItWasLearned",
+            testRefusalOfServerLearnedOverTlsSaysHowItWasLearned
+        ),
+        ("testServerLearnedAgainOverTlsGainsTls", testServerLearnedAgainOverTlsGainsTls),
+        (
+            "testServerReportingItsOwnAddressIsStillDialedWithTls",
+            testServerReportingItsOwnAddressIsStillDialedWithTls
+        ),
+        (
+            "testConfiguredServerReportedOverTlsKeepsItsScheme",
+            testConfiguredServerReportedOverTlsKeepsItsScheme
+        ),
+        (
+            "testDiscoveredServerOfWebsocketClusterIsDialedOverWebsocket",
+            testDiscoveredServerOfWebsocketClusterIsDialedOverWebsocket
+        ),
+        (
+            "testDiscoveredServerOfTlsWebsocketClusterIsDialedOverWss",
+            testDiscoveredServerOfTlsWebsocketClusterIsDialedOverWss
         ),
     ]
 
@@ -185,7 +208,10 @@ class DiscoveredServersTests: XCTestCase {
             .reconnectWait(0.1)
             .build()
         try await client.connect()
-        try await waitForRoute(from: second, to: client)
+        try await waitForRoute(
+            from: NatsClientOptions()
+                .url(URL(string: second.clientURL)!)
+                .rootCertificates(pem("rootCA")), to: client)
 
         let reconnected = XCTestExpectation(description: "client did not reconnect")
         reconnected.assertForOverFulfill = false
@@ -195,19 +221,21 @@ class DiscoveredServersTests: XCTestCase {
         XCTAssertEqual(client.connectedUrl?.port, second.port)
         let rtt = await result(within: 5) { try await client.rtt() }
         XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
-        try? await client.close()
+        // an attempt that waits for an INFO that does not come would keep close() waiting
+        _ = await result(within: 5) { try await client.close() }
     }
 
-    /// Waits up to 10 s until a message published on `server` reaches `client`, which is
-    /// connected to another node of its cluster: the route is then up, and `client` has read
-    /// every INFO its server sent before that message.
-    private func waitForRoute(from server: NatsServer, to client: NatsClient) async throws {
+    /// Waits up to 10 s until a message published by a client built from `options`, connected
+    /// to one node of a cluster, reaches `client`, which is connected to another node: the
+    /// route is then up, and `client` has read every INFO its server sent before that message.
+    private func waitForRoute(
+        from options: NatsClientOptions, to client: NatsClient
+    )
+        async throws
+    {
         let subject = "route.\(UUID().uuidString)"
         let sub = try await client.subscribe(subject: subject)
-        let publisher = NatsClientOptions()
-            .url(URL(string: server.clientURL)!)
-            .rootCertificates(pem("rootCA"))
-            .build()
+        let publisher = options.build()
         try await publisher.connect()
         for _ in 0..<100 where sub.received == 0 {
             try await publisher.publish(Data("up".utf8), subject: subject)
@@ -217,5 +245,282 @@ class DiscoveredServersTests: XCTestCase {
         try await publisher.close()
         try await sub.unsubscribe()
         XCTAssertGreaterThan(sub.received, 0, "the cluster did not form within 10 s")
+    }
+
+    /// Waits up to `seconds` for `condition`.
+    private func eventually(
+        _ seconds: TimeInterval = 5, _ condition: () -> Bool
+    ) async throws -> Bool {
+        for _ in 0..<Int(seconds * 20) where !condition() {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return condition()
+    }
+
+    /// A scripted server that requires TLS, whose INFO after the first PONG lists `entries`.
+    private func tlsSeed(listing entries: [String]) throws -> FakeNatsServer {
+        try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                tls: try FakeNatsServer.tlsContext(),
+                afterFirstPong: FakeNatsServer.info(connectUrls: entries)))
+    }
+
+    /// A scripted server that offers TLS without requiring it.
+    private func offeringTls() throws -> FakeNatsServer {
+        try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsAvailable: true),
+                tls: try FakeNatsServer.tlsContext()))
+    }
+
+    // With tlsOptional() nothing asks for TLS for every server: TLS comes from the server.
+    func testServerLearnedOverTlsIsDialedWithTls() async throws {
+        let peer = try offeringTls()
+        let seed = try tlsSeed(listing: ["localhost:\(peer.port)"])
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(seed.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .usernameAndPassword("user", "secret")
+            .reconnectWait(0.1)
+            .build()
+
+        let reconnected = try await reconnects(client, from: seed)
+        let first = peer.connections.first?.firstBytes ?? []
+        XCTAssertEqual(
+            first.first, 0x16,
+            "first bytes are not a TLS record: \(String(decoding: first, as: UTF8.self))")
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://localhost:\(peer.port)"))
+        try? await client.close()
+
+        // learned over TLS, and offering none: nothing is sent to it
+        let plain = try fake(.init(greeting: FakeNatsServer.info()))
+        let other = try tlsSeed(listing: ["127.0.0.1:\(plain.port)"])
+        let plainClient = NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(other.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .usernameAndPassword("user", "secret")
+            .reconnectWait(0.1)
+            .build()
+        try await plainClient.connect()
+        let otherRtt = await result(within: 5) { try await plainClient.rtt() }
+        XCTAssertNotNil(try? otherRtt?.get(), "no PONG")
+        other.shutdown()
+        let dialed = try await eventually { plain.connections.first?.closed == true }
+        XCTAssertTrue(dialed, "the discovered server was not dialed, or its connection left open")
+        let sent = plain.connections.first?.firstBytes ?? []
+        XCTAssertTrue(sent.isEmpty, "sent " + String(decoding: sent, as: UTF8.self))
+        try? await plainClient.close()
+    }
+
+    // A server learned over TLS keeps TLS under tlsOptional() too, so the refusal names how it
+    // was learned, and only what asks for TLS for every server points to tlsOptional().
+    func testRefusalOfServerLearnedOverTlsSaysHowItWasLearned() async throws {
+        let plain = try fake(.init(greeting: FakeNatsServer.info()))
+        let url = "\"tls://127.0.0.1:\(plain.port)\""
+        let variants = [
+            (
+                "tlsOptional()", true,
+                "\(url) was discovered on a connection with TLS, but does not offer it"
+            ),
+            ("requireTls()", false, "requireTls() asks for TLS, but \(url) does not offer it"),
+        ]
+        for (name, optional, expected) in variants {
+            let seed = try tlsSeed(listing: ["127.0.0.1:\(plain.port)"])
+            let options = NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(seed.port)")!)
+                .rootCertificates(pem("rootCA"))
+                .retainServersOrder()
+                .reconnectWait(0.1)
+            let client = (optional ? options.tlsOptional() : options.requireTls()).build()
+            let refusals = NIOLockedValueBox<[String]>([])
+            client.on(.error) { event in
+                if case .error(let error) = event,
+                    case .tlsFailure(let cause)? = error as? NatsError.ConnectError
+                {
+                    refusals.withLockedValue { $0.append("\(cause)") }
+                }
+            }
+            try await client.connect()
+            let rtt = await result(within: 5) { try await client.rtt() }
+            XCTAssertNotNil(try? rtt?.get(), "\(name): no PONG")
+            seed.shutdown()
+            let reported = try await eventually { !refusals.withLockedValue { $0 }.isEmpty }
+            try? await client.close()
+            XCTAssertTrue(reported, "\(name): the refusal was not reported")
+            XCTAssertEqual(refusals.withLockedValue { $0.first }, expected, name)
+        }
+    }
+
+    // Two configured servers, as tlsOptional() allows: one without TLS, one with. The server
+    // learned through the first gains TLS when the second reports it too.
+    func testServerLearnedAgainOverTlsGainsTls() async throws {
+        let learned = try offeringTls()
+        let plain = try seed(listing: ["localhost:\(learned.port)"])
+        let tls = try tlsSeed(listing: ["localhost:\(learned.port)"])
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "nats://127.0.0.1:\(plain.port)")!,
+                URL(string: "tls://localhost:\(tls.port)")!,
+            ])
+            .retainServersOrder()
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .reconnectWait(0.1)
+            .build()
+
+        let toTls = try await reconnects(client, from: plain)
+        XCTAssertTrue(toTls, "client did not reconnect to the second configured server")
+        XCTAssertEqual(client.connectedUrl?.port, tls.port, "setup: second server not used")
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG from the second server")
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        tls.shutdown()
+        await fulfillment(of: [reconnected], timeout: 10)
+        let first = learned.connections.first?.firstBytes ?? []
+        XCTAssertEqual(
+            first.first, 0x16,
+            "first bytes are not a TLS record: \(String(decoding: first, as: UTF8.self))")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://localhost:\(learned.port)"))
+        try? await client.close()
+    }
+
+    // The server reports its own address over TLS: every connection to that address has TLS.
+    func testServerReportingItsOwnAddressIsStillDialedWithTls() async throws {
+        // a free port, for a server that reports its own address
+        let placeholder = try FakeNatsServer(.init())
+        let port = placeholder.port
+        placeholder.shutdown()
+        let reporting = try FakeNatsServer(
+            .init(
+                greeting: FakeNatsServer.info(tlsAvailable: true),
+                tls: try FakeNatsServer.tlsContext(),
+                afterFirstPong: FakeNatsServer.info(connectUrls: ["localhost:\(port)"])),
+            port: port)
+        fakeServers.append(reporting)
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .usernameAndPassword("user", "secret")
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+
+        // the server comes back refusing CONNECT, so that the client tries every server it has
+        reporting.shutdown()
+        let refusing = try FakeNatsServer(
+            .init(
+                greeting: FakeNatsServer.info(tlsAvailable: true),
+                tls: try FakeNatsServer.tlsContext(),
+                firstPingReply: "-ERR 'maximum connections exceeded'\r\n"),
+            port: port)
+        fakeServers.append(refusing)
+        let retried = try await eventually { refusing.connections.count >= 4 }
+        try? await client.close()
+        XCTAssertTrue(retried, "setup: the client did not retry the server")
+        for (index, connection) in refusing.connections.enumerated() {
+            XCTAssertEqual(
+                connection.firstBytes.first, 0x16,
+                "connection \(index): "
+                    + String(decoding: connection.firstBytes, as: UTF8.self))
+        }
+    }
+
+    // With tlsOptional() nothing asks for TLS for every server. The configured tls:// server
+    // reports the configured nats:// one, which stays nats://: it is not dialed with TLS.
+    func testConfiguredServerReportedOverTlsKeepsItsScheme() async throws {
+        // offers TLS, and fails every client that sends it plaintext
+        let plain = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsAvailable: true),
+                tls: try FakeNatsServer.tlsContext()))
+        let reporting = try tlsSeed(listing: ["127.0.0.1:\(plain.port)"])
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "nats://127.0.0.1:\(plain.port)")!,
+                URL(string: "tls://localhost:\(reporting.port)")!,
+            ])
+            .retainServersOrder()
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        XCTAssertEqual(client.connectedUrl?.port, reporting.port, "setup: not on the tls:// server")
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+
+        reporting.shutdown()
+        let retried = try await eventually { plain.connections.count >= 4 }
+        try? await client.close()
+        XCTAssertTrue(retried, "setup: the client did not retry the nats:// server")
+        for (index, connection) in plain.connections.enumerated() {
+            XCTAssertNotEqual(
+                connection.firstBytes.first, 0x16, "connection \(index) to nats:// has TLS")
+        }
+    }
+
+    func testDiscoveredServerOfWebsocketClusterIsDialedOverWebsocket() async throws {
+        let first = try natsServer("cluster_ws", [""])
+        let routePort = try XCTUnwrap(first.routePort)
+        let second = try natsServer(
+            "cluster_ws", ["routes: [\"nats://127.0.0.1:\(routePort)\"]"])
+
+        let client = NatsClientOptions()
+            .url(URL(string: first.clientWebsocketURL)!)
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        try await waitForRoute(
+            from: NatsClientOptions().url(URL(string: second.clientURL)!), to: client)
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        first.stop()
+        await fulfillment(of: [reconnected], timeout: 10)
+        XCTAssertEqual(client.connectedUrl, URL(string: second.clientWebsocketURL))
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
+        // an attempt that waits for an INFO that does not come would keep close() waiting
+        _ = await result(within: 5) { try await client.close() }
+    }
+
+    func testDiscoveredServerOfTlsWebsocketClusterIsDialedOverWss() async throws {
+        let tls = [pem("server-cert").path, pem("server-key").path]
+        let first = try natsServer("cluster_wss", tls + [""])
+        let routePort = try XCTUnwrap(first.routePort)
+        let second = try natsServer(
+            "cluster_wss", tls + ["routes: [\"nats://127.0.0.1:\(routePort)\"]"])
+
+        let client = NatsClientOptions()
+            .url(URL(string: first.clientWebsocketURL)!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        try await waitForRoute(
+            from: NatsClientOptions()
+                .url(URL(string: second.clientWebsocketURL)!)
+                .rootCertificates(pem("rootCA")), to: client)
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        first.stop()
+        await fulfillment(of: [reconnected], timeout: 10)
+        XCTAssertEqual(client.connectedUrl, URL(string: second.clientWebsocketURL))
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
+        _ = await result(within: 5) { try await client.close() }
     }
 }
