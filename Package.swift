@@ -49,7 +49,10 @@ let package = Package(
                 name: "NatsTests",
                 dependencies: [
                     "Nats", "NatsServer",
+                    .product(name: "NIO", package: "swift-nio"),
+                    .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                     .product(name: "NIOEmbedded", package: "swift-nio"),
+                    .product(name: "NIOSSL", package: "swift-nio-ssl"),
                     .product(name: "NIOWebSocket", package: "swift-nio"),
                 ],
                 resources: [
