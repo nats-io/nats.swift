@@ -75,6 +75,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private let clientKey: URL?
     /// The name every server's certificate is verified against, set by the user.
     private let tlsServerName: String?
+    /// A discovered server given as an IP address is verified against that address.
+    private let verifyDiscoveredServersByIp: Bool
 
     typealias InboundIn = ByteBuffer
     private let state = NIOLockedValueBox(NatsState.pending)
@@ -185,8 +187,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         tlsOptional: Bool, clientCertificate: URL?, clientKey: URL?,
-        rootCertificate: URL?, tlsServerName: String?, retryOnFailedConnect: Bool,
-        ignoreDiscoveredServers: Bool
+        rootCertificate: URL?, tlsServerName: String?, verifyDiscoveredServersByIp: Bool,
+        retryOnFailedConnect: Bool, ignoreDiscoveredServers: Bool
     ) {
         self.pool = NIOLockedValueBox(ServerPool(configured: urls))
         self.group = .singleton
@@ -199,7 +201,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         let tlsAskedBy = Self.tlsAskedBy(
             urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
             rootCertificate: rootCertificate, clientCertificate: clientCertificate,
-            tlsServerName: tlsServerName)
+            tlsServerName: tlsServerName, verifyDiscoveredServersByIp: verifyDiscoveredServersByIp)
         self.tlsAskedBy = tlsAskedBy
         self.configurationError = Self.configurationError(
             urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
@@ -209,6 +211,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
         self.tlsServerName = tlsServerName
+        self.verifyDiscoveredServersByIp = verifyDiscoveredServersByIp
         self.retryOnFailedConnect = retryOnFailedConnect
         self.ignoreDiscoveredServers = ignoreDiscoveredServers
     }
@@ -218,7 +221,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// as with TLS optional.
     private static func tlsAskedBy(
         urls: [URL], requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool, rootCertificate: URL?,
-        clientCertificate: URL?, tlsServerName: String?
+        clientCertificate: URL?, tlsServerName: String?, verifyDiscoveredServersByIp: Bool
     ) -> String? {
         if tlsOptional {
             return nil
@@ -234,6 +237,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return "clientCertificate(_:_:)"
         } else if tlsServerName != nil {
             return "tlsServerName(_:)"
+        } else if verifyDiscoveredServersByIp {
+            return "verifyDiscoveredServersByIp()"
         }
         return nil
     }
@@ -1006,7 +1011,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func makeNameCheck(for server: Server) -> TlsNameCheckHandler {
         TlsNameCheckHandler(
             server: server.url.quoted, name: tlsName(for: server) ?? "",
-            remedy: nameCheckRemedy(for: server))
+            remedy: { names in self.nameCheckRemedy(for: server, names: names) })
     }
 
     /// The name the certificate of `server` is verified against, and sent as SNI unless it is
@@ -1014,10 +1019,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     ///
     /// ``NatsClientOptions/tlsServerName(_:)`` sets the name of every server. Without it, a
     /// configured server is verified against the host of its URL. A discovered server given
-    /// as an IP address is verified against the name it inherited, as one more address of a
-    /// server the client already trusts. A discovered host name is verified against itself
-    /// when it was learned on a connection with TLS, and has no name otherwise: a name
-    /// learned without TLS is not trusted.
+    /// as an IP address is verified against itself with
+    /// ``NatsClientOptions/verifyDiscoveredServersByIp()``, and else against the name it
+    /// inherited, as one more address of a server the client already trusts. A discovered
+    /// host name is verified against itself when it was learned on a connection with TLS, and
+    /// has no name otherwise: a name learned without TLS is not trusted.
     private func tlsName(for server: Server) -> String? {
         if let tlsServerName {
             return tlsServerName
@@ -1026,26 +1032,44 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return server.url.host
         }
         if Self.isIPAddress(host) {
-            return server.inheritedName
+            return verifyDiscoveredServersByIp ? host : server.inheritedName
         }
         return server.learnedOverTls ? host : nil
     }
 
     /// Why the discovered server `server` cannot be connected to with TLS.
     private func noTlsName(_ server: Server) -> String {
-        "a discovered server with no name to verify its certificate against; tlsServerName(_:)"
+        var reason =
+            "a discovered server with no name to verify its certificate against; tlsServerName(_:)"
             + " sets the name every server is verified against"
+        if let host = server.url.host, Self.isIPAddress(host) {
+            reason += ", or " + Self.verifyByIpRemedy
+        }
+        return reason
     }
 
-    /// What the error of a failed name check of `server` adds: how its certificate can pass.
-    private func nameCheckRemedy(for server: Server) -> String {
-        let remedy = "; tlsServerName(_:) sets the name every server is verified against"
+    private static let verifyByIpRemedy =
+        "verifyDiscoveredServersByIp() verifies a discovered IP address against itself, which is"
+        + " safe only where the CA that issued the certificates is not shared with others"
+
+    /// What the error of a failed name check of `server`, whose certificate is issued for
+    /// `names`, adds: how its certificate can pass.
+    private func nameCheckRemedy(for server: Server, names: [String]) -> String {
+        var remedy = "; tlsServerName(_:) sets the name every server is verified against"
         guard server.isDiscovered, tlsServerName == nil else {
             return remedy
         }
+        remedy +=
+            ", or each server of the cluster can advertise a name its certificate is issued for"
+            + " (client_advertise in nats-server)"
+        // a certificate issued for the address the server was reported by
+        if !verifyDiscoveredServersByIp, let host = server.url.host,
+            let address = try? SocketAddress(ipAddress: host, port: 0),
+            names.contains(where: { (try? SocketAddress(ipAddress: $0, port: 0)) == address })
+        {
+            remedy += ", or " + Self.verifyByIpRemedy
+        }
         return remedy
-            + ", or each server of the cluster can advertise a name its certificate is issued"
-            + " for (client_advertise in nats-server)"
     }
 
     /// Whether `server` is skipped: it is connected to with TLS whatever its INFO says, and

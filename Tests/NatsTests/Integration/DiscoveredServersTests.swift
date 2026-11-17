@@ -147,6 +147,11 @@ class DiscoveredServersTests: XCTestCase {
         ("testReconnectToAServerWithNoNameReportsWhy", testReconnectToAServerWithNoNameReportsWhy),
         ("testTlsServerNameIsUsedForEveryServer", testTlsServerNameIsUsedForEveryServer),
         ("testNameErrorsPointAtTlsServerName", testNameErrorsPointAtTlsServerName),
+        ("testVerifyDiscoveredServersByIp", testVerifyDiscoveredServersByIp),
+        (
+            "testNameErrorsOfADiscoveredIpPointAtVerifyDiscoveredServersByIp",
+            testNameErrorsOfADiscoveredIpPointAtVerifyDiscoveredServersByIp
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -1631,5 +1636,78 @@ class DiscoveredServersTests: XCTestCase {
                 "; tlsServerName(_:) sets the name every server is verified against, or each "
                     + "server of the cluster can advertise a name its certificate is issued for"),
             mismatch)
+    }
+
+    // ip-only-cert.pem is issued for 127.0.0.1 and ::1 and for no host name.
+    func testVerifyDiscoveredServersByIp() async throws {
+        let ipOnly = try ipOnlyCertificate()
+        let peer = try tlsAfterInfo { $0.tls = ipOnly }
+        let seed = try tlsSeed(listing: ["127.0.0.1:\(peer.port)"])
+        let client = tlsClient(seed.port).verifyDiscoveredServersByIp().build()
+        let reconnected = try await reconnects(client, from: seed)
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://127.0.0.1:\(peer.port)"))
+        XCTAssertEqual(peer.connections.count, 1, "setup: one connection")
+        XCTAssertNil(peer.connections.first?.serverName, "SNI")
+        try? await client.close()
+
+        // a discovered address that has no name to inherit
+        let unnamed = try tlsAfterInfo { $0.tls = ipOnly }
+        let byIp = try tlsAfterInfo {
+            $0.tls = ipOnly
+            $0.afterFirstPong = FakeNatsServer.info(connectUrls: ["127.0.0.1:\(unnamed.port)"])
+        }
+        let byIpClient = NatsClientOptions()
+            .url(URL(string: "tls://127.0.0.1:\(byIp.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .verifyDiscoveredServersByIp()
+            .reconnectWait(0.1)
+            .build()
+        let toUnnamed = try await reconnects(byIpClient, from: byIp)
+        XCTAssertTrue(toUnnamed, "client did not reconnect to the address without a name")
+        XCTAssertEqual(byIpClient.connectedUrl, URL(string: "tls://127.0.0.1:\(unnamed.port)"))
+        try? await byIpClient.close()
+
+        // no effect while tlsServerName(_:) is set
+        let overridden = try tlsAfterInfo { $0.tls = ipOnly }
+        let named = try tlsSeed(listing: ["127.0.0.1:\(overridden.port)"])
+        let namedClient = tlsClient(named.port)
+            .tlsServerName("localhost")
+            .verifyDiscoveredServersByIp()
+            .usernameAndPassword("user", "secret")
+            .build()
+        try await namedClient.connect()
+        let rtt = await result(within: 5) { try await namedClient.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+        named.shutdown()
+        let refused = try await eventually { overridden.connections.first?.closed == true }
+        try? await namedClient.close()
+        XCTAssertTrue(refused, "the discovered server was not dialed, or its connection left open")
+        XCTAssertEqual(overridden.connections.first?.serverName, "localhost", "SNI")
+        XCTAssertFalse(overridden.lines.contains { $0.hasPrefix("CONNECT") }, "\(overridden.lines)")
+    }
+
+    func testNameErrorsOfADiscoveredIpPointAtVerifyDiscoveredServersByIp() async throws {
+        let remedy =
+            "verifyDiscoveredServersByIp() verifies a discovered IP address against itself, which "
+            + "is safe only where the CA that issued the certificates is not shared with others"
+        // reached by its address and without TLS, the seed lends no name to what it lists
+        let unnamed = try tlsAfterInfo()
+        let plain = try refusingSeed(listing: ["127.0.0.1:\(unnamed.port)"])
+        let client = NatsClientOptions().url(URL(string: "nats://127.0.0.1:\(plain.port)")!).build()
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .failure(NatsError.ConnectError.tlsFailure(let cause))? = connected else {
+            try? await client.close()
+            return XCTFail("expected a TLS failure, got \(String(describing: connected))")
+        }
+        XCTAssertTrue("\(cause)".contains("with no name to verify"), "\(cause)")
+        XCTAssertTrue("\(cause)".contains(", or " + remedy), "\(cause)")
+
+        // a certificate issued for the address, verified against the inherited name
+        guard let mismatch = try await nameErrorOfDiscoveredIp()?.message else {
+            return
+        }
+        XCTAssertTrue(
+            mismatch.contains("(client_advertise in nats-server), or " + remedy), mismatch)
     }
 }

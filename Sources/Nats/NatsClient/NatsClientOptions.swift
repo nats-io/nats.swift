@@ -33,6 +33,7 @@ public class NatsClientOptions {
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
     private var serverName: String? = nil
+    private var verifyByIp = false
     private var inboxPrefix: String = "_INBOX."
 
     public init() {}
@@ -154,9 +155,10 @@ public class NatsClientOptions {
     /// ``NatsError/ConnectError/tlsFailure(_:)`` before CONNECT, and nothing a server sends
     /// turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
     /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
-    /// TLS for every server too, and so does ``tlsServerName(_:)``. A `ws://` URL is then
-    /// refused, as it cannot be upgraded to TLS; `wss://` is the form with TLS.
-    /// ``tlsOptional()`` cannot be set together with this option.
+    /// TLS for every server too, and so do ``tlsServerName(_:)`` and
+    /// ``verifyDiscoveredServersByIp()``. A `ws://` URL is then refused, as it cannot be
+    /// upgraded to TLS; `wss://` is the form with TLS. ``tlsOptional()`` cannot be set
+    /// together with this option.
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
@@ -199,17 +201,33 @@ public class NatsClientOptions {
     /// It is the first remedy when a certificate is not valid for the name the client verifies
     /// it against, for example for a server given by its IP address, and keeps verification
     /// on. It overrides the name a discovered server inherits from the server it was learned
-    /// from. It asks for TLS for every server, as ``requireTls()`` does, unless
-    /// ``tlsOptional()`` is set.
+    /// from, and ``verifyDiscoveredServersByIp()``. It asks for TLS for every server, as
+    /// ``requireTls()`` does, unless ``tlsOptional()`` is set.
     public func tlsServerName(_ name: String) -> NatsClientOptions {
         self.serverName = name
         return self
     }
 
+    /// Verifies a discovered server given as an IP address against that address instead of
+    /// the host name it inherits from the server it was learned from, and sends it no SNI. It
+    /// also lets the client connect to a discovered IP address that has no name to be verified
+    /// against, such as one reported by a server given by its IP address.
+    ///
+    /// It is meant for clusters whose node certificates carry only IP addresses, and is safe
+    /// only where the CA that issued those certificates is not shared with others: any
+    /// certificate that CA issued for the address is accepted. It has no effect while
+    /// ``tlsServerName(_:)`` is set. It asks for TLS for every server, as ``requireTls()``
+    /// does, unless ``tlsOptional()`` is set.
+    public func verifyDiscoveredServersByIp() -> NatsClientOptions {
+        self.verifyByIp = true
+        return self
+    }
+
     /// Leaves TLS to each server: ``rootCertificates(_:)``, ``clientCertificate(_:_:)``,
-    /// ``tlsServerName(_:)`` and a `tls://` or `wss://` URL then no longer ask for TLS for
-    /// every server. Each server is connected to as its own URL says, or, for a `nats://` URL,
-    /// with TLS when its INFO requires it. A `tls://` or `wss://` URL still gets TLS.
+    /// ``tlsServerName(_:)``, ``verifyDiscoveredServersByIp()`` and a `tls://` or `wss://` URL
+    /// then no longer ask for TLS for every server. Each server is connected to as its own URL
+    /// says, or, for a `nats://` URL, with TLS when its INFO requires it. A `tls://` or `wss://`
+    /// URL still gets TLS.
     ///
     /// It cannot be set together with ``requireTls()`` or ``withTlsFirst()``:
     /// ``NatsClient/connect()`` then throws ``NatsError/ConnectError/invalidConfig(_:)``.
@@ -262,6 +280,7 @@ public class NatsClientOptions {
             clientKey: clientKey,
             rootCertificate: rootCertificate,
             tlsServerName: serverName,
+            verifyDiscoveredServersByIp: verifyByIp,
             retryOnFailedConnect: initialReconnect,
             ignoreDiscoveredServers: ignoreDiscovered
         )
