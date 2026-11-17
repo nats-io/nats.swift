@@ -27,6 +27,7 @@ public class NatsClientOptions {
     private var auth: Auth? = nil
     private var withTls = false
     private var tlsFirst = false
+    private var isTlsOptional = false
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
@@ -52,7 +53,7 @@ public class NatsClientOptions {
     /// A list of server urls that a client can connect to.
     ///
     /// A `tls://` or `wss://` URL among them asks for TLS for every server, as
-    /// ``requireTls()`` does.
+    /// ``requireTls()`` does, unless ``tlsOptional()`` is set.
     public func urls(_ urls: [URL]) -> NatsClientOptions {
         self.urls = urls.map { self.applyDefaultPort(to: $0) }
         return self
@@ -61,7 +62,8 @@ public class NatsClientOptions {
 
     /// A single url that the client can connect to.
     ///
-    /// A `tls://` or `wss://` URL asks for TLS, as ``requireTls()`` does.
+    /// A `tls://` or `wss://` URL asks for TLS, as ``requireTls()`` does, unless
+    /// ``tlsOptional()`` is set.
     public func url(_ url: URL) -> NatsClientOptions {
         self.urls = [self.applyDefaultPort(to: url)]
         return self
@@ -147,7 +149,8 @@ public class NatsClientOptions {
     /// reports, and every reconnect. A server that cannot do TLS is not connected to, and
     /// nothing a server sends turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
     /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
-    /// TLS for every server too.
+    /// TLS for every server too. ``tlsOptional()`` opts out, and cannot be set together with
+    /// this option.
     public func requireTls() -> NatsClientOptions {
         self.withTls = true
         return self
@@ -158,7 +161,7 @@ public class NatsClientOptions {
     /// configured with such option, otherwise the connection will fail.
     ///
     /// It asks for TLS for every server, as ``requireTls()`` does. A `wss://` URL has its TLS
-    /// below the websocket instead.
+    /// below the websocket instead. It cannot be set together with ``tlsOptional()``.
     public func withTlsFirst() -> NatsClientOptions {
         self.tlsFirst = true
         return self
@@ -166,7 +169,8 @@ public class NatsClientOptions {
 
     /// The location of a root CAs file.
     ///
-    /// It asks for TLS for every server, as ``requireTls()`` does.
+    /// It asks for TLS for every server, as ``requireTls()`` does, unless ``tlsOptional()`` is
+    /// set.
     public func rootCertificates(_ rootCertificate: URL) -> NatsClientOptions {
         self.rootCertificate = rootCertificate
         return self
@@ -174,10 +178,23 @@ public class NatsClientOptions {
 
     /// The location of a client cert file.
     ///
-    /// It asks for TLS for every server, as ``requireTls()`` does.
+    /// It asks for TLS for every server, as ``requireTls()`` does, unless ``tlsOptional()`` is
+    /// set.
     public func clientCertificate(_ clientCertificate: URL, _ clientKey: URL) -> NatsClientOptions {
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
+        return self
+    }
+
+    /// Leaves TLS to each server: ``rootCertificates(_:)``, ``clientCertificate(_:_:)`` and a
+    /// `tls://` or `wss://` URL then no longer ask for TLS for every server. Each server is
+    /// connected to as its own URL says, or with TLS when its INFO requires it. A `tls://` or
+    /// `wss://` URL still gets TLS.
+    ///
+    /// It cannot be set together with ``requireTls()`` or ``withTlsFirst()``:
+    /// ``NatsClient/connect()`` then throws ``NatsError/ConnectError/invalidConfig(_:)``.
+    public func tlsOptional() -> NatsClientOptions {
+        self.isTlsOptional = true
         return self
     }
 
@@ -210,6 +227,7 @@ public class NatsClientOptions {
             auth: auth,
             requireTls: withTls,
             tlsFirst: tlsFirst,
+            tlsOptional: isTlsOptional,
             clientCertificate: clientCertificate,
             clientKey: clientKey,
             rootCertificate: rootCertificate,

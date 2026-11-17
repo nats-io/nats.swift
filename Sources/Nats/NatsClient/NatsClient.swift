@@ -89,7 +89,10 @@ extension NatsClient {
     /// will not wait until the connection is established but rather return immediatelly.
     ///
     /// > **Throws:**
-    /// > - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid
+    /// > - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid.
+    /// >   ``NatsClientOptions/tlsOptional()`` together with ``NatsClientOptions/requireTls()`` or
+    /// >   ``NatsClientOptions/withTlsFirst()`` is reported also with
+    /// >   ``NatsClientOptions/retryOnfailedConnect()``
     /// > - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
     /// > - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
     /// > - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
@@ -116,6 +119,9 @@ extension NatsClient {
             // These states allow connection/reconnection
             break
         }
+
+        // reported at once and never retried: no connection attempt can fix it
+        try connectionHandler.checkConfiguration()
 
         // Set state to connecting immediately to prevent concurrent connect() calls
         connectionHandler.setState(.connecting)
