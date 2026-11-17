@@ -34,9 +34,13 @@ public class NatsServer {
         }
     }
 
+    /// The port the server listens on for route connections of its cluster peers.
+    public var routePort: Int? { return natsRoutePort }
+
     private var process: Process?
     private var natsServerPort: Int?
     private var natsWebsocketPort: Int?
+    private var natsRoutePort: Int?
     private var tlsEnabled = false
     private var pidFile: URL?
     private var inLameDuckMode = false
@@ -74,6 +78,9 @@ public class NatsServer {
         let maxLines = 100
         var serverError: String?
         var outputBuffer = Data()
+        var ready = false
+        // a node of a cluster logs its route port after it is ready
+        var clustered = false
 
         outputHandle.readabilityHandler = { fileHandle in
             let data = fileHandle.availableData
@@ -99,13 +106,22 @@ public class NatsServer {
                     self.natsWebsocketPort = port
                 }
 
-                let ready = line.contains("Server is ready")
+                if let port = self.extractPort(from: line, for: "route connections") {
+                    self.natsRoutePort = port
+                }
+
+                if line.contains("Cluster:  ") {
+                    clustered = true
+                }
+
+                ready = ready || line.contains("Server is ready")
 
                 if !self.tlsEnabled && self.isTLS(from: line) {
                     self.tlsEnabled = true
                 }
 
-                if ready || errorLine != nil || lineCount >= maxLines {
+                let started = ready && (!clustered || self.natsRoutePort != nil)
+                if started || errorLine != nil || lineCount >= maxLines {
                     serverError = errorLine
                     semaphore.signal()
                     outputHandle.readabilityHandler = nil

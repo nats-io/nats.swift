@@ -49,8 +49,8 @@ class TlsTests: XCTestCase {
         ("testWsUrlIsRefusedWhenTlsIsAskedFor", testWsUrlIsRefusedWhenTlsIsAskedFor),
         ("testWsUrlIsNotUpgradedToTlsAfterInfo", testWsUrlIsNotUpgradedToTlsAfterInfo),
         (
-            "testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor",
-            testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor
+            "testReportedWsUrlIsNotDialedWhenTlsIsAskedFor",
+            testReportedWsUrlIsNotDialedWhenTlsIsAskedFor
         ),
         (
             "testServerWithoutTlsFailsBeforeConnectNamingTheSetting",
@@ -559,9 +559,8 @@ class TlsTests: XCTestCase {
         }
     }
 
-    // connect() refuses a ws:// URL of the list; a ws:// URL that a server reports fails its
-    // attempt before CONNECT.
-    func testDiscoveredWsUrlIsRefusedWhenTlsIsAskedFor() async throws {
+    // A ws:// URL that a server reports is skipped, like any entry with a scheme.
+    func testReportedWsUrlIsNotDialedWhenTlsIsAskedFor() async throws {
         let ws = try fake(.init(greeting: FakeNatsServer.info(), websocket: true))
         let server = try fake(
             .init(
@@ -582,20 +581,11 @@ class TlsTests: XCTestCase {
         try await client.flush()
         server.shutdown()
 
-        // the client tries the ws:// URL next
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if let attempt = ws.connections.first,
-                attempt.closed || attempt.lines.contains(where: { $0.hasPrefix("CONNECT") })
-            {
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
+        // an entry with a scheme is skipped: the client reconnects only to its configured
+        // server, and never dials the ws:// URL
+        try await Task.sleep(nanoseconds: 1_000_000_000)
         try? await client.close()
-        XCTAssertNotNil(ws.connections.first, "the reported ws:// URL was not tried")
-        XCTAssertFalse(
-            ws.lines.contains { $0.hasPrefix("CONNECT") }, "CONNECT without TLS: \(ws.lines)")
+        XCTAssertEqual(ws.connections.count, 0, "the reported ws:// URL was dialed")
     }
 
     func testServerWithoutTlsFailsBeforeConnectNamingTheSetting() async throws {
