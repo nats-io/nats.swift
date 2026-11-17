@@ -60,6 +60,7 @@ class CoreNatsTests: XCTestCase {
         ("testSubscribePermissionsRevoked", testSubscribePermissionsRevoked),
         ("testUnsubscribeAfterWithWaitingConsumer", testUnsubscribeAfterWithWaitingConsumer),
         ("testQueueGroupSurvivesReconnect", testQueueGroupSurvivesReconnect),
+        ("testServerStopsAfterReloadSignal", testServerStopsAfterReloadSignal),
     ]
     var natsServer = NatsServer()
 
@@ -867,6 +868,27 @@ class CoreNatsTests: XCTestCase {
         XCTAssertEqual(message?.payload, "msg".data(using: .utf8)!)
 
         try await client.close()
+    }
+
+    // The test helper must still stop a server after sending it a signal; a reloaded server
+    // keeps running, so nothing else would end it.
+    func testServerStopsAfterReloadSignal() async throws {
+        logger.logLevel = .critical
+        let server = NatsServer()
+        server.start()
+        let url = URL(string: server.clientURL)!
+        server.sendSignal(.reload)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        server.stop()
+
+        let client = NatsClientOptions().url(url).build()
+        do {
+            try await client.connect()
+            XCTFail("nats-server is still running after stop()")
+            try? await client.close()
+        } catch {
+            // refused: the server is gone
+        }
     }
 
     func testLameDuckMode() async throws {
