@@ -148,11 +148,13 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.retainServersOrder = retainServersOrder
         self.auth = auth
         self.pingInterval = pingInterval
-        self.tlsAskedBy = Self.tlsAskedBy(
+        let tlsAskedBy = Self.tlsAskedBy(
             urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
             rootCertificate: rootCertificate, clientCertificate: clientCertificate)
+        self.tlsAskedBy = tlsAskedBy
         self.configurationError = Self.configurationError(
-            requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional)
+            urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
+            tlsAskedBy: tlsAskedBy)
         self.tlsFirst = tlsFirst
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
@@ -184,14 +186,23 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func configurationError(
-        requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool
+        urls: [URL], requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool, tlsAskedBy: String?
     ) -> String? {
         if tlsOptional && tlsFirst {
             return "tlsOptional() cannot be set together with withTlsFirst()"
         } else if tlsOptional && requireTls {
             return "tlsOptional() cannot be set together with requireTls()"
+        } else if let tlsAskedBy, let url = urls.first(where: { $0.lowercasedScheme == "ws" }) {
+            // A websocket gets TLS from its scheme, before the first byte: a ws:// URL cannot
+            // be upgraded, and dialing it with TLS would change the URL the user wrote.
+            return wsUrlRefusal(url, tlsAskedBy: tlsAskedBy)
         }
         return nil
+    }
+
+    /// Why the `ws://` URL `url` is refused while `tlsAskedBy` asks for TLS.
+    private static func wsUrlRefusal(_ url: URL, tlsAskedBy: String) -> String {
+        "\(tlsAskedBy) asks for TLS, but \(url.quoted) is a ws:// URL; wss:// is the TLS form"
     }
 
     /// Throws the configuration error of the client's settings, if they have one. No connection
@@ -644,7 +655,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func completeConnection(
         to s: URL, info: ServerInfo, on channel: Channel
     ) async throws {
-        if upgradesToTls(server: s, info: info) {
+        if try upgradesToTls(server: s, info: info) {
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -700,9 +711,18 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Whether the attempt upgrades its connection to `server` to TLS after `info`. A `wss://`
-    /// connection and a TLS-first connection have TLS from the start.
-    private func upgradesToTls(server: URL, info: ServerInfo) -> Bool {
-        if server.lowercasedScheme == "wss" || (self.tlsFirst && !server.isWebsocket) {
+    /// connection and a TLS-first connection have TLS from the start, and a `ws://` connection
+    /// is never upgraded: its TLS would start below the websocket framing after the upgrade.
+    /// Throws for a `ws://` URL while TLS is asked for.
+    private func upgradesToTls(server: URL, info: ServerInfo) throws -> Bool {
+        if server.isWebsocket || self.tlsFirst {
+            // connect() refuses a ws:// URL of the list while TLS is asked for; one that a
+            // server reported later is refused here, before CONNECT
+            if let tlsAskedBy, server.lowercasedScheme == "ws" {
+                throw NatsError.ConnectError.tlsFailure(
+                    NatsError.TlsNotOffered(
+                        description: Self.wsUrlRefusal(server, tlsAskedBy: tlsAskedBy)))
+            }
             return false
         }
         // With TLS optional nothing asks for TLS, but a tls:// URL still gets it.
