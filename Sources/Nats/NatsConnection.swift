@@ -196,7 +196,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = nil }
 
             if self.currentState != .closed && self.currentState != .suspended {
-                context.fireErrorCaught(error)
+                // this handler is the last in the pipeline, so an error fired from here would
+                // reach no handler: handle it here, which reports it and closes the connection
+                self.errorCaught(context: context, error: error)
             }
 
             return
