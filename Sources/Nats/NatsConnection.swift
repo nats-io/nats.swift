@@ -86,10 +86,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private enum ReadPhase {
         /// The first line from the server must be INFO.
         case expectingInfo
+        /// INFO was read. What follows is kept unparsed until the attempt has decided whether
+        /// to upgrade to TLS, and dropped when it does.
+        case holdingAfterInfo
         /// Lines are parsed and handled.
         case processing
     }
     private let readPhase = NIOLockedValueBox(ReadPhase.expectingInfo)
+    /// The channel of the attempt whose lines are handled.
+    private let attemptChannel = NIOLockedValueBox<ObjectIdentifier?>(nil)
     private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
     private var pingTask: RepeatedTask? {
         get { _pingTask.withLockedValue { $0 } }
@@ -156,8 +161,16 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        guard !isFromAnotherChannel(context) else { return }
         var byteBuffer = self.unwrapInboundIn(data)
         _ = _inputBuffer.withLockedValue { $0.writeBuffer(&byteBuffer) }
+    }
+
+    /// Once the attempt's lines are handled, what another channel reads (e.g. a previous
+    /// connection that is still closing) is dropped.
+    private func isFromAnotherChannel(_ context: ChannelHandlerContext) -> Bool {
+        readPhase.withLockedValue { $0 } == .processing
+            && attemptChannel.withLockedValue { $0 } != ObjectIdentifier(context.channel)
     }
 
     func channelReadComplete(context: ChannelHandlerContext) {
@@ -168,6 +181,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = nil }
             return
         }
+        guard !isFromAnotherChannel(context) else { return }
 
         let inputChunkOrNil: Data? = _inputBuffer.withLockedValue { buffer in
             guard buffer.readableBytes > 0 else { return nil }
@@ -192,6 +206,25 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             }
             inputChunk = afterInfo
         }
+
+        // Checked in one step: the TLS upgrade drops what is kept under the same lock, and a
+        // later attempt may have reset the phase since the checks above.
+        let handles = readPhase.withLockedValue { phase in
+            if phase == .holdingAfterInfo {
+                _inputBuffer.withLockedValue { $0.clear() }
+                parseRemainder.withLockedValue { $0 = inputChunk }
+            }
+            return phase == .processing
+                && attemptChannel.withLockedValue { $0 } == ObjectIdentifier(context.channel)
+        }
+        guard handles else { return }
+
+        processInput(inputChunk, context: context)
+    }
+
+    /// Parses the bytes read from the server and handles the operations in them.
+    private func processInput(_ inputChunk: Data, context: ChannelHandlerContext) {
+        let state: NatsState = self.currentState
 
         // Once connected, an INFO that does not parse is skipped and reported, and the
         // connection stays up. During a connection attempt it fails the parse.
@@ -346,7 +379,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         switch result {
         case .success(let info):
             logger.debug("server info")
-            readPhase.withLockedValue { $0 = .processing }
+            readPhase.withLockedValue { $0 = .holdingAfterInfo }
             continuation?.resume(returning: info)
             return Data(chunk[lineEnd.upperBound...])
         case .failure(let error):
@@ -471,6 +504,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func connectToServer(s: URL) async throws {
         // the first line of every attempt must be INFO
         readPhase.withLockedValue { $0 = .expectingInfo }
+        capturedConnectionError.withLockedValue { $0 = nil }
         parseRemainder.withLockedValue { $0 = nil }
         _inputBuffer.withLockedValue { $0.clear() }
         var infoTask: Task<(), Never>? = nil
@@ -532,25 +566,61 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
         await infoTask?.value
         self.serverInfo = info
+        guard let channel = self.channel else {
+            throw NatsError.ClientError.internalError("empty channel")
+        }
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
             let sslHandler = try NIOSSLClientHandler(
                 context: sslContext, serverHostname: s.host)
-            if let channel = self.channel {
-                // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
-                // (takes ownership via `sending`), unlike NIOLoopBound which requires
-                // already being on the event loop at construction time.
-                let sslHandlerBox = NIOLoopBoundBox.makeBoxSendingValue(
-                    sslHandler, eventLoop: channel.eventLoop)
+            // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
+            // (takes ownership via `sending`), unlike NIOLoopBound which requires
+            // already being on the event loop at construction time.
+            let sslHandlerBox = NIOLoopBoundBox.makeBoxSendingValue(
+                sslHandler, eventLoop: channel.eventLoop)
+            do {
                 try await channel.eventLoop.submit {
+                    // a TLS handler added to a closed connection never starts its handshake
+                    guard channel.isActive else {
+                        throw NatsError.ClientError.connectionClosed
+                    }
+                    // Bytes that arrived after INFO were read before TLS: drop them in the same
+                    // event loop task that adds the TLS handler.
+                    self._inputBuffer.withLockedValue { $0.clear() }
+                    self.attemptChannel.withLockedValue { $0 = ObjectIdentifier(channel) }
+                    self.readPhase.withLockedValue { phase in
+                        self.parseRemainder.withLockedValue { $0 = nil }
+                        phase = .processing
+                    }
                     try channel.pipeline.syncOperations.addHandler(
                         sslHandlerBox.value, position: .first)
                 }.get()
+            } catch {
+                // the TLS handshake could not start, e.g. the server closed the connection
+                throw NatsError.ConnectError.tlsFailure(error)
             }
+        } else {
+            try await channel.eventLoop.submit {
+                guard channel.isActive else {
+                    throw NatsError.ClientError.connectionClosed
+                }
+                // No TLS upgrade follows: handle the bytes that arrived after INFO now.
+                self.attemptChannel.withLockedValue { $0 = ObjectIdentifier(channel) }
+                self.readPhase.withLockedValue { $0 = .processing }
+                let held = self.parseRemainder.withLockedValue { value in
+                    let current = value
+                    value = nil
+                    return current
+                }
+                if let held, !held.isEmpty {
+                    let context = try channel.pipeline.syncOperations.context(handler: self)
+                    self.processInput(held, context: context)
+                }
+            }.get()
         }
 
-        try await sendClientConnectInit()
+        try await sendClientConnectInit(on: channel)
         self.connectedUrl = s
     }
 
@@ -579,7 +649,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return tlsConfiguration
     }
 
-    private func sendClientConnectInit() async throws {
+    private func sendClientConnectInit(on channel: Channel) async throws {
         var initialConnect = ConnectInfo(
             verbose: false, pedantic: false, userJwt: nil, nkey: "", name: "", echo: true,
             lang: self.lang, version: self.version, natsProtocol: .dynamic, tlsRequired: false,
@@ -644,6 +714,16 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 connectionEstablishedContinuation.withLockedValue { $0 = continuation }
+                // channelInactive fails the continuation only once it is set: a connection that
+                // closed before is found here, on its event loop
+                channel.eventLoop.execute {
+                    guard !channel.isActive else { return }
+                    let toResume = self.connectionEstablishedContinuation.withLockedValue { cont in
+                        defer { cont = nil }
+                        return cont
+                    }
+                    toResume?.resume(throwing: self.takeConnectionError())
+                }
                 Task.detached {
                     do {
                         try await self.write(operation: ClientOp.connect(connect))
@@ -936,40 +1016,40 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
         // If we lost the channel before we delivered server INFO or connection
         // establishment, make sure to fail any pending continuations to avoid leaks.
-        // Use captured error if available (e.g., TLS failure), otherwise use connectionClosed.
-        let errorToUse: Error = capturedConnectionError.withLockedValue({ err in
-            let captured = err
-            err = nil  // Clear after using
-            if let capturedError = captured {
-                // a line from the server that does not parse is not a TLS failure
-                if capturedError is NatsError.ProtocolError {
-                    return NatsError.ConnectError.io(capturedError)
-                }
-                return NatsError.ConnectError.tlsFailure(capturedError)
-            } else {
-                return NatsError.ClientError.connectionClosed
-            }
-        })
-
-        if let continuation = serverInfoContinuation.withLockedValue({ cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }) {
-            continuation.resume(throwing: errorToUse)
+        let serverInfoCont = serverInfoContinuation.withLockedValue { cont in
+            defer { cont = nil }
+            return cont
         }
-
-        if let continuation = connectionEstablishedContinuation.withLockedValue({ cont in
-            let toResume = cont
-            cont = nil
-            return toResume
-        }) {
-            continuation.resume(throwing: errorToUse)
+        let establishedCont = connectionEstablishedContinuation.withLockedValue { cont in
+            defer { cont = nil }
+            return cont
+        }
+        // with no continuation waiting, the error stays for the one sendClientConnectInit sets
+        if serverInfoCont != nil || establishedCont != nil {
+            let errorToUse = takeConnectionError()
+            serverInfoCont?.resume(throwing: errorToUse)
+            establishedCont?.resume(throwing: errorToUse)
         }
 
         let shouldHandleDisconnect = state.withLockedValue { $0 == .connected }
         if shouldHandleDisconnect {
             handleDisconnect()
+        }
+    }
+
+    /// The error that fails the current attempt once its channel is closed: the error captured on
+    /// the channel (e.g., a TLS failure), else connectionClosed.
+    private func takeConnectionError() -> Error {
+        capturedConnectionError.withLockedValue { err in
+            defer { err = nil }
+            guard let captured = err else {
+                return NatsError.ClientError.connectionClosed
+            }
+            // a line from the server that does not parse is not a TLS failure
+            if captured is NatsError.ProtocolError {
+                return NatsError.ConnectError.io(captured)
+            }
+            return NatsError.ConnectError.tlsFailure(captured)
         }
     }
 
