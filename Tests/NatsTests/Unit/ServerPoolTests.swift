@@ -22,6 +22,10 @@ class ServerPoolTests: XCTestCase {
         ("testDiscoveredServerGainsTlsAndKeepsIt", testDiscoveredServerGainsTlsAndKeepsIt),
         ("testLatestHasTheTlsTheServerGained", testLatestHasTheTlsTheServerGained),
         ("testLaterListReplacesDiscoveredServers", testLaterListReplacesDiscoveredServers),
+        (
+            "testFirstReportAndGainingTlsSetTheNameOfAnAddress",
+            testFirstReportAndGainingTlsSetTheNameOfAnAddress
+        ),
     ]
 
     private let configured = [URL(string: "tls://a:4222")!, URL(string: "nats://b:4222")!]
@@ -72,5 +76,24 @@ class ServerPoolTests: XCTestCase {
         // back in a later list, a dropped server is learned again
         pool.replace(["d:1"], websocket: false, tls: false, current: current)
         XCTAssertEqual(urls(pool), ["tls://a:4222", "nats://b:4222", "nats://c:1", "nats://d:1"])
+    }
+
+    func testFirstReportAndGainingTlsSetTheNameOfAnAddress() {
+        var pool = ServerPool(configured: configured)
+        func address() -> Server? { pool.servers.first { $0.url.host == "10.0.0.2" } }
+        pool.add(["10.0.0.2:4222"], websocket: false, tls: false, name: "a")
+        XCTAssertEqual(address()?.inheritedName, "a", "the first report decides")
+        pool.add(["10.0.0.2:4222"], websocket: false, tls: false, name: "z")
+        XCTAssertEqual(address()?.inheritedName, "a", "a later report without TLS")
+        pool.add(["10.0.0.2:4222"], websocket: false, tls: true, name: "b")
+        XCTAssertEqual(address()?.url, URL(string: "tls://10.0.0.2:4222"))
+        XCTAssertEqual(address()?.inheritedName, "b", "gaining TLS takes the name of that report")
+        pool.add(["10.0.0.2:4222"], websocket: false, tls: true, name: "c")
+        XCTAssertEqual(address()?.inheritedName, "b", "a later report with TLS")
+        let current = Server.Key(host: "a", port: 4222)
+        pool.replace(["10.0.0.3:4222"], websocket: false, tls: true, current: current, name: "d")
+        XCTAssertNil(address(), "dropped from the list")
+        pool.replace(["10.0.0.2:4222"], websocket: false, tls: true, current: current, name: "e")
+        XCTAssertEqual(address()?.inheritedName, "e", "learned again")
     }
 }

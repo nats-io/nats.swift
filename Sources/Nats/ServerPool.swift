@@ -142,6 +142,10 @@ internal struct Server: Sendable {
     /// Reported by a server rather than set in the options.
     let isDiscovered: Bool
     let key: Key
+    /// For a discovered server given as an IP address, the host name its certificate is
+    /// verified against: the name under which the server that reported it was verified. Nil
+    /// when there is none.
+    private(set) var inheritedName: String?
 
     /// Learned on a connection with TLS: it is connected to with TLS, whatever its INFO says.
     var learnedOverTls: Bool {
@@ -156,8 +160,9 @@ internal struct Server: Sendable {
 
     /// The server of `entry`, learned on a connection that is a websocket when `websocket` is
     /// set and has TLS when `tls` is set. It is connected to with the same transport and, when
-    /// that connection had TLS, with TLS.
-    init?(discovered entry: DiscoveredEntry, websocket: Bool, tls: Bool) {
+    /// that connection had TLS, with TLS. Given as an IP address, it is verified against
+    /// `name`.
+    init?(discovered entry: DiscoveredEntry, websocket: Bool, tls: Bool, name: String?) {
         let scheme = websocket ? (tls ? "wss" : "ws") : (tls ? "tls" : "nats")
         guard case .server(let host, let port) = entry, let url = entry.url(scheme: scheme) else {
             return nil
@@ -165,10 +170,13 @@ internal struct Server: Sendable {
         self.url = url
         self.isDiscovered = true
         self.key = Key(host: host, port: port)
+        self.inheritedName = name
     }
 
-    /// Learned again on a connection with TLS: from now on it is connected to with TLS.
-    mutating func gainTls() {
+    /// Learned again on a connection with TLS, whose server was verified under `name`: from
+    /// now on it is connected to with TLS, and verified against `name` when given as an IP
+    /// address.
+    mutating func gainTls(name: String?) {
         guard isDiscovered, !learnedOverTls,
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else {
@@ -177,6 +185,7 @@ internal struct Server: Sendable {
         components.scheme = url.scheme == "ws" ? "wss" : "tls"
         if let url = components.url {
             self.url = url
+            self.inheritedName = name
         }
     }
 }
@@ -213,25 +222,28 @@ internal struct ServerPool: Sendable {
     }
 
     /// Adds the servers in `entries`, learned on a connection that is a websocket when
-    /// `websocket` is set and has TLS when `tls` is set, as discovered servers.
+    /// `websocket` is set and has TLS when `tls` is set, as discovered servers. An IP address
+    /// among them is verified against `name`.
     ///
     /// An entry that is a server of the pool adds nothing, and a configured server stays as
     /// configured. A discovered server learned without TLS gains TLS when it is learned again
-    /// on a connection with TLS, and never loses it.
-    mutating func add(_ entries: [String], websocket: Bool, tls: Bool) {
+    /// on a connection with TLS, and never loses it; it then takes `name`.
+    mutating func add(_ entries: [String], websocket: Bool, tls: Bool, name: String? = nil) {
         for entry in entries {
             let discovered = DiscoveredEntry(entry)
             if case .skipped(let reason) = discovered {
                 logger.warning(
                     "skipping the connect_urls entry \"\(NatsError.escaped(entry))\": \(reason)")
             }
-            guard let server = Server(discovered: discovered, websocket: websocket, tls: tls)
+            guard
+                let server = Server(
+                    discovered: discovered, websocket: websocket, tls: tls, name: name)
             else {
                 continue
             }
             if let index = indices[server.key] {
                 if tls {
-                    servers[index].gainTls()
+                    servers[index].gainTls(name: name)
                 }
             } else {
                 indices[server.key] = servers.count
@@ -242,10 +254,12 @@ internal struct ServerPool: Sendable {
 
     /// Replaces the discovered servers with those in `entries`, from an INFO received on the
     /// connection to `current`, which is a websocket when `websocket` is set and has TLS when
-    /// `tls` is set. The configured servers and `current` stay. A discovered server that drops
-    /// out of the list and comes back is learned again. An empty list changes nothing.
+    /// `tls` is set. An IP address among them is verified against `name`. The configured
+    /// servers and `current` stay. A discovered server that drops out of the list and comes
+    /// back is learned again. An empty list changes nothing.
     mutating func replace(
-        _ entries: [String], websocket: Bool, tls: Bool, current: Server.Key
+        _ entries: [String], websocket: Bool, tls: Bool, current: Server.Key,
+        name: String? = nil
     ) {
         guard !entries.isEmpty else {
             return
@@ -258,6 +272,6 @@ internal struct ServerPool: Sendable {
         }
         servers.removeAll { $0.isDiscovered && !listed.contains($0.key) }
         index()
-        add(entries, websocket: websocket, tls: tls)
+        add(entries, websocket: websocket, tls: tls, name: name)
     }
 }

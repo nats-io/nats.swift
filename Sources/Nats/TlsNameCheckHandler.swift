@@ -40,13 +40,16 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
     private let server: String
     /// The host name or IP address the certificate must be issued for.
     private let name: String
+    /// What the error adds when the certificate is not issued for the name.
+    private let remedy: String
     private var state = State.handshaking
     private var heldWrites: [(data: NIOAny, promise: EventLoopPromise<Void>?)] = []
     private var heldFlush = false
 
-    init(server: String, name: String) {
+    init(server: String, name: String, remedy: String = "") {
         self.server = server
         self.name = name
+        self.remedy = remedy
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -59,7 +62,9 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
         let certificate = try? context.pipeline.syncOperations.nioSSL_peerCertificate()
         guard let certificate, Self.certificate(certificate, isIssuedFor: name) else {
             let names = certificate.map { Self.names(of: $0) } ?? []
-            fail(context: context, error: Self.mismatch(server: server, name: name, names: names))
+            fail(
+                context: context,
+                error: Self.mismatch(server: server, name: name, names: names, remedy: remedy))
             return
         }
         state = .checked
@@ -204,9 +209,10 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
         }
     }
 
-    /// The error for a certificate of `server` that is issued for `names` but not for `name`.
+    /// The error for a certificate of `server` that is issued for `names` but not for `name`,
+    /// ending in `remedy`.
     static func mismatch(
-        server: String, name: String, names: [String]
+        server: String, name: String, names: [String], remedy: String = ""
     ) -> NatsError.CertificateNameMismatch {
         let shown = 4
         var message = "the certificate of \(server) is not valid for \(String(reflecting: name))"
@@ -222,6 +228,6 @@ internal final class TlsNameCheckHandler: ChannelDuplexHandler {
                 message += " and \(names.count - shown) more"
             }
         }
-        return NatsError.CertificateNameMismatch(description: message)
+        return NatsError.CertificateNameMismatch(description: message + remedy)
     }
 }
