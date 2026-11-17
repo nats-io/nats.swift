@@ -120,9 +120,13 @@ internal final class WebSocketByteBufferCodec: ChannelDuplexHandler {
         case .binary:
             context.fireChannelRead(wrapInboundOut(frame.data))
         case .text:
-            preconditionFailure("We will never receive a text frame")
+            // nats-server sends the protocol in binary frames
+            context.fireErrorCaught(
+                NatsError.ProtocolError.parserFailure("unexpected websocket text frame"))
         case .continuation:
-            preconditionFailure("We will never receive a continuation frame")
+            // the frame aggregator joins fragments, so none should reach this handler
+            context.fireErrorCaught(
+                NatsError.ProtocolError.parserFailure("unexpected websocket continuation frame"))
         case .pong:
             break
         case .ping:

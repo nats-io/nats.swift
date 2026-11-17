@@ -11,6 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import NIOCore
+import NIOEmbedded
+import NIOWebSocket
 import XCTest
 
 @testable import Nats
@@ -31,6 +34,8 @@ class ParserTests: XCTestCase {
             "testHeaderWithEmptyValueOrFoldedLineIsDelivered",
             testHeaderWithEmptyValueOrFoldedLineIsDelivered
         ),
+        ("testWebsocketTextFrameIsAnError", testWebsocketTextFrameIsAnError),
+        ("testWebsocketContinuationFrameIsAnError", testWebsocketContinuationFrameIsAnError),
     ]
 
     override func setUp() {
@@ -359,5 +364,31 @@ class ParserTests: XCTestCase {
             }
             XCTAssertEqual(msg.headers, expectedHeaders, input)
         }
+    }
+
+    func testWebsocketTextFrameIsAnError() throws {
+        let channel = EmbeddedChannel(handler: WebSocketByteBufferCodec())
+        XCTAssertThrowsError(
+            try channel.writeInbound(
+                WebSocketFrame(fin: true, opcode: .text, data: ByteBuffer(string: "PING\r\n")))
+        ) { error in
+            XCTAssertEqual(
+                error as? NatsError.ProtocolError,
+                .parserFailure("unexpected websocket text frame"))
+        }
+        XCTAssertNil(try channel.readInbound(as: ByteBuffer.self))
+    }
+
+    func testWebsocketContinuationFrameIsAnError() throws {
+        let channel = EmbeddedChannel(handler: WebSocketByteBufferCodec())
+        XCTAssertThrowsError(
+            try channel.writeInbound(
+                WebSocketFrame(fin: true, opcode: .continuation, data: ByteBuffer(string: "x")))
+        ) { error in
+            XCTAssertEqual(
+                error as? NatsError.ProtocolError,
+                .parserFailure("unexpected websocket continuation frame"))
+        }
+        XCTAssertNil(try channel.readInbound(as: ByteBuffer.self))
     }
 }
