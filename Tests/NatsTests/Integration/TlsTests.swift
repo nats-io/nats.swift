@@ -60,6 +60,32 @@ class TlsTests: XCTestCase {
             "testServerWithoutTlsIsReportedOnReconnect",
             testServerWithoutTlsIsReportedOnReconnect
         ),
+        (
+            "testHostNameUrlRefusesCertificateWithOnlyAnIpEntry",
+            testHostNameUrlRefusesCertificateWithOnlyAnIpEntry
+        ),
+        (
+            "testIpAddressUrlAcceptsCertificateWithThatIpEntry",
+            testIpAddressUrlAcceptsCertificateWithThatIpEntry
+        ),
+        ("testNothingIsSentBeforeTheNameCheck", testNothingIsSentBeforeTheNameCheck),
+        (
+            "testNameMismatchIsReportedWhenTheServerClosesAtOnce",
+            testNameMismatchIsReportedWhenTheServerClosesAtOnce
+        ),
+        (
+            "testRefusedNameFailsWhenTheServerWritesAndResets",
+            testRefusedNameFailsWhenTheServerWritesAndResets
+        ),
+        (
+            "testNextServerIsTriedAtOnceAfterANameMismatch",
+            testNextServerIsTriedAtOnceAfterANameMismatch
+        ),
+        (
+            "testNameMismatchIsReportedWhileCredentialsAreRead",
+            testNameMismatchIsReportedWhileCredentialsAreRead
+        ),
+        ("testNameMismatchIsReportedOnReconnect", testNameMismatchIsReportedOnReconnect),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -108,7 +134,12 @@ class TlsTests: XCTestCase {
 
     /// Starts a scripted server that is stopped in `tearDown`.
     private func fake(_ script: FakeNatsServer.Script) throws -> FakeNatsServer {
-        let server = try FakeNatsServer(script)
+        try fake(scripts: [script])
+    }
+
+    /// Starts a scripted server whose connection `i` follows `scripts[i]`, stopped in `tearDown`.
+    private func fake(scripts: [FakeNatsServer.Script]) throws -> FakeNatsServer {
+        let server = try FakeNatsServer(scripts: scripts)
         fakeServers.append(server)
         return server
     }
@@ -198,6 +229,32 @@ class TlsTests: XCTestCase {
                 server.connections.count, 0, "connected although the settings are refused",
                 file: file, line: line)
         }
+    }
+
+    /// The error text for a `localhost` URL and `ip-only-cert.pem`, which is issued for
+    /// 127.0.0.1 and ::1 and for no DNS name.
+    private static let ipOnlyRefusal =
+        "is not valid for \"localhost\": it is issued for \"127.0.0.1\", \"::1\""
+
+    /// Lets a client built from `options` try to connect to a `localhost` URL of a server with
+    /// `ip-only-cert.pem`, then checks that it fails within `timeout` with an error that says what
+    /// the client expected and what the certificate is issued for.
+    private func assertNotValidForName(
+        _ options: NatsClientOptions, within timeout: TimeInterval = 5, _ message: String = "",
+        file: StaticString = #filePath, line: UInt = #line
+    ) async {
+        let client = options.build()
+        let connected = await result(within: timeout) { try await client.connect() }
+        if case .success? = connected {
+            try? await client.close()
+        }
+        guard case .failure(NatsError.ConnectError.tlsFailure(let cause))? = connected else {
+            return XCTFail(
+                "\(message) expected a TLS failure, got \(String(describing: connected))",
+                file: file, line: line)
+        }
+        XCTAssertTrue(
+            "\(cause)".contains(Self.ipOnlyRefusal), "\(message) \(cause)", file: file, line: line)
     }
 
     /// Connects a client built from `options`, flushes and closes it, within 10 s.
@@ -621,6 +678,237 @@ class TlsTests: XCTestCase {
             }
             await fulfillment(of: [reported], timeout: 2)
             try? await client.close()
+        }
+    }
+
+    // ip-only-cert.pem is issued by rootCA for the addresses 127.0.0.1 and ::1 only.
+    func testHostNameUrlRefusesCertificateWithOnlyAnIpEntry() async throws {
+        let server = try natsServer("tls_ip", pems: ["ip-only-cert", "ip-only-key", "rootCA"])
+        await assertNotValidForName(
+            NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(server.port!)")!)
+                .rootCertificates(rootCA), within: 10, "tls://")
+
+        let wss = try natsServer("wss", pems: ["ip-only-cert", "ip-only-key", "rootCA"])
+        await assertNotValidForName(
+            NatsClientOptions()
+                .url(URL(string: wss.clientWebsocketURL)!)
+                .rootCertificates(rootCA)
+                .clientCertificate(pem("client-cert"), pem("client-key")), within: 10, "wss://")
+    }
+
+    func testIpAddressUrlAcceptsCertificateWithThatIpEntry() async throws {
+        let server = try natsServer("tls_ip", pems: ["ip-only-cert", "ip-only-key", "rootCA"])
+        for host in ["127.0.0.1", "[::1]"] {
+            await assertConnects(
+                NatsClientOptions()
+                    .url(URL(string: "tls://\(host):\(server.port!)")!)
+                    .rootCertificates(rootCA), host)
+        }
+    }
+
+    func testNothingIsSentBeforeTheNameCheck() async throws {
+        let tls = try FakeNatsServer.tlsContext(cert: "ip-only-cert", key: "ip-only-key")
+        let variants: [(String, FakeNatsServer.Script, (Int) -> NatsClientOptions)] = [
+            (
+                "TLS after INFO",
+                .init(greeting: FakeNatsServer.info(tlsRequired: true), tls: tls),
+                { NatsClientOptions().url(URL(string: "tls://localhost:\($0)")!) }
+            ),
+            (
+                "TLS first",
+                .init(greeting: FakeNatsServer.info(tlsRequired: true), tls: tls, tlsFirst: true),
+                { NatsClientOptions().url(URL(string: "nats://localhost:\($0)")!).withTlsFirst() }
+            ),
+            (
+                // the scripted server writes nothing: the upgrade request would be its first line
+                "wss://",
+                .init(tls: tls, tlsFirst: true),
+                { NatsClientOptions().url(URL(string: "wss://localhost:\($0)")!) }
+            ),
+        ]
+        for (name, script, options) in variants {
+            let server = try fake(script)
+            await assertNotValidForName(
+                options(server.port).rootCertificates(rootCA).usernameAndPassword("user", "secret"),
+                name)
+            XCTAssertEqual(server.lines, [], "\(name): the server received lines")
+            let isClosed = try await firstConnectionClosed(on: server)
+            XCTAssertTrue(isClosed, "\(name): connection of the failed attempt left open")
+        }
+    }
+
+    func testNameMismatchIsReportedWhenTheServerClosesAtOnce() async throws {
+        let tls = try FakeNatsServer.tlsContext(cert: "ip-only-cert", key: "ip-only-key")
+        let variants: [(String, FakeNatsServer.Script, (Int) -> NatsClientOptions)] = [
+            (
+                "TLS after INFO",
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: true), tls: tls,
+                    afterTlsHandshake: .closes),
+                { NatsClientOptions().url(URL(string: "tls://localhost:\($0)")!) }
+            ),
+            (
+                "TLS first",
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: true), tls: tls, tlsFirst: true,
+                    afterTlsHandshake: .closes),
+                { NatsClientOptions().url(URL(string: "nats://localhost:\($0)")!).withTlsFirst() }
+            ),
+        ]
+        for (name, script, options) in variants {
+            let server = try fake(script)
+            await assertNotValidForName(options(server.port).rootCertificates(rootCA), name)
+        }
+    }
+
+    func testRefusedNameFailsWhenTheServerWritesAndResets() async throws {
+        // TLS 1.2: the server's handshake is done before the client's, so its line and the
+        // reset can arrive right after the end of the client's handshake
+        let tls = try FakeNatsServer.tlsContext(
+            cert: "ip-only-cert", key: "ip-only-key", maximumTLSVersion: .tlsv12)
+        let variants: [(String, FakeNatsServer.Script, (Int) -> NatsClientOptions)] = [
+            (
+                "TLS after INFO",
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: true), tls: tls,
+                    afterTlsHandshake: .writesAndResets("PONG\r\n")),
+                { NatsClientOptions().url(URL(string: "tls://localhost:\($0)")!) }
+            ),
+            (
+                "TLS first",
+                .init(
+                    tls: tls, tlsFirst: true,
+                    afterTlsHandshake: .writesAndResets(FakeNatsServer.info(tlsRequired: true))),
+                { NatsClientOptions().url(URL(string: "nats://localhost:\($0)")!).withTlsFirst() }
+            ),
+        ]
+        for (name, script, options) in variants {
+            let server = try fake(script)
+            // what the client reads before the reset varies from one attempt to the next
+            for attempt in 1...5 {
+                await assertNotValidForName(
+                    options(server.port).rootCertificates(rootCA), within: 2,
+                    "\(name), attempt \(attempt):")
+            }
+        }
+    }
+
+    func testNextServerIsTriedAtOnceAfterANameMismatch() async throws {
+        // TLS 1.2: the server's handshake is done before the client's, so the server drops all
+        // the client sends after its handshake and never answers the close of the refused
+        // connection
+        let refused = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                tls: try FakeNatsServer.tlsContext(
+                    cert: "ip-only-cert", key: "ip-only-key", maximumTLSVersion: .tlsv12),
+                afterTlsHandshake: .dropsBytes))
+        let good = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                tls: try FakeNatsServer.tlsContext()))
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "tls://localhost:\(refused.port)")!,
+                URL(string: "tls://localhost:\(good.port)")!,
+            ])
+            .retainServersOrder()
+            .rootCertificates(rootCA)
+            .build()
+
+        let connected = await result(within: 2) { try await client.connect() }
+        if case .success? = connected {
+            try? await client.close()
+        }
+        guard case .success? = connected else {
+            return XCTFail("connect within 2 s: \(String(describing: connected))")
+        }
+        XCTAssertEqual(refused.connections.count, 1, "the refused server was not tried first")
+        XCTAssertEqual(refused.lines, [], "the refused server received lines")
+        XCTAssertTrue(
+            good.lines.contains { $0.hasPrefix("CONNECT") }, "no CONNECT to the next server")
+    }
+
+    func testNameMismatchIsReportedWhileCredentialsAreRead() async throws {
+        // the INFO has a nonce, which the client signs with the key from the file it reads
+        let server = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true, nonce: "PJnVGfQrFXwVEmAb"),
+                tls: try FakeNatsServer.tlsContext(cert: "ip-only-cert", key: "ip-only-key")))
+        let keyFiles: [(String, URL, (NatsClientOptions, URL) -> NatsClientOptions)] = [
+            (
+                "credentialsFile(_:)",
+                Bundle.module.url(forResource: "TestUser", withExtension: "creds")!,
+                { $0.credentialsFile($1) }
+            ),
+            (
+                "nkeyFile(_:)", Bundle.module.url(forResource: "nkey", withExtension: "")!,
+                { $0.nkeyFile($1) }
+            ),
+        ]
+        for (name, file, withKeyFile) in keyFiles {
+            // the file arrives well after the TLS handshake has failed
+            let body = try String(contentsOf: file, encoding: .utf8)
+            let files = try fake(
+                .init(
+                    greeting: "HTTP/1.1 200 OK\r\nContent-Length: \(body.utf8.count)\r\n"
+                        + "Connection: close\r\n\r\n\(body)",
+                    greetingDelay: 1, closeAfterGreeting: true))
+            let options = NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(server.port)")!)
+                .rootCertificates(rootCA)
+            await assertNotValidForName(
+                withKeyFile(
+                    options,
+                    URL(string: "http://127.0.0.1:\(files.port)/\(file.lastPathComponent)")!),
+                name)
+        }
+        XCTAssertEqual(server.lines, [], "the server received lines")
+    }
+
+    // On a reconnect, and on every attempt under retryOnfailedConnect(), no connect() call
+    // returns the refusal: an error event reports it.
+    func testNameMismatchIsReportedOnReconnect() async throws {
+        let ipOnly = FakeNatsServer.Script(
+            greeting: FakeNatsServer.info(tlsRequired: true),
+            tls: try FakeNatsServer.tlsContext(cert: "ip-only-cert", key: "ip-only-key"))
+        let refused = try fake(ipOnly)
+        // only the first connection gets a certificate issued for localhost
+        let laterRefused = try fake(
+            scripts: [
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: true),
+                    tls: try FakeNatsServer.tlsContext()),
+                ipOnly,
+            ])
+        let variants = [
+            ("retryOnfailedConnect()", refused, true),
+            ("reconnect", laterRefused, false),
+        ]
+        for (name, server, retry) in variants {
+            let options = NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(server.port)")!)
+                .rootCertificates(rootCA)
+                .reconnectWait(0.2)
+            let client = (retry ? options.retryOnfailedConnect() : options).build()
+            let reported = XCTestExpectation(description: "\(name): the refusal was not reported")
+            reported.assertForOverFulfill = false
+            client.on(.error) { event in
+                guard case .error(let error) = event else { return }
+                if "\(error)".contains(Self.ipOnlyRefusal) {
+                    reported.fulfill()
+                }
+            }
+            try await client.connect()
+            if !retry {
+                server.closeConnection(0)
+            }
+            await fulfillment(of: [reported], timeout: 2)
+            try? await client.close()
+            XCTAssertEqual(
+                server.connections.dropFirst(retry ? 0 : 1).flatMap { $0.lines }, [],
+                "\(name): a refused connection received lines")
         }
     }
 }

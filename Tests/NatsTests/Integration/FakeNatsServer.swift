@@ -16,6 +16,7 @@ import NIO
 import NIOConcurrencyHelpers
 import NIOHTTP1
 import NIOSSL
+import NIOTLS
 import NIOWebSocket
 import XCTest
 
@@ -54,6 +55,8 @@ final class FakeNatsServer: Sendable {
         /// are not answered, and a TLS close the client starts does not complete until
         /// ``FakeNatsServer/closeConnection(_:)``.
         var stopsReadingAfterFirstPong = false
+        /// What the server does once its TLS handshake is done.
+        var afterTlsHandshake: AfterTlsHandshake? = nil
         /// Plaintext written `count` times, `interval` seconds apart, right after the greeting
         /// of the connection with index `sprayOnConnection`, until that connection closes. It
         /// bypasses the server's TLS.
@@ -63,6 +66,17 @@ final class FakeNatsServer: Sendable {
         /// writes binary websocket frames; `firstBytes` are the first bytes read after the
         /// upgrade. Not used together with `tls`.
         var websocket = false
+    }
+
+    /// What a server does once its TLS handshake is done. It acts below its TLS, so it never
+    /// answers a TLS close the client starts.
+    enum AfterTlsHandshake: Sendable {
+        /// It drops every byte it receives.
+        case dropsBytes
+        /// It closes the connection.
+        case closes
+        /// It writes `text` inside TLS, then resets the connection (SO_LINGER 0).
+        case writesAndResets(String)
     }
 
     struct Connection: Sendable {
@@ -221,16 +235,18 @@ final class FakeNatsServer: Sendable {
     /// A server-side TLS context. The default test server certificate has DNS `localhost` and
     /// IP `::1`, issued by `rootCA`.
     static func tlsContext(
-        cert: String = "server-cert", key: String = "server-key"
+        cert: String = "server-cert", key: String = "server-key",
+        maximumTLSVersion: TLSVersion? = nil
     ) throws
         -> NIOSSLContext
     {
         let bundle = Bundle.module
         let cert = bundle.url(forResource: cert, withExtension: "pem")!.path
         let key = bundle.url(forResource: key, withExtension: "pem")!.path
-        let config = TLSConfiguration.makeServerConfiguration(
+        var config = TLSConfiguration.makeServerConfiguration(
             certificateChain: try NIOSSLCertificate.fromPEMFile(cert).map { .certificate($0) },
             privateKey: .privateKey(try NIOSSLPrivateKey(file: key, format: .pem)))
+        config.maximumTLSVersion = maximumTLSVersion
         return try NIOSSLContext(configuration: config)
     }
 }
@@ -288,13 +304,22 @@ private final class RawRecorder: ChannelInboundHandler, RemovableChannelHandler,
 
     private let state: NIOLockedValueBox<[FakeNatsServer.Connection]>
     private let index: Int
+    private let dropping = NIOLockedValueBox(false)
 
     init(state: NIOLockedValueBox<[FakeNatsServer.Connection]>, index: Int) {
         self.state = state
         self.index = index
     }
 
+    /// Drops every byte read from now on.
+    func dropReads() {
+        dropping.withLockedValue { $0 = true }
+    }
+
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard !dropping.withLockedValue({ $0 }) else {
+            return
+        }
         let buffer = unwrapInboundIn(data)
         state.withLockedValue { conns in
             if conns[index].firstBytes.isEmpty {
@@ -453,6 +478,35 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
             }
         }
         buffer.discardReadBytes()
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let after = script.afterTlsHandshake, let event = event as? TLSUserEvent,
+            case .handshakeCompleted = event
+        {
+            afterTlsHandshake(after, context: context)
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    private func afterTlsHandshake(
+        _ after: FakeNatsServer.AfterTlsHandshake, context: ChannelHandlerContext
+    ) {
+        // the recorder is below the TLS handler
+        let raw = try! context.pipeline.syncOperations.context(handler: recorder)
+        switch after {
+        case .dropsBytes:
+            // autoRead does not stop the TLS handler's reads, so the bytes are dropped below it
+            recorder.dropReads()
+        case .closes:
+            raw.close(promise: nil)
+        case .writesAndResets(let text):
+            write(context: context, text)
+            let rawBound = NIOLoopBound(raw, eventLoop: context.eventLoop)
+            (context.channel as! SocketOptionProvider)
+                .setSoLinger(linger(l_onoff: 1, l_linger: 0))
+                .whenComplete { _ in rawBound.value.close(promise: nil) }
+        }
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
