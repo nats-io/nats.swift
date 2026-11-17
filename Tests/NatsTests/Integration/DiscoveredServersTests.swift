@@ -14,6 +14,7 @@
 import Foundation
 import Logging
 import NIOConcurrencyHelpers
+import NIOSSL
 import NatsServer
 import XCTest
 
@@ -110,6 +111,27 @@ class DiscoveredServersTests: XCTestCase {
             "testCloseDuringTheWaitBeforeAnAttemptDialsNothing",
             testCloseDuringTheWaitBeforeAnAttemptDialsNothing
         ),
+        (
+            "testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporter",
+            testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporter
+        ),
+        (
+            "testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporterOverTwoHops",
+            testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporterOverTwoHops
+        ),
+        (
+            "testDiscoveredIpIsNotAcceptedOnItsIpEntryAlone",
+            testDiscoveredIpIsNotAcceptedOnItsIpEntryAlone
+        ),
+        ("testDiscoveredIpWithoutANameIsSkipped", testDiscoveredIpWithoutANameIsSkipped),
+        (
+            "testDiscoveredHostNameIsVerifiedAgainstItself",
+            testDiscoveredHostNameIsVerifiedAgainstItself
+        ),
+        (
+            "testDiscoveredIpOfWssClusterIsVerifiedAgainstTheNameOfItsReporter",
+            testDiscoveredIpOfWssClusterIsVerifiedAgainstTheNameOfItsReporter
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -180,11 +202,7 @@ class DiscoveredServersTests: XCTestCase {
             XCTFail("no PONG from the seed")
             return false
         }
-        let reconnected = XCTestExpectation(description: "client did not reconnect")
-        reconnected.assertForOverFulfill = false
-        client.on(.connected) { _ in reconnected.fulfill() }
-        seed.shutdown()
-        return await XCTWaiter().fulfillment(of: [reconnected], timeout: 10) == .completed
+        return await reconnects(client, after: seed)
     }
 
     func testEntryWithSchemeIsSkipped() async throws {
@@ -1223,5 +1241,196 @@ class DiscoveredServersTests: XCTestCase {
             }
             XCTAssertEqual(client.connectionHandler?.currentState, .closed, name)
         }
+    }
+
+    /// Waits up to 10 s for `client` to connect again after `server` is stopped.
+    private func reconnects(_ client: NatsClient, after server: FakeNatsServer) async -> Bool {
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        server.shutdown()
+        return await XCTWaiter().fulfillment(of: [reconnected], timeout: 10) == .completed
+    }
+
+    /// A TLS context of the scripted servers with `ip-only-cert.pem`, which the test CA issued
+    /// for 127.0.0.1 and ::1 and for no host name.
+    private func ipOnlyCertificate() throws -> NIOSSLContext {
+        try FakeNatsServer.tlsContext(cert: "ip-only-cert", key: "ip-only-key")
+    }
+
+    /// Connects a TLS-first client to `localhost`, whose server lists a TLS-first server at
+    /// 127.0.0.1 with `ip-only-cert.pem` and then refuses the client, so that the first connect
+    /// tries that server. Returns its port and the TLS failure of connect(), or nil after a
+    /// test failure when connect() ends otherwise.
+    private func nameErrorOfDiscoveredIp(
+        file: StaticString = #filePath, line: UInt = #line
+    ) async throws -> (port: Int, message: String)? {
+        let peer = try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true), tls: try ipOnlyCertificate(),
+                tlsFirst: true))
+        let seed = try fake(
+            .init(
+                greeting: FakeNatsServer.info(
+                    tlsRequired: true, connectUrls: ["127.0.0.1:\(peer.port)"]),
+                tls: try FakeNatsServer.tlsContext(), tlsFirst: true,
+                firstPingReply: "-ERR 'maximum connections exceeded'\r\n"))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://localhost:\(seed.port)")!)
+            .withTlsFirst()
+            .rootCertificates(pem("rootCA"))
+            .build()
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .failure(NatsError.ConnectError.tlsFailure(let cause))? = connected else {
+            try? await client.close()
+            XCTFail(
+                "expected a TLS failure, got \(String(describing: connected))", file: file,
+                line: line)
+            return nil
+        }
+        return (peer.port, "\(cause)")
+    }
+
+    // The certificate of the discovered server is issued for localhost and ::1, not 127.0.0.1.
+    func testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporter() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try tlsSeed(listing: ["127.0.0.1:\(peer.port)"])
+        let client = tlsClient(seed.port).build()
+
+        let reconnected = try await reconnects(client, from: seed)
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://127.0.0.1:\(peer.port)"))
+        XCTAssertEqual(peer.connections.first?.serverName, "localhost", "SNI")
+        try? await client.close()
+    }
+
+    func testDiscoveredIpIsVerifiedAgainstTheNameOfItsReporterOverTwoHops() async throws {
+        let last = try tlsAfterInfo()
+        let middle = try tlsSeed(listing: ["127.0.0.1:\(last.port)"])
+        let seed = try tlsSeed(listing: ["127.0.0.1:\(middle.port)"])
+        let client = tlsClient(seed.port).build()
+
+        let toMiddle = try await reconnects(client, from: seed)
+        XCTAssertTrue(toMiddle, "client did not reconnect to the first discovered server")
+        XCTAssertEqual(client.connectedUrl?.port, middle.port, "setup: on another server")
+        // its INFO after the first PONG is read before the PONG of this PING
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG from the first discovered server")
+        let toLast = await reconnects(client, after: middle)
+        XCTAssertTrue(toLast, "client did not reconnect to the server it learned there")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://127.0.0.1:\(last.port)"))
+        XCTAssertEqual(last.connections.first?.serverName, "localhost", "SNI")
+        try? await client.close()
+    }
+
+    func testDiscoveredIpIsNotAcceptedOnItsIpEntryAlone() async throws {
+        let ipOnly = try ipOnlyCertificate()
+        let peer = try tlsAfterInfo { $0.tls = ipOnly }
+        let seed = try tlsSeed(listing: ["127.0.0.1:\(peer.port)"])
+        let client = tlsClient(seed.port).usernameAndPassword("user", "secret").build()
+        try await client.connect()
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+        seed.shutdown()
+        let refused = try await eventually { peer.connections.first?.closed == true }
+        try? await client.close()
+        XCTAssertTrue(refused, "the discovered server was not dialed, or its connection left open")
+        XCTAssertFalse(peer.lines.contains { $0.hasPrefix("CONNECT") }, "\(peer.lines)")
+
+        // The first connect tries the servers learned on a failed TLS-first attempt, so the
+        // error of that server is the error of connect().
+        guard case (let port, let message)? = try await nameErrorOfDiscoveredIp() else {
+            return
+        }
+        XCTAssertTrue(
+            message.contains(
+                "the certificate of \"tls://127.0.0.1:\(port)\" is not valid for "
+                    + "\"localhost\": it is issued for \"127.0.0.1\", \"::1\""), message)
+        XCTAssertTrue(message.contains("(client_advertise in nats-server)"), message)
+    }
+
+    // Connected to a server by its address, the client has no name for the addresses that
+    // server reports.
+    func testDiscoveredIpWithoutANameIsSkipped() async throws {
+        let ipOnly = try ipOnlyCertificate()
+        let peer = try tlsAfterInfo { $0.tls = ipOnly }
+        let seed = try tlsAfterInfo {
+            $0.tls = ipOnly
+            $0.afterFirstPong = FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"])
+        }
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://127.0.0.1:\(seed.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+        XCTAssertEqual(client.connectionHandler?.servers.count, 2, "setup: server not learned")
+        seed.shutdown()
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await client.close()
+        XCTAssertEqual(peer.connections.count, 0, "dialed a server with no name to verify")
+    }
+
+    // The seed is configured as LOCALHOST and verified under that name. The host name it
+    // reports is verified against itself, and the address that host name reports against the
+    // name it was verified under.
+    func testDiscoveredHostNameIsVerifiedAgainstItself() async throws {
+        let last = try tlsAfterInfo()
+        let middle = try tlsSeed(listing: ["127.0.0.1:\(last.port)"])
+        let seed = try tlsSeed(listing: ["localhost:\(middle.port)"])
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://LOCALHOST:\(seed.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+
+        let toMiddle = try await reconnects(client, from: seed)
+        XCTAssertEqual(seed.connections.first?.serverName, "LOCALHOST", "setup: SNI of the seed")
+        XCTAssertTrue(toMiddle, "client did not reconnect to the discovered host name")
+        XCTAssertEqual(middle.connections.first?.serverName, "localhost", "SNI of the host name")
+        // its INFO after the first PONG is read before the PONG of this PING
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG from the discovered host name")
+        let toLast = await reconnects(client, after: middle)
+        XCTAssertTrue(toLast, "client did not reconnect to the address the host name reported")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://127.0.0.1:\(last.port)"))
+        XCTAssertEqual(last.connections.first?.serverName, "localhost", "SNI of the address")
+        try? await client.close()
+    }
+
+    // The nodes advertise 127.0.0.1 for their websocket listeners, and their certificate is
+    // issued for localhost and ::1, not 127.0.0.1.
+    func testDiscoveredIpOfWssClusterIsVerifiedAgainstTheNameOfItsReporter() async throws {
+        let tls = [pem("server-cert").path, pem("server-key").path]
+        let first = try natsServer("cluster_wss_ip", tls + [""])
+        let routePort = try XCTUnwrap(first.routePort)
+        let second = try natsServer(
+            "cluster_wss_ip", tls + ["routes: [\"nats://127.0.0.1:\(routePort)\"]"])
+        let secondPort = try XCTUnwrap(URL(string: second.clientWebsocketURL)?.port)
+
+        let client = NatsClientOptions()
+            .url(URL(string: first.clientWebsocketURL)!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        let learned = try await eventually(10) {
+            client.connectionHandler?.servers.contains {
+                $0.url == URL(string: "wss://127.0.0.1:\(secondPort)")
+            } == true
+        }
+        XCTAssertTrue(learned, "setup: the second node was not learned")
+
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        first.stop()
+        await fulfillment(of: [reconnected], timeout: 10)
+        XCTAssertEqual(client.connectedUrl, URL(string: "wss://127.0.0.1:\(secondPort)"))
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
+        _ = await result(within: 5) { try await client.close() }
     }
 }

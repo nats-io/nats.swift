@@ -224,6 +224,12 @@ public enum NatsError {
         let description: String
     }
 
+    /// The cause of ``ConnectError/tlsFailure(_:)`` when a discovered server is to be connected
+    /// to with TLS and has no name to verify its certificate against.
+    internal struct NoTlsName: Error, CustomStringConvertible {
+        let description: String
+    }
+
     public enum RequestError: NatsErrorProtocol, Equatable {
         case noResponders
         case timeout

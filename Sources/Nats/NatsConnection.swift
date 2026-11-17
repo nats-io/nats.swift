@@ -55,6 +55,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         var tls: Bool
     }
     private let current = NIOLockedValueBox<CurrentServer?>(nil)
+    /// The discovered servers skipped for want of a name to verify their certificate
+    /// against, so that each skip is logged once.
+    private let skippedWithoutName = NIOLockedValueBox<Set<Server.Key>>([])
     // nanoseconds representation of TimeInterval
     private let reconnectWait: UInt64
     private let maxReconnects: Int?
@@ -629,7 +632,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
         // if there are more reconnect attempts than the number of servers,
         // we are after the initial connect, so sleep between servers
-        let shouldSleep = self.reconnectAttempts >= servers.count
+        let shouldSleep =
+            self.reconnectAttempts >= servers.filter { !skipsWithoutTlsName($0) }.count
         var next = 0
         while true {
             // close() and suspend() cancel the reconnect: no further server is dialed
@@ -652,6 +656,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             next += 1
             // a discovered server as the pool has it now: it may have gained TLS in this round
             guard let s = self.pool.withLockedValue({ $0.latest(server) }) else {
+                continue
+            }
+            // a server that cannot be connected to costs no attempt
+            if skipsWithoutTlsName(s) {
                 continue
             }
             if let maxReconnects {
@@ -712,6 +720,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 throw NatsError.ConnectError.tlsFailure(err)
             case let err as NatsError.CertificateNameMismatch:
                 throw NatsError.ConnectError.tlsFailure(err)
+            case let err as NatsError.NoTlsName:
+                throw NatsError.ConnectError.tlsFailure(err)
             case let err as NatsError.ServerError:
                 throw err
             case let err as NatsError.ConnectError:
@@ -764,7 +774,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 infoTask = Task {
                     await withTaskCancellationHandler {
                         do {
-                            let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
+                            let (bootstrap, upgradePromise) = self.bootstrapConnection(to: server)
 
                             guard let host = s.host, let port = s.port else {
                                 upgradePromise.succeed()  // avoid promise leaks
@@ -866,7 +876,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     private func completeConnection(
         to server: Server, info: ServerInfo, on channel: Channel
     ) async throws {
-        let s = server.url
         // Discovered servers come from INFOs received inside TLS: on a connection that starts
         // TLS after INFO, the INFO that nats-server 2.12.0 and later send after the first PONG.
         let waitsForInfo: Bool
@@ -875,7 +884,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             waitsForInfo =
                 !ignoreDiscoveredServers
                 && ServerInfo.sendsInfoAfterFirstPong(version: info.version)
-            let sslHandler = try makeSSLHandler(for: s)
+            let sslHandler = try makeSSLHandler(for: server)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
             // already being on the event loop at construction time.
@@ -897,7 +906,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     }
                     self.current.withLockedValue { $0?.tls = true }
                     try channel.pipeline.syncOperations.addHandlers(
-                        [sslHandlerBox.value, self.makeNameCheck(for: s)], position: .first)
+                        [sslHandlerBox.value, self.makeNameCheck(for: server)], position: .first)
                     // writes reach this connection only from here on, through TLS
                     self.batchBuffer = BatchBuffer(channel: channel)
                 }.get()
@@ -974,25 +983,71 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return true
     }
 
-    private func makeSSLHandler(for server: URL) throws -> NIOSSLClientHandler {
+    /// The TLS handler for `server`, which sends its TLS name as SNI unless that name is an IP
+    /// address, which SNI cannot carry. Throws when the server has no TLS name.
+    private func makeSSLHandler(for server: Server) throws -> NIOSSLClientHandler {
+        guard let name = tlsName(for: server) else {
+            throw NatsError.NoTlsName(description: "\(server.url.quoted): \(noTlsName(server))")
+        }
         let sslContext = try NIOSSLContext(configuration: makeTLSConfig())
         return try NIOSSLClientHandler(
-            context: sslContext, serverHostname: tlsServerName(for: server))
+            context: sslContext, serverHostname: Self.isIPAddress(name) ? nil : name)
     }
 
-    /// Checks that the certificate of `server` is issued for its host. It goes right after the
-    /// TLS handler.
-    private func makeNameCheck(for server: URL) -> TlsNameCheckHandler {
-        TlsNameCheckHandler(server: server.quoted, name: server.host ?? "")
+    /// Checks that the certificate of `server` is issued for its TLS name. It goes right after
+    /// the TLS handler.
+    private func makeNameCheck(for server: Server) -> TlsNameCheckHandler {
+        TlsNameCheckHandler(
+            server: server.url.quoted, name: tlsName(for: server) ?? "",
+            remedy: nameCheckRemedy(for: server))
     }
 
-    /// The name sent as SNI to `server`: its host, or nil for an IP address, which SNI cannot
-    /// carry.
-    private func tlsServerName(for server: URL) -> String? {
-        guard let host = server.host, (try? SocketAddress(ipAddress: host, port: 0)) == nil else {
-            return nil
+    /// The name the certificate of `server` is verified against, and sent as SNI unless it is
+    /// an IP address, or nil when there is none: the server is then not connected to with TLS.
+    ///
+    /// A configured server is verified against the host of its URL. A discovered server
+    /// learned on a connection with TLS is verified, given as a host name, against that name,
+    /// and given as an IP address against the name under which the server that reported it
+    /// was verified: the address is one more address of a server the client already trusts.
+    private func tlsName(for server: Server) -> String? {
+        let host = server.url.host
+        guard server.learnedOverTls, let host, Self.isIPAddress(host) else {
+            return host
         }
-        return host
+        return server.inheritedName
+    }
+
+    /// Why the discovered server `server` cannot be connected to with TLS.
+    private func noTlsName(_ server: Server) -> String {
+        "a discovered server with no name to verify its certificate against"
+    }
+
+    /// What the error of a failed name check of `server` adds: how its certificate can pass.
+    private func nameCheckRemedy(for server: Server) -> String {
+        guard server.isDiscovered else {
+            return ""
+        }
+        return
+            "; each server of the cluster can advertise a name its certificate is issued for"
+            + " (client_advertise in nats-server)"
+    }
+
+    /// Whether `server` is skipped: it is connected to with TLS whatever its INFO says, and
+    /// has no name to verify its certificate against. Logged once per server.
+    private func skipsWithoutTlsName(_ server: Server) -> Bool {
+        guard server.isDiscovered, tlsName(for: server) == nil,
+            tlsAskedBy != nil || server.learnedOverTls
+        else {
+            return false
+        }
+        if skippedWithoutName.withLockedValue({ $0.insert(server.key).inserted }) {
+            logger.warning("skipping \(server.url.quoted): \(noTlsName(server))")
+        }
+        return true
+    }
+
+    private static func isIPAddress(_ name: String) -> Bool {
+        (try? SocketAddress(ipAddress: name, port: 0)) != nil
     }
 
     private func makeTLSConfig() throws -> TLSConfiguration {
@@ -1144,8 +1199,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private func bootstrapConnection(
-        to server: URL
+        to target: Server
     ) -> (ClientBootstrap, EventLoopPromise<Void>) {
+        let server = target.url
         let upgradePromise: EventLoopPromise<Void> = self.group.any().makePromise(of: Void.self)
         let bootstrap = ClientBootstrap(group: self.group)
             .channelOption(
@@ -1158,10 +1214,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 if self.tlsFirst && !server.isWebsocket {
                     upgradePromise.succeed(())
                     do {
-                        let sslHandler = try self.makeSSLHandler(for: server)
+                        let sslHandler = try self.makeSSLHandler(for: target)
                         do {
                             try channel.pipeline.syncOperations.addHandlers(
-                                sslHandler, self.makeNameCheck(for: server))
+                                sslHandler, self.makeNameCheck(for: target))
                         } catch {
                             let tlsError = NatsError.ConnectError.tlsFailure(error)
                             return channel.eventLoop.makeFailedFuture(tlsError)
@@ -1213,11 +1269,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
                         if server.lowercasedScheme == "wss" {
                             do {
-                                let sslHandler = try self.makeSSLHandler(for: server)
+                                let sslHandler = try self.makeSSLHandler(for: target)
                                 // The sync methods here are safe because we're on the channel event loop
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandlers(
-                                    sslHandler, self.makeNameCheck(for: server))
+                                    sslHandler, self.makeNameCheck(for: target))
                             } catch {
                                 let tlsError = NatsError.ConnectError.tlsFailure(error)
                                 upgradePromise.fail(tlsError)
@@ -1272,13 +1328,18 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             return
         }
         let websocket = current.server.url.isWebsocket
+        // An IP address it lists is verified against the name this connection was verified
+        // under, when that is a name and not an address.
+        let name =
+            current.tls
+            ? tlsName(for: current.server).flatMap { Self.isIPAddress($0) ? nil : $0 } : nil
         pool.withLockedValue { pool in
             if replacing {
                 pool.replace(
                     connectUrls, websocket: websocket, tls: current.tls,
-                    current: current.server.key)
+                    current: current.server.key, name: name)
             } else {
-                pool.add(connectUrls, websocket: websocket, tls: current.tls)
+                pool.add(connectUrls, websocket: websocket, tls: current.tls, name: name)
             }
         }
     }

@@ -85,6 +85,8 @@ final class FakeNatsServer: Sendable {
         var firstBytes: [UInt8] = []
         var lines: [String] = []
         var closed = false
+        /// The name the client sent as SNI in its TLS handshake, nil without one.
+        var serverName: String? = nil
     }
 
     let host: String
@@ -429,8 +431,17 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     private func addTls(context: ChannelHandlerContext, tls: NIOSSLContext) {
-        try! context.pipeline.syncOperations.addHandler(
-            NIOSSLServerHandler(context: tls), position: .after(recorder))
+        let (state, index, eventLoop) = (self.state, self.index, context.eventLoop)
+        // records the SNI of the client's first TLS message, then removes itself
+        let sni = ByteToMessageHandler(
+            SNIHandler { result in
+                if case .hostname(let name) = result {
+                    state.withLockedValue { $0[index].serverName = name }
+                }
+                return eventLoop.makeSucceededVoidFuture()
+            })
+        try! context.pipeline.syncOperations.addHandlers(
+            [sni, NIOSSLServerHandler(context: tls)], position: .after(recorder))
     }
 
     private func write(context: ChannelHandlerContext, _ text: String) {
