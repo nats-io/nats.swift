@@ -44,6 +44,8 @@ final class FakeNatsServer: Sendable {
         var firstPingReply: String? = nil
         /// Bytes written after the first PONG, e.g. an async INFO.
         var afterFirstPong: String? = nil
+        /// Seconds after the first PONG at which `afterFirstPong` is written.
+        var afterFirstPongDelay: TimeInterval = 0
         /// Bytes written after the second PONG.
         var afterSecondPong: String? = nil
         var answersPing = true
@@ -208,13 +210,16 @@ final class FakeNatsServer: Sendable {
         try? group.syncShutdownGracefully()
     }
 
-    /// An INFO line. `connectUrls: nil` leaves the key out.
+    /// An INFO line. `connectUrls: nil` leaves the key out. The default `version` is one before
+    /// 2.12.0, whose servers send no INFO after the first PONG, as a script does unless it sets
+    /// `afterFirstPong`.
     static func info(
         tlsRequired: Bool = false, tlsAvailable: Bool = false, connectUrls: [String]? = [],
-        connectInfo: Bool = false, nonce: String? = nil, lameDuckMode: Bool = false
+        connectInfo: Bool = false, nonce: String? = nil, lameDuckMode: Bool = false,
+        version: String = "2.11.0"
     ) -> String {
         var info: [String: Any] = [
-            "server_id": "FAKE", "server_name": "fake", "version": "2.14.0", "proto": 1,
+            "server_id": "FAKE", "server_name": "fake", "version": version, "proto": 1,
             "go": "go1.25", "host": "127.0.0.1", "port": 4222, "headers": true,
             "max_payload": 1_048_576, "client_id": 1, "client_ip": "127.0.0.1",
             "tls_required": tlsRequired, "tls_available": tlsAvailable,
@@ -469,7 +474,18 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
                 write(context: context, "PONG\r\n")
                 pongs += 1
                 if pongs == 1, let after = script.afterFirstPong {
-                    write(context: context, after)
+                    if script.afterFirstPongDelay > 0 {
+                        let loopBound = NIOLoopBound(context, eventLoop: context.eventLoop)
+                        let delay = TimeAmount.nanoseconds(
+                            Int64(script.afterFirstPongDelay * 1_000_000_000))
+                        context.eventLoop.scheduleTask(in: delay) {
+                            if loopBound.value.channel.isActive {
+                                self.write(context: loopBound.value, after)
+                            }
+                        }
+                    } else {
+                        write(context: context, after)
+                    }
                 } else if pongs == 2, let after = script.afterSecondPong {
                     write(context: context, after)
                 }

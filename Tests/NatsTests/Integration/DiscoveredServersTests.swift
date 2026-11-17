@@ -53,6 +53,34 @@ class DiscoveredServersTests: XCTestCase {
             "testDiscoveredServerOfTlsWebsocketClusterIsDialedOverWss",
             testDiscoveredServerOfTlsWebsocketClusterIsDialedOverWss
         ),
+        (
+            "testServersOfFirstInfoAreUsedWithoutTlsUpgrade",
+            testServersOfFirstInfoAreUsedWithoutTlsUpgrade
+        ),
+        (
+            "testFirstConnectTriesServersOfAFailedAttempt",
+            testFirstConnectTriesServersOfAFailedAttempt
+        ),
+        (
+            "testFirstConnectLeadsFromAFullServerToItsPeer",
+            testFirstConnectLeadsFromAFullServerToItsPeer
+        ),
+        ("testServersOfInfoBeforeTlsAreNotUsed", testServersOfInfoBeforeTlsAreNotUsed),
+        ("testFailedTlsAttemptAddsNoServers", testFailedTlsAttemptAddsNoServers),
+        (
+            "testWaitsForInfoAfterFirstPongFromServer212",
+            testWaitsForInfoAfterFirstPongFromServer212
+        ),
+        ("testDoesNotWaitForServerBefore212", testDoesNotWaitForServerBefore212),
+        ("testInfoAfterTheWaitIsApplied", testInfoAfterTheWaitIsApplied),
+        (
+            "testInfoBeforePongIsNotUsedWhenTheWaitFails",
+            testInfoBeforePongIsNotUsedWhenTheWaitFails
+        ),
+        (
+            "testInfoAfterTheErrorOfAFailedAttemptIsNotUsed",
+            testInfoAfterTheErrorOfAFailedAttemptIsNotUsed
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -522,5 +550,265 @@ class DiscoveredServersTests: XCTestCase {
         let rtt = await result(within: 5) { try await client.rtt() }
         XCTAssertNotNil(try? rtt?.get(), "no PONG after the reconnect")
         _ = await result(within: 5) { try await client.close() }
+    }
+
+    /// A scripted server that requires TLS after INFO, with `script` changed by `configure`.
+    private func tlsAfterInfo(
+        version: String = "2.11.0", connectUrls: [String] = [],
+        _ configure: (inout FakeNatsServer.Script) -> Void = { _ in }
+    ) throws -> FakeNatsServer {
+        var script = FakeNatsServer.Script(
+            greeting: FakeNatsServer.info(
+                tlsRequired: true, connectUrls: connectUrls, version: version),
+            tls: try FakeNatsServer.tlsContext())
+        configure(&script)
+        return try fake(script)
+    }
+
+    /// A client of the `tls://localhost` server at `port`, which trusts the test CA.
+    private func tlsClient(_ port: Int) -> NatsClientOptions {
+        NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(port)")!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+    }
+
+    func testServersOfFirstInfoAreUsedWithoutTlsUpgrade() async throws {
+        let plainPeer = try fake(.init(greeting: FakeNatsServer.info()))
+        let plainSeed = try fake(
+            .init(greeting: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(plainPeer.port)"])))
+        let plainClient = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(plainSeed.port)")!)
+            .reconnectWait(0.1)
+            .build()
+        let plainReconnected = try await reconnects(plainClient, from: plainSeed)
+        XCTAssertTrue(plainReconnected, "plaintext: server of the first INFO not used")
+        XCTAssertEqual(plainClient.connectedUrl?.port, plainPeer.port, "plaintext")
+        try? await plainClient.close()
+
+        let tls = try FakeNatsServer.tlsContext()
+        let tlsFirstPeer = try fake(
+            .init(greeting: FakeNatsServer.info(tlsRequired: true), tls: tls, tlsFirst: true))
+        let tlsFirstSeed = try fake(
+            .init(
+                greeting: FakeNatsServer.info(
+                    tlsRequired: true, connectUrls: ["localhost:\(tlsFirstPeer.port)"]),
+                tls: tls, tlsFirst: true))
+        let tlsFirstClient = NatsClientOptions()
+            .url(URL(string: "nats://localhost:\(tlsFirstSeed.port)")!)
+            .withTlsFirst()
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+        let tlsFirstReconnected = try await reconnects(tlsFirstClient, from: tlsFirstSeed)
+        XCTAssertTrue(tlsFirstReconnected, "TLS first: server of the first INFO not used")
+        XCTAssertEqual(tlsFirstClient.connectedUrl?.port, tlsFirstPeer.port, "TLS first")
+        try? await tlsFirstClient.close()
+    }
+
+    // The only configured server sends its INFO, then answers CONNECT with -ERR.
+    func testFirstConnectTriesServersOfAFailedAttempt() async throws {
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        let seed = try fake(
+            .init(
+                greeting: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"]),
+                firstPingReply: "-ERR 'maximum connections exceeded'\r\n"))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(seed.port)")!)
+            .build()
+
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        XCTAssertEqual(client.connectedUrl?.port, peer.port)
+        try await client.close()
+    }
+
+    // A full nats-server writes its INFO, then -ERR, and closes the connection, all before
+    // CONNECT.
+    func testFirstConnectLeadsFromAFullServerToItsPeer() async throws {
+        let full = try natsServer("cluster", ["max_connections: 1", ""])
+        let routePort = try XCTUnwrap(full.routePort)
+        let peer = try natsServer(
+            "cluster", ["", "routes: [\"nats://127.0.0.1:\(routePort)\"]"])
+        // the one connection the full server takes
+        let holder = NatsClientOptions().url(URL(string: full.clientURL)!).build()
+        try await holder.connect()
+        try await waitForRoute(
+            from: NatsClientOptions().url(URL(string: peer.clientURL)!), to: holder)
+
+        // the close can come before or after the client has sent CONNECT
+        for attempt in 0..<5 {
+            let client = NatsClientOptions().url(URL(string: full.clientURL)!).build()
+            let connected = await result(within: 10) { try await client.connect() }
+            guard case .success? = connected else {
+                XCTFail("\(attempt): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertEqual(client.connectedUrl?.port, peer.port, "\(attempt)")
+            try await client.close()
+        }
+        try await holder.close()
+    }
+
+    func testServersOfInfoBeforeTlsAreNotUsed() async throws {
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        for version in ["2.11.0", "2.14.0"] {
+            // nats-server 2.12.0 and later send an INFO after the first PONG
+            let seed = try tlsAfterInfo(
+                version: version, connectUrls: ["127.0.0.1:\(peer.port)"]
+            ) {
+                $0.afterFirstPong = FakeNatsServer.info()
+            }
+            let client = tlsClient(seed.port).build()
+            try await client.connect()
+            seed.shutdown()
+            try await Task.sleep(nanoseconds: 1_500_000_000)
+            try? await client.close()
+            XCTAssertGreaterThan(seed.connections.count, 0, "\(version): setup")
+            XCTAssertEqual(
+                peer.connections.count, 0, "\(version): dialed a server of the INFO before TLS")
+        }
+    }
+
+    func testFailedTlsAttemptAddsNoServers() async throws {
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        let listing = FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"])
+        // an INFO inside TLS before the -ERR that refuses CONNECT
+        let seed = try tlsAfterInfo(connectUrls: ["127.0.0.1:\(peer.port)"]) {
+            $0.firstPingReply = listing + "-ERR 'Authorization Violation'\r\n"
+        }
+        let client = tlsClient(seed.port).retryOnfailedConnect().build()
+
+        try await client.connect()
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await client.close()
+        XCTAssertGreaterThan(seed.connections.count, 1, "setup: the client did not retry")
+        XCTAssertEqual(peer.connections.count, 0, "dialed a server of a failed attempt")
+    }
+
+    func testWaitsForInfoAfterFirstPongFromServer212() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try tlsAfterInfo(version: "2.12.0") {
+            // a PING the client answers while it waits
+            $0.afterFirstPong =
+                "PING\r\n" + FakeNatsServer.info(connectUrls: ["localhost:\(peer.port)"])
+            $0.afterFirstPongDelay = 1
+        }
+        let client = tlsClient(seed.port).build()
+
+        let start = Date()
+        try await client.connect()
+        XCTAssertGreaterThan(Date().timeIntervalSince(start), 0.9, "connected before the INFO")
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+        seed.shutdown()
+        await fulfillment(of: [reconnected], timeout: 10)
+        XCTAssertEqual(client.connectedUrl?.port, peer.port, "server of that INFO not used")
+        XCTAssertTrue(seed.lines.contains("PONG"), "PING not answered: \(seed.lines)")
+        try? await client.close()
+    }
+
+    func testDoesNotWaitForServerBefore212() async throws {
+        for version in ["2.11.9", "2.12", "v2.14.0", ""] {
+            let seed = try tlsAfterInfo(version: version)
+            let client = tlsClient(seed.port).build()
+            let start = Date()
+            let connected = await result(within: 10) { try await client.connect() }
+            guard case .success? = connected else {
+                XCTFail("\(version): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertLessThan(Date().timeIntervalSince(start), 2, "\(version): waited")
+            try await client.close()
+        }
+    }
+
+    func testInfoAfterTheWaitIsApplied() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try tlsAfterInfo(version: "2.14.0") {
+            $0.afterFirstPong = FakeNatsServer.info(connectUrls: ["localhost:\(peer.port)"])
+            $0.afterFirstPongDelay = 6
+        }
+        let client = tlsClient(seed.port).build()
+
+        let start = Date()
+        let connected = await result(within: 10) { try await client.connect() }
+        let elapsed = Date().timeIntervalSince(start)
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        XCTAssertTrue((4.5..<6).contains(elapsed), "connected after \(elapsed) s")
+        let learned = try await eventually(3) {
+            client.connectionHandler?.servers.contains { $0.key.port == peer.port } == true
+        }
+        XCTAssertTrue(learned, "INFO that arrived after the wait was not applied")
+        try? await client.close()
+    }
+
+    // Against nats-server 2.12.0 and later the client takes servers only from the INFO after
+    // the first PONG: an INFO before that PONG is not used, also when the wait then fails.
+    func testInfoBeforePongIsNotUsedWhenTheWaitFails() async throws {
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        for name in ["-ERR during the wait", "connection lost during the wait"] {
+            let seed = try tlsAfterInfo(version: "2.12.0") {
+                $0.beforeFirstPong = FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"])
+                if name.hasPrefix("-ERR") {
+                    $0.afterFirstPong = "-ERR 'Authorization Violation'\r\n"
+                }
+            }
+            let client = tlsClient(seed.port).build()
+            let connecting = Task { await result(within: 10) { try await client.connect() } }
+            if !name.hasPrefix("-ERR") {
+                let answered = try await eventually { seed.lines.contains("PING") }
+                XCTAssertTrue(answered, "\(name): setup: no PING")
+                seed.closeConnection(0)
+            }
+            let connected = await connecting.value
+            guard case .failure? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertEqual(peer.connections.count, 0, "\(name): dialed a server of that INFO")
+            try? await client.close()
+        }
+    }
+
+    // The -ERR that refuses CONNECT ends the attempt: an INFO after it is not used.
+    func testInfoAfterTheErrorOfAFailedAttemptIsNotUsed() async throws {
+        // TLS after INFO: a failed attempt adds no servers
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        let seed = try tlsAfterInfo {
+            $0.firstPingReply =
+                "-ERR 'Authorization Violation'\r\n"
+                + FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"])
+        }
+        let client = tlsClient(seed.port).retryOnfailedConnect().build()
+        try await client.connect()
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await client.close()
+        XCTAssertGreaterThan(seed.connections.count, 1, "TLS: setup: the client did not retry")
+        XCTAssertEqual(peer.connections.count, 0, "TLS: dialed a server of a failed attempt")
+
+        // no TLS upgrade: the servers of the first INFO are used, not those of the later INFO
+        let listed = try fake(.init(greeting: FakeNatsServer.info()))
+        let later = try fake(.init(greeting: FakeNatsServer.info()))
+        let plainSeed = try fake(
+            .init(
+                greeting: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(listed.port)"]),
+                firstPingReply: "-ERR 'Authorization Violation'\r\n"
+                    + FakeNatsServer.info(connectUrls: ["127.0.0.1:\(later.port)"])))
+        let plainClient = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(plainSeed.port)")!)
+            .build()
+        let connected = await result(within: 10) { try await plainClient.connect() }
+        guard case .success? = connected else {
+            return XCTFail("plaintext: connect: \(String(describing: connected))")
+        }
+        XCTAssertEqual(plainClient.connectedUrl?.port, listed.port, "plaintext")
+        XCTAssertEqual(later.connections.count, 0, "plaintext: dialed a server of the later INFO")
+        try await plainClient.close()
     }
 }
