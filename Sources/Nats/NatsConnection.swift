@@ -846,7 +846,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             try await channel.eventLoop.submit {
                 // No TLS upgrade follows: the servers this INFO lists are used, also when the
                 // attempt fails later, and the bytes that arrived after it are handled now.
-                self.updateServersList(info: info)
+                self.updateServersList(info: info, replacing: false)
                 guard channel.isActive else {
                     throw NatsError.ClientError.connectionClosed
                 }
@@ -1198,13 +1198,23 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         return (bootstrap, upgradePromise)
     }
 
-    private func updateServersList(info: ServerInfo) {
+    /// Uses the servers that `info`, received on the current connection, lists: as more
+    /// discovered servers for the first INFO of a connection, and in place of the discovered
+    /// servers for a later one, `replacing` them. An INFO without servers changes nothing.
+    private func updateServersList(info: ServerInfo, replacing: Bool = true) {
         guard let connectUrls = info.connectUrls, let current = current.withLockedValue({ $0 })
         else {
             return
         }
-        pool.withLockedValue {
-            $0.add(connectUrls, websocket: current.server.url.isWebsocket, tls: current.tls)
+        let websocket = current.server.url.isWebsocket
+        pool.withLockedValue { pool in
+            if replacing {
+                pool.replace(
+                    connectUrls, websocket: websocket, tls: current.tls,
+                    current: current.server.key)
+            } else {
+                pool.add(connectUrls, websocket: websocket, tls: current.tls)
+            }
         }
     }
 
