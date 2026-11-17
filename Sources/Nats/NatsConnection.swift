@@ -595,10 +595,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         to s: URL, info: ServerInfo, on channel: Channel
     ) async throws {
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
-            let tlsConfig = try makeTLSConfig()
-            let sslContext = try NIOSSLContext(configuration: tlsConfig)
-            let sslHandler = try NIOSSLClientHandler(
-                context: sslContext, serverHostname: s.host)
+            let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
             // already being on the event loop at construction time.
@@ -650,6 +647,22 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
 
         try await sendClientConnectInit(on: channel)
+    }
+
+    private func makeSSLHandler(for server: URL) throws -> NIOSSLClientHandler {
+        let sslContext = try NIOSSLContext(configuration: makeTLSConfig())
+        return try NIOSSLClientHandler(
+            context: sslContext, serverHostname: tlsServerName(for: server))
+    }
+
+    /// The name the certificate of `server` is verified against, also sent as SNI. An IP
+    /// address is neither, as SNI cannot carry one: the certificate must then be valid for that
+    /// address.
+    private func tlsServerName(for server: URL) -> String? {
+        guard let host = server.host, (try? SocketAddress(ipAddress: host, port: 0)) == nil else {
+            return nil
+        }
+        return host
     }
 
     private func makeTLSConfig() throws -> TLSConfiguration {
@@ -805,11 +818,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 if self.requireTls && self.tlsFirst {
                     upgradePromise.succeed(())
                     do {
-                        let tlsConfig = try self.makeTLSConfig()
-                        let sslContext = try NIOSSLContext(
-                            configuration: tlsConfig)
-                        let sslHandler = try NIOSSLClientHandler(
-                            context: sslContext, serverHostname: server.host!)
+                        let sslHandler = try self.makeSSLHandler(for: server)
                         do {
                             try channel.pipeline.syncOperations.addHandler(sslHandler)
                         } catch {
@@ -863,11 +872,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
                         if server.scheme == "wss" {
                             do {
-                                let tlsConfig = try self.makeTLSConfig()
-                                let sslContext = try NIOSSLContext(
-                                    configuration: tlsConfig)
-                                let sslHandler = try NIOSSLClientHandler(
-                                    context: sslContext, serverHostname: server.host!)
+                                let sslHandler = try self.makeSSLHandler(for: server)
                                 // The sync methods here are safe because we're on the channel event loop
                                 // due to the promise originating on the event loop of the channel.
                                 try channel.pipeline.syncOperations.addHandler(sslHandler)
