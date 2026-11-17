@@ -212,7 +212,8 @@ public enum NatsError {
     }
 
     /// The cause of ``ConnectError/tlsFailure(_:)`` when the client asks for TLS and the
-    /// connection to a server cannot have it: the server's URL is `ws://`.
+    /// connection to a server cannot have it: the server's URL is `ws://`, or its INFO
+    /// neither requires nor offers TLS.
     internal struct TlsNotOffered: Error, CustomStringConvertible {
         let description: String
     }

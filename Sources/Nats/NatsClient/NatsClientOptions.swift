@@ -148,8 +148,9 @@ public class NatsClientOptions {
     /// Indicates whether the client requires an SSL connection.
     ///
     /// It asks for TLS for every server: the servers in ``urls(_:)``, the servers the cluster
-    /// reports, and every reconnect. A server that cannot do TLS is not connected to, and
-    /// nothing a server sends turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
+    /// reports, and every reconnect. A server whose INFO offers no TLS fails the attempt with
+    /// ``NatsError/ConnectError/tlsFailure(_:)`` before CONNECT, and nothing a server sends
+    /// turns TLS off. A `tls://` or `wss://` URL in ``urls(_:)``,
     /// ``withTlsFirst()``, ``rootCertificates(_:)`` and ``clientCertificate(_:_:)`` ask for
     /// TLS for every server too. A `ws://` URL is then refused, as it cannot be upgraded to TLS;
     /// `wss://` is the form with TLS. ``tlsOptional()`` cannot be set together with this option.

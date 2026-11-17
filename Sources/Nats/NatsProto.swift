@@ -215,6 +215,8 @@ struct ServerInfo: Codable, Equatable {
     let authRequired: Bool?
     /// If this is set, then the server must authenticate using TLS.
     let tlsRequired: Bool?
+    /// If this is set, the server accepts TLS without requiring it.
+    let tlsAvailable: Bool?
     /// Maximum payload size that the server will accept.
     let maxPayload: UInt
     /// The protocol version in use.
@@ -247,6 +249,7 @@ struct ServerInfo: Codable, Equatable {
         case version
         case authRequired = "auth_required"
         case tlsRequired = "tls_required"
+        case tlsAvailable = "tls_available"
         case maxPayload = "max_payload"
         case proto
         case clientId = "client_id"
