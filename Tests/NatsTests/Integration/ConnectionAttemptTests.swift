@@ -92,6 +92,8 @@ class ConnectionAttemptTests: XCTestCase {
         ),
         ("testLateHappyEyeballsWinnerIsUsed", testLateHappyEyeballsWinnerIsUsed),
         ("testResumeAfterFailedAttempts", testResumeAfterFailedAttempts),
+        ("testInfoBeforePongIsProcessed", testInfoBeforePongIsProcessed),
+        ("testOkBeforePongDoesNotCompleteConnect", testOkBeforePongDoesNotCompleteConnect),
     ]
 
     private var servers: [FakeNatsServer] = []
@@ -901,5 +903,51 @@ class ConnectionAttemptTests: XCTestCase {
                 XCTFail("round \(round): \(error)")
             }
         }
+    }
+
+    func testInfoBeforePongIsProcessed() async throws {
+        let info = FakeNatsServer.info(lameDuckMode: true)
+        let variants: [(String, Bool, (inout FakeNatsServer.Script) -> Void)] = [
+            ("separate writes", false, { $0.beforeFirstPong = info }),
+            ("one write", false, { $0.firstPingReply = info + "PONG\r\n" }),
+            ("one write over TLS", true, { $0.firstPingReply = info + "PONG\r\n" }),
+        ]
+        for (name, tls, configure) in variants {
+            var script = FakeNatsServer.Script(
+                greeting: FakeNatsServer.info(tlsRequired: tls),
+                tls: tls ? try FakeNatsServer.tlsContext() : nil)
+            configure(&script)
+            let server = try fake(script)
+            let options = NatsClientOptions()
+                .url(URL(string: "\(tls ? "tls://localhost" : "nats://127.0.0.1"):\(server.port)")!)
+            let client = (tls ? options.rootCertificates(rootCA) : options).build()
+            let lameDuck = XCTestExpectation(description: "\(name): INFO before PONG was lost")
+            client.on(.lameDuckMode) { _ in lameDuck.fulfill() }
+
+            let connected = await result(within: 10) { try await client.connect() }
+            guard case .success? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            await fulfillment(of: [lameDuck], timeout: 2)
+            try await client.close()
+        }
+    }
+
+    func testOkBeforePongDoesNotCompleteConnect() async throws {
+        let server = try fake(
+            .init(
+                greeting: FakeNatsServer.info(),
+                firstPingReply: "+OK\r\n-ERR 'Authorization Violation'\r\n"))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(server.port)")!)
+            .build()
+
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .failure(let error)? = connected else {
+            try? await client.close()
+            return XCTFail("connect must fail on -ERR, got \(String(describing: connected))")
+        }
+        XCTAssertTrue(error is NatsError.ServerError, "\(error)")
     }
 }

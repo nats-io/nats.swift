@@ -211,7 +211,7 @@ final class FakeNatsServer: Sendable {
     /// An INFO line. `connectUrls: nil` leaves the key out.
     static func info(
         tlsRequired: Bool = false, tlsAvailable: Bool = false, connectUrls: [String]? = [],
-        connectInfo: Bool = false, nonce: String? = nil
+        connectInfo: Bool = false, nonce: String? = nil, lameDuckMode: Bool = false
     ) -> String {
         var info: [String: Any] = [
             "server_id": "FAKE", "server_name": "fake", "version": "2.14.0", "proto": 1,
@@ -227,6 +227,9 @@ final class FakeNatsServer: Sendable {
         }
         if let nonce {
             info["nonce"] = nonce
+        }
+        if lameDuckMode {
+            info["ldm"] = true
         }
         let json = try! JSONSerialization.data(withJSONObject: info)
         return "INFO \(String(decoding: json, as: UTF8.self))\r\n"

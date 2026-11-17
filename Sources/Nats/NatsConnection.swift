@@ -319,21 +319,27 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             parseRemainder.withLockedValue { $0 = remainder }
         }
         for op in parseResult.ops {
-            let connEstablishedCont = connectionEstablishedContinuation.withLockedValue { cont in
-                let toResume = cont
-                cont = nil
-                return toResume
-            }
-
-            if let continuation = connEstablishedCont {
-                logger.debug("conn established")
-                switch op {
-                case .error(let err):
-                    continuation.resume(throwing: err)
-                default:
-                    continuation.resume()
+            // CONNECT is answered by PONG and refused by -ERR. Any other line, such as an INFO
+            // the server sends first, is handled as usual.
+            switch op {
+            case .pong, .error:
+                let connEstablishedCont = connectionEstablishedContinuation.withLockedValue {
+                    cont in
+                    let toResume = cont
+                    cont = nil
+                    return toResume
                 }
-                continue
+                if let continuation = connEstablishedCont {
+                    if case .error(let err) = op {
+                        continuation.resume(throwing: err)
+                    } else {
+                        logger.debug("conn established")
+                        continuation.resume()
+                    }
+                    continue
+                }
+            default:
+                break
             }
 
             switch op {
