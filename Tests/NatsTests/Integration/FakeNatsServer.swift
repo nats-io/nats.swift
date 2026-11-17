@@ -23,6 +23,7 @@ import XCTest
 /// bytes), optionally switches the connection to TLS, then answers `PING` with `PONG`
 /// and records every protocol line the client sends. The first raw bytes of each connection
 /// are recorded before any TLS processing, so a test can tell a ClientHello from plaintext.
+/// Each connection can follow a script of its own.
 final class FakeNatsServer: Sendable {
     struct Script: Sendable {
         /// Bytes written right after accept, or `greetingDelay` seconds later.
@@ -40,6 +41,14 @@ final class FakeNatsServer: Sendable {
         /// Bytes written after the second PONG.
         var afterSecondPong: String? = nil
         var answersPing = true
+        /// The server closes the connection right after the greeting, as a full server does, or
+        /// `closeDelay` seconds later.
+        var closeAfterGreeting = false
+        var closeDelay: TimeInterval = 0
+        /// After the first PONG the server reads nothing more from the connection: later PINGs
+        /// are not answered, and a TLS close the client starts does not complete until
+        /// ``FakeNatsServer/closeConnection(_:)``.
+        var stopsReadingAfterFirstPong = false
         /// Plaintext written `count` times, `interval` seconds apart, right after the greeting
         /// of the connection with index `sprayOnConnection`, until that connection closes. It
         /// bypasses the server's TLS.
@@ -61,14 +70,26 @@ final class FakeNatsServer: Sendable {
     private let children: NIOLockedValueBox<[Channel]>
     private let stopped = NIOLockedValueBox(false)
 
-    /// With `accepting: false` the listener has a backlog of 1 and accepts nothing until
-    /// ``startAccepting()``; once ``fillBacklog()`` has filled the queue, further TCP connects
-    /// stay pending.
-    init(
+    /// Every connection follows `script`.
+    convenience init(
         _ script: Script, host: String = "127.0.0.1", port: Int = 0, accepting: Bool = true
     )
         throws
     {
+        try self.init(scripts: [script], host: host, port: port, accepting: accepting)
+    }
+
+    /// Connection `i` follows `scripts[i]`, and every later connection the last script.
+    ///
+    /// With `accepting: false` the listener has a backlog of 1 and accepts nothing until
+    /// ``startAccepting()``; once ``fillBacklog()`` has filled the queue, further TCP connects
+    /// stay pending.
+    init(
+        scripts: [Script], host: String = "127.0.0.1", port: Int = 0, accepting: Bool = true
+    )
+        throws
+    {
+        precondition(!scripts.isEmpty, "a fake server needs a script")
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let state = NIOLockedValueBox<[Connection]>([])
         let children = NIOLockedValueBox<[Channel]>([])
@@ -83,6 +104,7 @@ final class FakeNatsServer: Sendable {
                 }
                 children.withLockedValue { $0.append(channel) }
                 let recorder = RawRecorder(state: state, index: index)
+                let script = scripts[min(index, scripts.count - 1)]
                 do {
                     try channel.pipeline.syncOperations.addHandler(recorder)
                     try channel.pipeline.syncOperations.addHandler(
@@ -132,10 +154,18 @@ final class FakeNatsServer: Sendable {
         connections.flatMap { $0.lines }
     }
 
-    /// Closes one accepted connection; the listener keeps accepting.
+    /// Closes one accepted connection; the listener keeps accepting. A connection that stopped
+    /// reading reads again first, so that a TLS close completes.
     func closeConnection(_ index: Int) {
         let child = children.withLockedValue { $0.indices.contains(index) ? $0[index] : nil }
+        _ = try? child?.setOption(ChannelOptions.autoRead, value: true).wait()
         try? child?.close().wait()
+    }
+
+    /// Writes `text` on one accepted connection, inside TLS when that connection uses TLS.
+    func write(_ text: String, on index: Int) {
+        let child = children.withLockedValue { $0.indices.contains(index) ? $0[index] : nil }
+        try? child?.writeAndFlush(ByteBuffer(string: text)).wait()
     }
 
     /// Closes the listener and every accepted connection. Safe to call more than once.
@@ -155,7 +185,7 @@ final class FakeNatsServer: Sendable {
     /// An INFO line. `connectUrls: nil` leaves the key out.
     static func info(
         tlsRequired: Bool = false, tlsAvailable: Bool = false, connectUrls: [String]? = [],
-        connectInfo: Bool = false
+        connectInfo: Bool = false, nonce: String? = nil
     ) -> String {
         var info: [String: Any] = [
             "server_id": "FAKE", "server_name": "fake", "version": "2.14.0", "proto": 1,
@@ -168,6 +198,9 @@ final class FakeNatsServer: Sendable {
         }
         if connectInfo {
             info["connect_info"] = true
+        }
+        if let nonce {
+            info["nonce"] = nonce
         }
         let json = try! JSONSerialization.data(withJSONObject: info)
         return "INFO \(String(decoding: json, as: UTF8.self))\r\n"
@@ -230,6 +263,7 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
     private var buffer = ByteBuffer()
     private var pendingPayload = 0
     private var pongs = 0
+    private var stoppedReading = false
 
     init(
         script: FakeNatsServer.Script, state: NIOLockedValueBox<[FakeNatsServer.Connection]>,
@@ -260,6 +294,16 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
             addTls(context: context, tls: tls)
         }
         write(context: context, script.greeting)
+        if script.closeAfterGreeting {
+            if script.closeDelay > 0 {
+                let channel = context.channel
+                let delay = TimeAmount.nanoseconds(Int64(script.closeDelay * 1_000_000_000))
+                context.eventLoop.scheduleTask(in: delay) { channel.close(promise: nil) }
+            } else {
+                context.close(promise: nil)
+            }
+            return
+        }
         if let tls = script.tls, !script.tlsFirst {
             addTls(context: context, tls: tls)
         }
@@ -292,9 +336,12 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard !stoppedReading else {
+            return
+        }
         var incoming = unwrapInboundIn(data)
         buffer.writeBuffer(&incoming)
-        while true {
+        while !stoppedReading {
             if pendingPayload > 0 {
                 let skipped = min(pendingPayload, buffer.readableBytes)
                 buffer.moveReaderIndex(forwardBy: skipped)
@@ -327,6 +374,11 @@ private final class ScriptHandler: ChannelInboundHandler, @unchecked Sendable {
                     write(context: context, after)
                 } else if pongs == 2, let after = script.afterSecondPong {
                     write(context: context, after)
+                }
+                if pongs == 1 && script.stopsReadingAfterFirstPong {
+                    stoppedReading = true
+                    buffer.clear()
+                    _ = context.channel.setOption(ChannelOptions.autoRead, value: false)
                 }
             }
         }
