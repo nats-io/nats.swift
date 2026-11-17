@@ -13,6 +13,7 @@
 
 import Foundation
 import Logging
+import NIO
 import XCTest
 
 @testable import Nats
@@ -72,6 +73,21 @@ class ConnectionAttemptTests: XCTestCase {
             testHandshakeFailureWhileReadingTheKeyFileIsATlsFailure
         ),
         ("testLinesAfterInfoAreProcessedOnPlaintext", testLinesAfterInfoAreProcessedOnPlaintext),
+        ("testFailedAttemptConnectionIsClosed", testFailedAttemptConnectionIsClosed),
+        (
+            "testAttemptEndedByPreviousConnectionClosingClosesItsConnection",
+            testAttemptEndedByPreviousConnectionClosingClosesItsConnection
+        ),
+        (
+            "testAttemptEndedByLineOnPreviousConnectionClosesItsConnection",
+            testAttemptEndedByLineOnPreviousConnectionClosesItsConnection
+        ),
+        (
+            "testNextServerIsUsedAfterTlsFirstAttemptFailsOnFirstLine",
+            testNextServerIsUsedAfterTlsFirstAttemptFailsOnFirstLine
+        ),
+        ("testLateHappyEyeballsWinnerIsUsed", testLateHappyEyeballsWinnerIsUsed),
+        ("testResumeAfterFailedAttempts", testResumeAfterFailedAttempts),
     ]
 
     private var servers: [FakeNatsServer] = []
@@ -618,5 +634,227 @@ class ConnectionAttemptTests: XCTestCase {
         XCTAssertTrue(
             server.lines.contains("PONG"), "PING after INFO not answered: \(server.lines)")
         try await client.close()
+    }
+
+    func testFailedAttemptConnectionIsClosed() async throws {
+        // answers the client's first PING with an error and leaves the connection open
+        let refusing = try fake(
+            .init(
+                greeting: FakeNatsServer.info(),
+                firstPingReply: "-ERR 'Authorization Violation'\r\n"))
+        let server = try fake(.init(greeting: FakeNatsServer.info()))
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "nats://127.0.0.1:\(refusing.port)")!,
+                URL(string: "nats://127.0.0.1:\(server.port)")!,
+            ])
+            .retainServersOrder()
+            .build()
+        let disconnected = XCTestExpectation(description: "client was disconnected")
+        disconnected.isInverted = true
+        client.on(.disconnected) { _ in disconnected.fulfill() }
+
+        let connected = await result(within: 10) { try await client.connect() }
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        let isClosed = try await closed(0, on: refusing)
+        XCTAssertTrue(isClosed, "connection of the failed attempt left open")
+
+        // the end of that connection must not touch the connection the client uses
+        refusing.shutdown()
+        await fulfillment(of: [disconnected], timeout: 0.5)
+        XCTAssertEqual(server.connections.count, 1)
+        XCTAssertEqual(server.connections.first?.closed, false, "connection in use was closed")
+        try await client.close()
+    }
+
+    func testAttemptEndedByPreviousConnectionClosingClosesItsConnection() async throws {
+        try await checkAttemptEndedThroughPreviousConnection { server in
+            server.closeConnection(0)
+        }
+    }
+
+    func testAttemptEndedByLineOnPreviousConnectionClosesItsConnection() async throws {
+        try await checkAttemptEndedThroughPreviousConnection { server in
+            // read inside TLS while the client closes that connection
+            server.write("PING\r\n", on: 0)
+            // then let that close complete, well before the next attempt starts
+            try await Task.sleep(nanoseconds: 200_000_000)
+            server.closeConnection(0)
+        }
+    }
+
+    /// The client uses TLS after INFO on connection 0, stops getting PONGs there and closes it;
+    /// that TLS close waits for the server. Connection 1, the reconnect attempt, gets no INFO, and
+    /// `endAttempt` ends the attempt through connection 0. The client must close connection 1,
+    /// and what is written on connection 1 once the client has reconnected must not be acted on.
+    private func checkAttemptEndedThroughPreviousConnection(
+        _ endAttempt: (FakeNatsServer) async throws -> Void
+    ) async throws {
+        let other = try fake(.init(greeting: FakeNatsServer.info()))
+        let tls = try FakeNatsServer.tlsContext()
+        let server = try FakeNatsServer(scripts: [
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true), tls: tls,
+                stopsReadingAfterFirstPong: true),
+            .init(),
+            // a reconnect keeps the count of unanswered PINGs: the second PONG resets it
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true), tls: tls,
+                firstPingReply: "PONG\r\nPONG\r\n"),
+        ])
+        servers.append(server)
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(server.port)")!)
+            .rootCertificates(rootCA)
+            .pingInterval(0.25)
+            .reconnectWait(0.5)
+            .build()
+        try await client.connect()
+        let sub = try await client.subscribe(subject: "foo")
+        let reconnected = XCTestExpectation(description: "client did not reconnect")
+        reconnected.assertForOverFulfill = false
+        client.on(.connected) { _ in reconnected.fulfill() }
+
+        for _ in 0..<100 where server.connections.count < 2 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(server.connections.count, 2, "setup: no reconnect attempt")
+        try await endAttempt(server)
+        await fulfillment(of: [reconnected], timeout: 10)
+
+        let isClosed = try await closed(1, on: server)
+        XCTAssertTrue(isClosed, "connection of the failed attempt left open")
+
+        // the server as host:port and with a scheme, so that either form of entry counts
+        let urls = ["127.0.0.1:\(other.port)", "nats://127.0.0.1:\(other.port)"]
+        server.write(FakeNatsServer.info(connectUrls: urls) + "MSG foo 1 5\r\nlater\r\n", on: 1)
+        let received = await result(within: 1) { try await sub.makeAsyncIterator().next() }
+        if case .success(let msg?)? = received {
+            XCTFail(
+                "message read on the connection of the failed attempt was delivered: "
+                    + String(decoding: msg.payload ?? Data(), as: UTF8.self))
+        }
+        // once the server is gone the client tries the servers it knows
+        server.shutdown()
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertEqual(
+            other.connections.count, 0,
+            "dialed a server named on the connection of the failed attempt")
+        try? await client.close()
+    }
+
+    // With TLS first, the close of the failed attempt's connection takes a TLS close; the next
+    // server is tried only once it is done.
+    func testNextServerIsUsedAfterTlsFirstAttemptFailsOnFirstLine() async throws {
+        let tls = try FakeNatsServer.tlsContext()
+        let firstLines = [
+            ("PING", "PING\r\n" + FakeNatsServer.info(tlsRequired: true)),
+            ("INFO that does not decode", "INFO {\"server_id\":\r\n"),
+        ]
+        for (label, first) in firstLines {
+            let failing = try fake(.init(greeting: first, tls: tls, tlsFirst: true))
+            let next = try fake(
+                .init(greeting: FakeNatsServer.info(tlsRequired: true), tls: tls, tlsFirst: true))
+            let client = NatsClientOptions()
+                .urls([
+                    URL(string: "tls://localhost:\(failing.port)")!,
+                    URL(string: "tls://localhost:\(next.port)")!,
+                ])
+                .retainServersOrder()
+                .requireTls()
+                .withTlsFirst()
+                .rootCertificates(rootCA)
+                .build()
+
+            let connected = await result(within: 10) { try await client.connect() }
+            guard case .success? = connected else {
+                XCTFail("\(label): next server not used: \(String(describing: connected))")
+                try? await client.close()
+                continue
+            }
+            XCTAssertEqual(next.connections.count, 1, label)
+            try await client.close()
+        }
+    }
+
+    // NIO dials every address of a host (Happy Eyeballs) through the same channel initializer.
+    // Here the ::1 connect completes only after the 127.0.0.1 attempt was started and refused;
+    // the channel that wins must be the one the client uses.
+    func testLateHappyEyeballsWinnerIsUsed() async throws {
+        let server = try FakeNatsServer(
+            .init(greeting: FakeNatsServer.info()), host: "::1", accepting: false)
+        servers.append(server)
+        let dummies = server.fillBacklog()
+        defer {
+            for dummy in dummies {
+                dummy.close(promise: nil)
+            }
+        }
+        XCTAssertFalse(dummies.isEmpty, "setup: could not fill the accept queue")
+        // The client's connect to ::1 must stay pending while the queue is full. Some systems
+        // reset a connect to a full queue instead; this case cannot be built there.
+        do {
+            let extra = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .connectTimeout(.milliseconds(300))
+                .connect(host: "::1", port: server.port).get()
+            extra.close(promise: nil)
+            throw XCTSkip("a connect to the full accept queue completed")
+        } catch ChannelError.connectTimeout(_) {
+            // pending, as needed
+        } catch let skip as XCTSkip {
+            throw skip
+        } catch {
+            throw XCTSkip("a connect to the full accept queue did not stay pending: \(error)")
+        }
+
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://localhost:\(server.port)")!)
+            .build()
+        async let connected = result(within: 15) { try await client.connect() }
+        // later than NIO's 250 ms delay before it tries the next address
+        try await Task.sleep(nanoseconds: 700_000_000)
+        server.startAccepting()
+        let outcome = await connected
+        guard case .success? = outcome else {
+            return XCTFail(
+                "the connection that won on the first address was not used: "
+                    + "\(String(describing: outcome)), accepted \(server.connections.count)")
+        }
+        try await client.close()
+    }
+
+    // suspend(), resume() and close() work while the client reconnects to a server that is
+    // gone: they need the channel of the last connection, which failed attempts leave in place.
+    func testResumeAfterFailedAttempts() async throws {
+        for round in 0..<8 {
+            let server = try fake(.init(greeting: FakeNatsServer.info()))
+            let client = NatsClientOptions()
+                .url(URL(string: "nats://127.0.0.1:\(server.port)")!)
+                .reconnectWait(0.05)
+                .build()
+            try await client.connect()
+            server.shutdown()
+            // lands in an attempt in some rounds and in the wait between attempts in others
+            try await Task.sleep(nanoseconds: UInt64(300_000_000 + 13_000_000 * round))
+
+            do {
+                try await client.suspend()
+            } catch is CancellationError {
+                // suspend() rethrows how the reconnect task it cancelled ended when that task
+                // was sleeping between rounds; this test is not about that
+                try await client.close()
+                continue
+            } catch {
+                XCTFail("round \(round): suspend: \(error)")
+            }
+            do {
+                try await client.resume()
+                try await client.close()
+            } catch {
+                XCTFail("round \(round): \(error)")
+            }
+        }
     }
 }

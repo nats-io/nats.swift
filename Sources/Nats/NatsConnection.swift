@@ -508,30 +508,54 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         parseRemainder.withLockedValue { $0 = nil }
         _inputBuffer.withLockedValue { $0.clear() }
         var infoTask: Task<(), Never>? = nil
-        let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
-            serverInfoContinuation.withLockedValue { $0 = continuation }
-            infoTask = Task {
-                await withTaskCancellationHandler {
-                    do {
-                        let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
+        // the channel this attempt dialed
+        let dialed = NIOLockedValueBox<Channel?>(nil)
+        do {
+            let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
+                serverInfoContinuation.withLockedValue { $0 = continuation }
+                infoTask = Task {
+                    await withTaskCancellationHandler {
+                        do {
+                            let (bootstrap, upgradePromise) = self.bootstrapConnection(to: s)
 
-                        guard let host = s.host, let port = s.port else {
-                            upgradePromise.succeed()  // avoid promise leaks
-                            throw NatsError.ConnectError.invalidConfig("no url")
+                            guard let host = s.host, let port = s.port else {
+                                upgradePromise.succeed()  // avoid promise leaks
+                                throw NatsError.ConnectError.invalidConfig("no url")
+                            }
+
+                            let connect = bootstrap.connect(host: host, port: port)
+                            connect.cascadeFailure(to: upgradePromise)
+                            let dialedChannel = try await connect.get()
+                            dialed.withLockedValue { $0 = dialedChannel }
+                            self.channel = dialedChannel
+
+                            guard let channel = self.channel else {
+                                upgradePromise.succeed()  // avoid promise leaks
+                                throw NatsError.ClientError.internalError("empty channel")
+                            }
+
+                            try await upgradePromise.futureResult.get()
+                            self.batchBuffer = BatchBuffer(channel: channel)
+                        } catch {
+                            let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
+                                .serverInfoContinuation.withLockedValue { cont in
+                                    guard let c = cont else { return nil }
+                                    cont = nil
+                                    return c
+                                }
+                            if let continuation = continuationToResume {
+                                continuation.resume(throwing: error)
+                            }
                         }
-
-                        let connect = bootstrap.connect(host: host, port: port)
-                        connect.cascadeFailure(to: upgradePromise)
-                        self.channel = try await connect.get()
-
-                        guard let channel = self.channel else {
-                            upgradePromise.succeed()  // avoid promise leaks
-                            throw NatsError.ClientError.internalError("empty channel")
+                    } onCancel: {
+                        logger.debug("Connection task cancelled")
+                        // Clean up resources
+                        if let channel = self.channel {
+                            channel.close(mode: .all, promise: nil)
+                            self.channel = nil
                         }
+                        self.batchBuffer = nil
 
-                        try await upgradePromise.futureResult.get()
-                        self.batchBuffer = BatchBuffer(channel: channel)
-                    } catch {
                         let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
                             .serverInfoContinuation.withLockedValue { cont in
                                 guard let c = cont else { return nil }
@@ -539,36 +563,38 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                                 return c
                             }
                         if let continuation = continuationToResume {
-                            continuation.resume(throwing: error)
+                            continuation.resume(throwing: NatsError.ClientError.cancelled)
                         }
-                    }
-                } onCancel: {
-                    logger.debug("Connection task cancelled")
-                    // Clean up resources
-                    if let channel = self.channel {
-                        channel.close(mode: .all, promise: nil)
-                        self.channel = nil
-                    }
-                    self.batchBuffer = nil
-
-                    let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
-                        .serverInfoContinuation.withLockedValue { cont in
-                            guard let c = cont else { return nil }
-                            cont = nil
-                            return c
-                        }
-                    if let continuation = continuationToResume {
-                        continuation.resume(throwing: NatsError.ClientError.cancelled)
                     }
                 }
             }
-        }
 
-        await infoTask?.value
-        self.serverInfo = info
-        guard let channel = self.channel else {
-            throw NatsError.ClientError.internalError("empty channel")
+            await infoTask?.value
+            self.serverInfo = info
+            guard let channel = dialed.withLockedValue({ $0 }) else {
+                throw NatsError.ClientError.internalError("empty channel")
+            }
+            try await completeConnection(to: s, info: info, on: channel)
+        } catch {
+            // The wait for INFO also ends when another channel closes or reads a line, and the
+            // dial of this attempt may still be running then: wait for it. Then close the channel
+            // it dialed and wait until it is closed, so that nothing it receives later reaches the
+            // next attempt or the connection that follows.
+            await infoTask?.value
+            if let channel = dialed.withLockedValue({ $0 }) {
+                channel.close(promise: nil)
+                try? await channel.closeFuture.get()
+            }
+            throw error
         }
+        self.connectedUrl = s
+    }
+
+    /// Upgrades the attempt's channel to TLS when needed, then sends CONNECT and waits for the
+    /// server's answer.
+    private func completeConnection(
+        to s: URL, info: ServerInfo, on channel: Channel
+    ) async throws {
         if (info.tlsRequired ?? false || self.requireTls) && !self.tlsFirst && s.scheme != "wss" {
             let tlsConfig = try makeTLSConfig()
             let sslContext = try NIOSSLContext(configuration: tlsConfig)
@@ -621,7 +647,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         }
 
         try await sendClientConnectInit(on: channel)
-        self.connectedUrl = s
     }
 
     private func makeTLSConfig() throws -> TLSConfiguration {
