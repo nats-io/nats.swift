@@ -83,6 +83,7 @@ class DiscoveredServersTests: XCTestCase {
         ),
         ("testLaterInfoReplacesDiscoveredServers", testLaterInfoReplacesDiscoveredServers),
         ("testConfiguredAndCurrentServersAreKept", testConfiguredAndCurrentServersAreKept),
+        ("testIgnoreDiscoveredServers", testIgnoreDiscoveredServers),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -877,5 +878,38 @@ class DiscoveredServersTests: XCTestCase {
                 URL(string: "nats://127.0.0.1:\(later.port)")!,
             ])
         try? await client.close()
+    }
+
+    func testIgnoreDiscoveredServers() async throws {
+        let peer = try fake(.init(greeting: FakeNatsServer.info()))
+        let listing = FakeNatsServer.info(connectUrls: ["127.0.0.1:\(peer.port)"])
+        let seed = try fake(.init(greeting: listing, afterFirstPong: listing))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(seed.port)")!)
+            .ignoreDiscoveredServers()
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        let rtt = await result(within: 5) { try await client.rtt() }
+        XCTAssertNotNil(try? rtt?.get(), "no PONG")
+        XCTAssertEqual(client.connectionHandler?.servers.count, 1)
+        seed.shutdown()
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        try? await client.close()
+        XCTAssertEqual(peer.connections.count, 0, "dialed a discovered server")
+
+        // no wait for the INFO after the first PONG
+        let tlsSeed = try tlsAfterInfo(version: "2.14.0") {
+            $0.afterFirstPong = FakeNatsServer.info(connectUrls: ["localhost:\(peer.port)"])
+            $0.afterFirstPongDelay = 6
+        }
+        let clientOverTls = tlsClient(tlsSeed.port).ignoreDiscoveredServers().build()
+        let start = Date()
+        let connected = await result(within: 10) { try await clientOverTls.connect() }
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2, "waited for the INFO")
+        try await clientOverTls.close()
     }
 }

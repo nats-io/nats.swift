@@ -28,6 +28,7 @@ public class NatsClientOptions {
     private var withTls = false
     private var tlsFirst = false
     private var isTlsOptional = false
+    private var ignoreDiscovered = false
     private var rootCertificate: URL? = nil
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
@@ -201,6 +202,16 @@ public class NatsClientOptions {
         return self
     }
 
+    /// By default the client also connects to the servers that a server reports in the
+    /// `connect_urls` of its INFO, the other servers of its cluster, with the transport and TLS
+    /// of the connection that reported them. With this option it connects only to the servers
+    /// set with ``url(_:)`` or ``urls(_:)``, and does not wait for the INFO that nats-server
+    /// 2.12.0 and later send after the first PONG.
+    public func ignoreDiscoveredServers() -> NatsClientOptions {
+        self.ignoreDiscovered = true
+        return self
+    }
+
     /// Indicates whether the client will retain the order of URLs to connect to provided in ``NatsClientOptions/urls(_:)``
     /// If not set, the client will randomize the server pool.
     public func retainServersOrder() -> NatsClientOptions {
@@ -234,7 +245,8 @@ public class NatsClientOptions {
             clientCertificate: clientCertificate,
             clientKey: clientKey,
             rootCertificate: rootCertificate,
-            retryOnFailedConnect: initialReconnect
+            retryOnFailedConnect: initialReconnect,
+            ignoreDiscoveredServers: ignoreDiscovered
         )
         return client
     }
