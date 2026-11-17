@@ -35,6 +35,7 @@ class TlsTests: XCTestCase {
         ("testTlsFirstAloneDoesTlsFirst", testTlsFirstAloneDoesTlsFirst),
         ("testRootCertificatesUseTls", testRootCertificatesUseTls),
         ("testClientCertificateUsesTls", testClientCertificateUsesTls),
+        ("testTlsServerNameUsesTls", testTlsServerNameUsesTls),
         ("testTlsUrlMakesEveryListedServerTls", testTlsUrlMakesEveryListedServerTls),
         ("testWssUrlWithTlsFirstConnects", testWssUrlWithTlsFirstConnects),
         ("testTlsOptionalDialsEachUrlByItsScheme", testTlsOptionalDialsEachUrlByItsScheme),
@@ -238,7 +239,8 @@ class TlsTests: XCTestCase {
 
     /// Lets a client built from `options` try to connect to a `localhost` URL of a server with
     /// `ip-only-cert.pem`, then checks that it fails within `timeout` with an error that says what
-    /// the client expected and what the certificate is issued for.
+    /// the client expected and what the certificate is issued for. The server is a configured
+    /// one, so the error points at `tlsServerName(_:)` and not at the cluster's advertised names.
     private func assertNotValidForName(
         _ options: NatsClientOptions, within timeout: TimeInterval = 5, _ message: String = "",
         file: StaticString = #filePath, line: UInt = #line
@@ -255,6 +257,13 @@ class TlsTests: XCTestCase {
         }
         XCTAssertTrue(
             "\(cause)".contains(Self.ipOnlyRefusal), "\(message) \(cause)", file: file, line: line)
+        XCTAssertTrue(
+            "\(cause)".contains(
+                "; tlsServerName(_:) sets the name every server is verified against"),
+            "\(message) \(cause)", file: file, line: line)
+        XCTAssertFalse(
+            "\(cause)".contains("client_advertise"), "\(message) \(cause)", file: file,
+            line: line)
     }
 
     /// Connects a client built from `options`, flushes and closes it, within 10 s.
@@ -408,6 +417,14 @@ class TlsTests: XCTestCase {
             NatsClientOptions()
                 .url(URL(string: "nats://localhost:\(server.port)")!)
                 .clientCertificate(pem("client-cert"), pem("client-key")), on: server)
+    }
+
+    func testTlsServerNameUsesTls() async throws {
+        let server = try fakeOfferingTls()
+        await assertStartsTls(
+            NatsClientOptions()
+                .url(URL(string: "nats://localhost:\(server.port)")!)
+                .tlsServerName("localhost"), on: server)
     }
 
     func testTlsUrlMakesEveryListedServerTls() async throws {
