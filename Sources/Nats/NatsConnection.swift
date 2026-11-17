@@ -1023,18 +1023,25 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// ``NatsClientOptions/verifyDiscoveredServersByIp()``, and else against the name it
     /// inherited, as one more address of a server the client already trusts. A discovered
     /// host name is verified against itself when it was learned on a connection with TLS, and
-    /// has no name otherwise: a name learned without TLS is not trusted.
+    /// has no name otherwise: a name learned without TLS is not trusted. One trailing dot is
+    /// stripped from every name.
     private func tlsName(for server: Server) -> String? {
         if let tlsServerName {
-            return tlsServerName
+            return Self.withoutTrailingDot(tlsServerName)
         }
         guard server.isDiscovered, let host = server.url.host else {
-            return server.url.host
+            return server.url.host.map(Self.withoutTrailingDot)
         }
         if Self.isIPAddress(host) {
             return verifyDiscoveredServersByIp ? host : server.inheritedName
         }
-        return server.learnedOverTls ? host : nil
+        return server.learnedOverTls ? Self.withoutTrailingDot(host) : nil
+    }
+
+    /// `name` without the one trailing dot of a rooted name: SNI carries a name without it, and
+    /// nats-server refuses a TLS handshake whose name ends in a dot.
+    private static func withoutTrailingDot(_ name: String) -> String {
+        name.hasSuffix(".") ? String(name.dropLast()) : name
     }
 
     /// Why the discovered server `server` cannot be connected to with TLS.

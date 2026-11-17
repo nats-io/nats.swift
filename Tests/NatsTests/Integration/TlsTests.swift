@@ -88,6 +88,7 @@ class TlsTests: XCTestCase {
             testNameMismatchIsReportedWhileCredentialsAreRead
         ),
         ("testNameMismatchIsReportedOnReconnect", testNameMismatchIsReportedOnReconnect),
+        ("testRootedNameConnects", testRootedNameConnects),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -926,5 +927,19 @@ class TlsTests: XCTestCase {
                 server.connections.dropFirst(retry ? 0 : 1).flatMap { $0.lines }, [],
                 "\(name): a refused connection received lines")
         }
+    }
+
+    // nats-server refuses a TLS handshake whose SNI ends in a dot.
+    func testRootedNameConnects() async throws {
+        let server = try natsServer("tls_ip", pems: ["server-cert", "server-key", "rootCA"])
+        await assertConnects(
+            NatsClientOptions()
+                .url(URL(string: "tls://localhost.:\(server.port!)")!)
+                .rootCertificates(rootCA), "tls://localhost.")
+        await assertConnects(
+            NatsClientOptions()
+                .url(URL(string: "tls://127.0.0.1:\(server.port!)")!)
+                .rootCertificates(rootCA)
+                .tlsServerName("localhost."), "tlsServerName(_:)")
     }
 }

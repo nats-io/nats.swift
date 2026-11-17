@@ -152,6 +152,10 @@ class DiscoveredServersTests: XCTestCase {
             "testNameErrorsOfADiscoveredIpPointAtVerifyDiscoveredServersByIp",
             testNameErrorsOfADiscoveredIpPointAtVerifyDiscoveredServersByIp
         ),
+        (
+            "testRootedNamesAreSentWithoutTheTrailingDot",
+            testRootedNamesAreSentWithoutTheTrailingDot
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -1709,5 +1713,43 @@ class DiscoveredServersTests: XCTestCase {
         }
         XCTAssertTrue(
             mismatch.contains("(client_advertise in nats-server), or " + remedy), mismatch)
+    }
+
+    func testRootedNamesAreSentWithoutTheTrailingDot() async throws {
+        let peer = try tlsAfterInfo()
+        let seed = try tlsSeed(listing: ["localhost.:\(peer.port)"])
+        let client = tlsClient(seed.port).build()
+        let reconnected = try await reconnects(client, from: seed)
+        XCTAssertTrue(reconnected, "client did not reconnect to the discovered server")
+        XCTAssertEqual(client.connectedUrl, URL(string: "tls://localhost.:\(peer.port)"))
+        XCTAssertEqual(peer.connections.first?.serverName, "localhost", "SNI of a discovered name")
+        try? await client.close()
+
+        // an address discovered through a rooted configured name inherits the name without it
+        let ipPeer = try tlsAfterInfo()
+        let rootedSeed = try tlsSeed(listing: ["127.0.0.1:\(ipPeer.port)"])
+        let rootedClient = NatsClientOptions()
+            .url(URL(string: "tls://localhost.:\(rootedSeed.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .reconnectWait(0.1)
+            .build()
+        let toIp = try await reconnects(rootedClient, from: rootedSeed)
+        XCTAssertEqual(rootedSeed.connections.first?.serverName, "localhost", "SNI of the URL")
+        XCTAssertTrue(toIp, "client did not reconnect to the discovered address")
+        XCTAssertEqual(ipPeer.connections.first?.serverName, "localhost", "SNI of the address")
+        try? await rootedClient.close()
+
+        let named = try tlsAfterInfo()
+        let namedClient = NatsClientOptions()
+            .url(URL(string: "tls://127.0.0.1:\(named.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .tlsServerName("localhost.")
+            .build()
+        let connected = await result(within: 10) { try await namedClient.connect() }
+        XCTAssertEqual(named.connections.first?.serverName, "localhost", "SNI of tlsServerName(_:)")
+        guard case .success? = connected else {
+            return XCTFail("connect: \(String(describing: connected))")
+        }
+        try await namedClient.close()
     }
 }
