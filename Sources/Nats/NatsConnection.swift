@@ -66,6 +66,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// Why no connection attempt can succeed with these settings, or nil.
     private let configurationError: String?
     private let tlsFirst: Bool
+    private let ignoreDiscoveredServers: Bool
     private let rootCertificate: URL?
     private let clientCertificate: URL?
     private let clientKey: URL?
@@ -166,7 +167,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         tlsOptional: Bool, clientCertificate: URL?, clientKey: URL?,
-        rootCertificate: URL?, retryOnFailedConnect: Bool
+        rootCertificate: URL?, retryOnFailedConnect: Bool, ignoreDiscoveredServers: Bool
     ) {
         self.pool = NIOLockedValueBox(ServerPool(configured: urls))
         self.group = .singleton
@@ -188,6 +189,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
         self.retryOnFailedConnect = retryOnFailedConnect
+        self.ignoreDiscoveredServers = ignoreDiscoveredServers
     }
 
     /// The setting that asks for TLS for every server, as messages name it: an option by its
@@ -810,7 +812,9 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         let waitsForInfo: Bool
         if try upgradesToTls(server: server, info: info) {
             // The version of this INFO, read before TLS, decides only whether to wait.
-            waitsForInfo = ServerInfo.sendsInfoAfterFirstPong(version: info.version)
+            waitsForInfo =
+                !ignoreDiscoveredServers
+                && ServerInfo.sendsInfoAfterFirstPong(version: info.version)
             let sslHandler = try makeSSLHandler(for: s)
             // NIOLoopBoundBox.makeBoxSendingValue can be created off the event loop
             // (takes ownership via `sending`), unlike NIOLoopBound which requires
@@ -1202,7 +1206,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// discovered servers for the first INFO of a connection, and in place of the discovered
     /// servers for a later one, `replacing` them. An INFO without servers changes nothing.
     private func updateServersList(info: ServerInfo, replacing: Bool = true) {
-        guard let connectUrls = info.connectUrls, let current = current.withLockedValue({ $0 })
+        guard !ignoreDiscoveredServers, let connectUrls = info.connectUrls,
+            let current = current.withLockedValue({ $0 })
         else {
             return
         }
