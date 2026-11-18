@@ -31,6 +31,7 @@ public class NatsClientOptions {
     private var clientCertificate: URL? = nil
     private var clientKey: URL? = nil
     private var inboxPrefix: String = "_INBOX."
+    private var websocketHeaders: [String: String] = [:]
 
     public init() {}
 
@@ -180,6 +181,13 @@ public class NatsClientOptions {
         return self
     }
 
+    /// Extra HTTP headers sent with the WebSocket upgrade request (`ws://` and `wss://` URLs only),
+    /// e.g. a `User-Agent` for a proxy or WAF in front of the server. `Host` is always set from the server URL.
+    public func websocketHeaders(_ headers: [String: String]) -> NatsClientOptions {
+        self.websocketHeaders = headers
+        return self
+    }
+
     public func build() -> NatsClient {
         let client = NatsClient()
         client.inboxPrefix = inboxPrefix
@@ -195,7 +203,8 @@ public class NatsClientOptions {
             clientCertificate: clientCertificate,
             clientKey: clientKey,
             rootCertificate: rootCertificate,
-            retryOnFailedConnect: initialReconnect
+            retryOnFailedConnect: initialReconnect,
+            websocketHeaders: websocketHeaders
         )
         return client
     }

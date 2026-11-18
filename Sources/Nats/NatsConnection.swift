@@ -43,6 +43,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     // Connection options
     internal let retryOnFailedConnect: Bool
+    internal let websocketHeaders: [String: String]
     private let _urls: NIOLockedValueBox<[URL]>
     private var urls: [URL] {
         get { _urls.withLockedValue { $0 } }
@@ -120,7 +121,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         retainServersOrder: Bool,
         pingInterval: TimeInterval, auth: Auth?, requireTls: Bool, tlsFirst: Bool,
         clientCertificate: URL?, clientKey: URL?,
-        rootCertificate: URL?, retryOnFailedConnect: Bool
+        rootCertificate: URL?, retryOnFailedConnect: Bool,
+        websocketHeaders: [String: String] = [:]
     ) {
         self._urls = NIOLockedValueBox(urls)
         self.group = .singleton
@@ -136,6 +138,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.clientKey = clientKey
         self.rootCertificate = rootCertificate
         self.retryOnFailedConnect = retryOnFailedConnect
+        self.websocketHeaders = websocketHeaders
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -669,7 +672,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                             host: server.host ?? "localhost",
                             path: server.path,
                             query: server.query,
-                            headers: HTTPHeaders(),  // TODO (mtmk): pass in from client options
+                            // Sorted so the header order is stable between connections.
+                            headers: HTTPHeaders(
+                                self.websocketHeaders.sorted { $0.key < $1.key }.map {
+                                    ($0.key, $0.value)
+                                }),
                             upgradePromise: upgradePromise)
                         let httpUpgradeRequestHandlerBox = NIOLoopBound(
                             httpUpgradeRequestHandler, eventLoop: channel.eventLoop)
