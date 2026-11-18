@@ -86,6 +86,10 @@ class ConnectionAttemptTests: XCTestCase {
             "testNextServerIsUsedAfterTlsFirstAttemptFailsOnFirstLine",
             testNextServerIsUsedAfterTlsFirstAttemptFailsOnFirstLine
         ),
+        (
+            "testPublishDuringReconnectIsNotSentBeforeTls",
+            testPublishDuringReconnectIsNotSentBeforeTls
+        ),
         ("testLateHappyEyeballsWinnerIsUsed", testLateHappyEyeballsWinnerIsUsed),
         ("testResumeAfterFailedAttempts", testResumeAfterFailedAttempts),
     ]
@@ -216,8 +220,10 @@ class ConnectionAttemptTests: XCTestCase {
     }
 
     func testPingAfterInfoIsNotAnsweredBeforeTls() async throws {
-        // The delay lets the client finish setting up its connection before INFO arrives, so
-        // that a PING it handled would be answered at once.
+        // The server must read no PONG for these PINGs, before TLS or inside it. The client
+        // creates its write buffer only when it adds the TLS handler, so a PING handled before
+        // that is not answered at once; the hold before TLS is checked by
+        // testInfoAfterInfoIsNotAppliedBeforeTls and testMessageBeforeTlsIsNotDeliveredOnReconnect.
         let server = try fake(
             .init(
                 greeting: FakeNatsServer.info(tlsRequired: true) + "PING\r\nPING\r\n",
@@ -775,6 +781,45 @@ class ConnectionAttemptTests: XCTestCase {
                 continue
             }
             XCTAssertEqual(next.connections.count, 1, label)
+            try await client.close()
+        }
+    }
+
+    func testPublishDuringReconnectIsNotSentBeforeTls() async throws {
+        for requireTls in [false, true] {
+            // INFO comes 1 s after accept, so on the reconnect the client waits for it
+            let server = try fake(
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: true), greetingDelay: 1,
+                    tls: try FakeNatsServer.tlsContext()))
+            let options = NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(server.port)")!)
+                .rootCertificates(rootCA)
+                .reconnectWait(0.1)
+            if requireTls {
+                _ = options.requireTls()
+            }
+            let client = options.build()
+            try await client.connect()
+            let reconnected = XCTestExpectation(description: "client did not reconnect")
+            reconnected.assertForOverFulfill = false
+            client.on(.connected) { _ in reconnected.fulfill() }
+
+            server.closeConnection(0)
+            // publish while the client reconnects, waits for INFO and starts TLS
+            for _ in 0..<75 {
+                try? await client.publish(Data("payload".utf8), subject: "foo")
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            await fulfillment(of: [reconnected], timeout: 10)
+
+            let later = server.connections.dropFirst().filter { !$0.firstBytes.isEmpty }
+            XCTAssertFalse(later.isEmpty, "requireTls \(requireTls): setup: no reconnect")
+            for connection in later where connection.firstBytes.first != 0x16 {
+                XCTFail(
+                    "requireTls \(requireTls): first bytes on the reconnect are not a TLS record: "
+                        + String(decoding: connection.firstBytes, as: UTF8.self))
+            }
             try await client.close()
         }
     }

@@ -529,13 +529,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                             dialed.withLockedValue { $0 = dialedChannel }
                             self.channel = dialedChannel
 
-                            guard let channel = self.channel else {
+                            guard self.channel != nil else {
                                 upgradePromise.succeed()  // avoid promise leaks
                                 throw NatsError.ClientError.internalError("empty channel")
                             }
 
                             try await upgradePromise.futureResult.get()
-                            self.batchBuffer = BatchBuffer(channel: channel)
                         } catch {
                             let continuationToResume: CheckedContinuation<ServerInfo, Error>? = self
                                 .serverInfoContinuation.withLockedValue { cont in
@@ -621,6 +620,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     }
                     try channel.pipeline.syncOperations.addHandler(
                         sslHandlerBox.value, position: .first)
+                    // writes reach this connection only from here on, through TLS
+                    self.batchBuffer = BatchBuffer(channel: channel)
                 }.get()
             } catch {
                 // the TLS handshake could not start, e.g. the server closed the connection
@@ -634,6 +635,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 // No TLS upgrade follows: handle the bytes that arrived after INFO now.
                 self.attemptChannel.withLockedValue { $0 = ObjectIdentifier(channel) }
                 self.readPhase.withLockedValue { $0 = .processing }
+                // before the held bytes, so that a reply to them goes to this connection
+                self.batchBuffer = BatchBuffer(channel: channel)
                 let held = self.parseRemainder.withLockedValue { value in
                     let current = value
                     value = nil
