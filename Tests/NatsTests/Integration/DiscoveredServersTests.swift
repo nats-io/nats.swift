@@ -101,6 +101,15 @@ class DiscoveredServersTests: XCTestCase {
             "testConnectionDroppedForUnansweredPingsIsClosedAtOnce",
             testConnectionDroppedForUnansweredPingsIsClosedAtOnce
         ),
+        ("testCloseDuringFirstConnectStopsIt", testCloseDuringFirstConnectStopsIt),
+        (
+            "testCloseDuringAReconnectRoundDialsNoFurtherServer",
+            testCloseDuringAReconnectRoundDialsNoFurtherServer
+        ),
+        (
+            "testCloseDuringTheWaitBeforeAnAttemptDialsNothing",
+            testCloseDuringTheWaitBeforeAnAttemptDialsNothing
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -1096,5 +1105,123 @@ class DiscoveredServersTests: XCTestCase {
         XCTAssertEqual(next.connections.last?.closed, false, "the connection in use was closed")
         try await client.close()
         dropped.closeConnection(0)
+    }
+
+    // After close() returned nothing is dialed, connect() returns, and the client stays closed.
+    func testCloseDuringFirstConnectStopsIt() async throws {
+        for configured in [false, true] {
+            let name = configured ? "second configured server" : "listed server"
+            let other = try fake(.init(greeting: FakeNatsServer.info()))
+            // it answers no PING, so the attempt still waits when close() is called
+            let seed = try fake(
+                .init(
+                    greeting: FakeNatsServer.info(
+                        connectUrls: configured ? [] : ["127.0.0.1:\(other.port)"]),
+                    answersPing: false))
+            var urls = [URL(string: "nats://127.0.0.1:\(seed.port)")!]
+            if configured {
+                urls.append(URL(string: "nats://127.0.0.1:\(other.port)")!)
+            }
+            let client = NatsClientOptions().urls(urls).retainServersOrder().build()
+            let connecting = Task { await result(within: 10) { try await client.connect() } }
+            let waiting = try await eventually { seed.lines.contains("PING") }
+            XCTAssertTrue(waiting, "\(name): setup: no PING")
+
+            let closed = await result(within: 5) { try await client.close() }
+            XCTAssertNotNil(closed, "\(name): close() did not return")
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            XCTAssertEqual(other.connections.count, 0, "\(name): dialed after close()")
+            let connected = await connecting.value
+            guard case .failure(NatsError.ClientError.connectionClosed)? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertEqual(client.connectionHandler?.currentState, .closed, name)
+        }
+    }
+
+    // close() and suspend() during a reconnect round: the round ends with the current attempt
+    func testCloseDuringAReconnectRoundDialsNoFurtherServer() async throws {
+        for suspends in [false, true] {
+            let name = suspends ? "suspend()" : "close()"
+            // they accept the connection and send nothing
+            let silent = try (0..<3).map { _ in try fake(.init()) }
+            let seed = try fake(
+                .init(
+                    greeting: FakeNatsServer.info(
+                        connectUrls: silent.map { "127.0.0.1:\($0.port)" })))
+            let client = NatsClientOptions()
+                .url(URL(string: "nats://127.0.0.1:\(seed.port)")!)
+                .retainServersOrder()
+                .reconnectWait(0.1)
+                .build()
+            try await client.connect()
+            seed.shutdown()
+            let dialed = try await eventually { silent[0].connections.count > 0 }
+            XCTAssertTrue(dialed, "\(name): setup: the first listed server was not dialed")
+
+            let start = Date()
+            let done = await result(within: 20) {
+                if suspends {
+                    try await client.suspend()
+                } else {
+                    try await client.close()
+                }
+            }
+            let elapsed = Date().timeIntervalSince(start)
+            XCTAssertNotNil(done, "\(name) did not return")
+            // the current attempt ends at its deadline, 5 s after it started
+            XCTAssertLessThan(elapsed, 10, "\(name) took \(elapsed) s")
+            let others = silent.dropFirst()
+            XCTAssertEqual(
+                others.map { $0.connections.count }, [0, 0], "\(name): dialed before it returned")
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            XCTAssertEqual(
+                others.map { $0.connections.count }, [0, 0], "\(name): dialed after it returned")
+            XCTAssertEqual(
+                client.connectionHandler?.currentState, suspends ? .suspended : .closed, name)
+            if suspends {
+                try? await client.close()
+            }
+        }
+    }
+
+    // close() while a connect() after a failed one waits before its attempt: nothing is dialed
+    func testCloseDuringTheWaitBeforeAnAttemptDialsNothing() async throws {
+        for tlsFirst in [false, true] {
+            let name = tlsFirst ? "TLS first" : "plaintext"
+            let server = try fake(
+                .init(
+                    greeting: FakeNatsServer.info(tlsRequired: tlsFirst),
+                    tls: tlsFirst ? try FakeNatsServer.tlsContext() : nil, tlsFirst: tlsFirst,
+                    firstPingReply: "-ERR 'Authorization Violation'\r\n"))
+            let url =
+                tlsFirst ? "tls://localhost:\(server.port)" : "nats://127.0.0.1:\(server.port)"
+            var options = NatsClientOptions().url(URL(string: url)!).reconnectWait(2)
+            if tlsFirst {
+                options = options.withTlsFirst().rootCertificates(pem("rootCA"))
+            }
+            let client = options.build()
+            // after a failed connect(), the next one waits before its attempt
+            let first = await result(within: 10) { try await client.connect() }
+            guard case .failure? = first else {
+                XCTFail("\(name): setup: first connect: \(String(describing: first))")
+                continue
+            }
+            let connecting = Task { await result(within: 10) { try await client.connect() } }
+            try await Task.sleep(nanoseconds: 500_000_000)
+            let dialed = server.connections.count
+
+            let closed = await result(within: 5) { try await client.close() }
+            XCTAssertNotNil(closed, "\(name): close() did not return")
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+            XCTAssertEqual(server.connections.count, dialed, "\(name): dialed after close()")
+            let connected = await connecting.value
+            guard case .failure(NatsError.ClientError.connectionClosed)? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertEqual(client.connectionHandler?.currentState, .closed, name)
+        }
     }
 }
