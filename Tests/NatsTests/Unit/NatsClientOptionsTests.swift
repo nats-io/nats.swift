@@ -20,6 +20,7 @@ class NatsClientOptionsTests: XCTestCase {
         ("testDefaultInboxPrefix", testDefaultInboxPrefix),
         ("testCustomInboxPrefix", testCustomInboxPrefix),
         ("testDefaultPortsInjection", testDefaultPortsInjection),
+        ("testWebSocketHeadersReachConnectionHandler", testWebSocketHeadersReachConnectionHandler),
     ]
 
     func testDefaultInboxPrefix() {
@@ -36,6 +37,12 @@ class NatsClientOptionsTests: XCTestCase {
         XCTAssertTrue(inbox.hasPrefix(customPrefix), "Inbox should use custom prefix")
         XCTAssertEqual(
             inbox.count, customPrefix.count + 22, "Inbox should have custom prefix plus NUID")
+    }
+
+    func testWebSocketHeadersReachConnectionHandler() {
+        XCTAssertEqual(NatsClientOptions().build().connectionHandler?.websocketHeaders, [:])
+        let client = NatsClientOptions().websocketHeaders(["User-Agent": "nats-test/1.0"]).build()
+        XCTAssertEqual(client.connectionHandler?.websocketHeaders, ["User-Agent": "nats-test/1.0"])
     }
 
     func testDefaultPortsInjection() {
