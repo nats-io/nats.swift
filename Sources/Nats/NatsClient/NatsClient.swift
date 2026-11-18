@@ -95,7 +95,8 @@ extension NatsClient {
     /// >   ``NatsClientOptions/retryOnfailedConnect()``, and so is a `ws://` URL while TLS is
     /// >   asked for
     /// > - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
-    /// > - ``NatsError/ConnectError/timeout`` if there was a timeout waiting to establish TCP connection
+    /// > - ``NatsError/ConnectError/timeout`` if a connection attempt did not get the server's
+    /// >   first PONG within the connection timeout (5 seconds)
     /// > - ``NatsError/ConnectError/dns(_:)`` if there was an error during dns lookup
     /// > - ``NatsError/ConnectError/io`` if there was other error establishing connection
     /// > - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
