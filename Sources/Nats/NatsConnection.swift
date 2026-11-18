@@ -84,6 +84,15 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         state.withLockedValue { $0 = newState }
     }
 
+    /// Sets the state to `newState`, unless the client is closed.
+    internal func setStateUnlessClosed(_ newState: NatsState) {
+        state.withLockedValue { state in
+            if state != .closed {
+                state = newState
+            }
+        }
+    }
+
     private let subscriptionCounter = ManagedAtomic<UInt64>(0)
     private let _serverInfo = NIOLockedValueBox<ServerInfo?>(nil)
     private var serverInfo: ServerInfo? {
@@ -623,6 +632,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         let shouldSleep = self.reconnectAttempts >= servers.count
         var next = 0
         while true {
+            // close() and suspend() cancel the reconnect: no further server is dialed
+            try Task.checkCancellation()
+            // nothing is dialed once the client is closed
+            if self.currentState == .closed {
+                throw NatsError.ClientError.connectionClosed
+            }
             // the servers that a failed attempt learned are tried in this round too
             var learned = self.servers.filter { !listed.contains($0.key) }
             if !self.retainServersOrder {
@@ -647,6 +662,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             self.reconnectAttempts += 1
             if shouldSleep {
                 try await Task.sleep(nanoseconds: self.reconnectWait)
+                // close() may have been called during the wait
+                if self.currentState == .closed {
+                    throw NatsError.ClientError.connectionClosed
+                }
             }
 
             do {

@@ -101,6 +101,8 @@ extension NatsClient {
     /// > - ``NatsError/ConnectError/io`` if there was other error establishing connection
     /// > - ``NatsError/ServerError/autorization(_:)`` if connection could not be established due to invalid/missing/expired auth
     /// > - ``NatsError/ServerError/other(_:)`` if the server responds to client connection with a different error (e.g. max connections exceeded)
+    /// > - ``NatsError/ClientError/connectionClosed`` if the client is closed, also when
+    /// >   ``NatsClient/close()`` is called while it connects
     public func connect() async throws {
         logger.debug("connect")
         guard let connectionHandler = self.connectionHandler else {
@@ -137,8 +139,8 @@ extension NatsClient {
                 connectionHandler.handleReconnect()
             }
         } catch {
-            // Reset state on connection failure
-            connectionHandler.setState(.disconnected)
+            // Reset state on connection failure, unless close() was called meanwhile
+            connectionHandler.setStateUnlessClosed(.disconnected)
             throw error
         }
     }
