@@ -84,6 +84,23 @@ class DiscoveredServersTests: XCTestCase {
         ("testLaterInfoReplacesDiscoveredServers", testLaterInfoReplacesDiscoveredServers),
         ("testConfiguredAndCurrentServersAreKept", testConfiguredAndCurrentServersAreKept),
         ("testIgnoreDiscoveredServers", testIgnoreDiscoveredServers),
+        (
+            "testFirstConnectEndsWhenAListedServerDoesNotAnswer",
+            testFirstConnectEndsWhenAListedServerDoesNotAnswer
+        ),
+        (
+            "testCloseReturnsWhileReconnectingToAServerThatSendsNothing",
+            testCloseReturnsWhileReconnectingToAServerThatSendsNothing
+        ),
+        ("testTlsAttemptEndsAtTheConnectionTimeout", testTlsAttemptEndsAtTheConnectionTimeout),
+        (
+            "testCloseDuringATlsAttemptDoesNotWaitForTheServer",
+            testCloseDuringATlsAttemptDoesNotWaitForTheServer
+        ),
+        (
+            "testConnectionDroppedForUnansweredPingsIsClosedAtOnce",
+            testConnectionDroppedForUnansweredPingsIsClosedAtOnce
+        ),
     ]
 
     private var natsServers: [NatsServer] = []
@@ -911,5 +928,173 @@ class DiscoveredServersTests: XCTestCase {
         }
         XCTAssertLessThan(Date().timeIntervalSince(start), 2, "waited for the INFO")
         try await clientOverTls.close()
+    }
+
+    // An attempt has the connection timeout from the start of the connect, name lookup
+    // included, up to its first PONG.
+    func testFirstConnectEndsWhenAListedServerDoesNotAnswer() async throws {
+        let silent = try fake(.init())
+        let withoutPong = try fake(.init(greeting: FakeNatsServer.info(), answersPing: false))
+        let variants = [
+            ("sends nothing", silent, false),
+            ("answers no PING", withoutPong, false),
+            ("answers no websocket upgrade", silent, true),
+        ]
+        for (name, listed, websocket) in variants {
+            let dialed = listed.connections.count
+            // the only configured server lists it, then refuses the client
+            let seed = try fake(
+                .init(
+                    greeting: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(listed.port)"]),
+                    firstPingReply: "-ERR 'maximum connections exceeded'\r\n",
+                    websocket: websocket))
+            let scheme = websocket ? "ws" : "nats"
+            let client = NatsClientOptions()
+                .url(URL(string: "\(scheme)://127.0.0.1:\(seed.port)")!)
+                .build()
+
+            let connected = await result(within: 10) { try await client.connect() }
+            guard case .failure(NatsError.ConnectError.timeout)? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            XCTAssertGreaterThan(listed.connections.count, dialed, "\(name): setup: not dialed")
+        }
+    }
+
+    func testCloseReturnsWhileReconnectingToAServerThatSendsNothing() async throws {
+        let silent = try fake(.init())
+        let seed = try fake(
+            .init(greeting: FakeNatsServer.info(connectUrls: ["127.0.0.1:\(silent.port)"])))
+        let client = NatsClientOptions()
+            .url(URL(string: "nats://127.0.0.1:\(seed.port)")!)
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        seed.shutdown()
+        let dialed = try await eventually { silent.connections.count > 0 }
+        XCTAssertTrue(dialed, "setup: the client did not dial the listed server")
+
+        let closed = await result(within: 8) { try await client.close() }
+        XCTAssertNotNil(closed, "close() did not return")
+    }
+
+    /// A scripted server that requires TLS and drops every byte the client sends after the TLS
+    /// handshake: it answers neither CONNECT nor a TLS close.
+    private func tlsServerThatStopsReading(tlsFirst: Bool = false) throws -> FakeNatsServer {
+        // TLS 1.2: the server's handshake is done before the client's, so the server drops all
+        // the client sends after its handshake. With TLS 1.3, CONNECT and PING can arrive in
+        // the same read as the client's Finished, and the server answers them.
+        try fake(
+            .init(
+                greeting: FakeNatsServer.info(tlsRequired: true),
+                tls: try FakeNatsServer.tlsContext(maximumTLSVersion: .tlsv12),
+                tlsFirst: tlsFirst, afterTlsHandshake: .dropsBytes))
+    }
+
+    func testTlsAttemptEndsAtTheConnectionTimeout() async throws {
+        for tlsFirst in [false, true] {
+            let name = tlsFirst ? "TLS first" : "TLS after INFO"
+            let server = try tlsServerThatStopsReading(tlsFirst: tlsFirst)
+            var options = NatsClientOptions()
+                .url(URL(string: "tls://localhost:\(server.port)")!)
+                .rootCertificates(pem("rootCA"))
+            if tlsFirst {
+                options = options.withTlsFirst()
+            }
+            let client = options.build()
+
+            let start = Date()
+            let connected = await result(within: 15) { try await client.connect() }
+            let elapsed = Date().timeIntervalSince(start)
+            guard case .failure(NatsError.ConnectError.timeout)? = connected else {
+                XCTFail("\(name): connect: \(String(describing: connected))")
+                continue
+            }
+            // the connection timeout is 5 s
+            XCTAssertLessThan(elapsed, 7.5, "\(name): the attempt took \(elapsed) s")
+        }
+    }
+
+    func testCloseDuringATlsAttemptDoesNotWaitForTheServer() async throws {
+        let listed = try tlsServerThatStopsReading()
+        let seed = try tlsSeed(listing: ["localhost:\(listed.port)"])
+        let client = NatsClientOptions()
+            .url(URL(string: "tls://localhost:\(seed.port)")!)
+            .rootCertificates(pem("rootCA"))
+            .retainServersOrder()
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        // the INFO after the first PONG is read before the PONG of this PING
+        guard case .success? = await result(within: 5, { try await client.rtt() }) else {
+            return XCTFail("setup: no PONG from the seed")
+        }
+        seed.shutdown()
+        let dialed = try await eventually { listed.connections.count > 0 }
+        XCTAssertTrue(dialed, "setup: the client did not dial the listed server")
+        // the attempt is past its TLS handshake and waits for the PONG
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let start = Date()
+        let closed = await result(within: 10) { try await client.close() }
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertNotNil(closed, "close() did not return")
+        XCTAssertLessThan(elapsed, 2.5, "close() took \(elapsed) s")
+    }
+
+    // The client drops a connection whose server answers no PING, then connects to the next
+    // server. A TLS close of the dropped connection would keep it open, and read, until the
+    // server answers that close or for 5 s.
+    func testConnectionDroppedForUnansweredPingsIsClosedAtOnce() async throws {
+        let listed = try fake(.init(greeting: FakeNatsServer.info()))
+        let dropped = try FakeNatsServer(scripts: [
+            // after its first PONG it reads nothing more: no PING and no TLS close is answered
+            .init(
+                greeting: FakeNatsServer.info(tlsAvailable: true),
+                tls: try FakeNatsServer.tlsContext(), stopsReadingAfterFirstPong: true),
+            .init(greeting: FakeNatsServer.info(tlsAvailable: true), closeAfterGreeting: true),
+        ])
+        fakeServers.append(dropped)
+        // a reconnect keeps the count of unanswered PINGs: the last two PONGs answer them
+        let next = try fake(
+            .init(
+                greeting: FakeNatsServer.info(), greetingDelay: 1,
+                firstPingReply: "PONG\r\nPONG\r\nPONG\r\n"))
+        let client = NatsClientOptions()
+            .urls([
+                URL(string: "tls://localhost:\(dropped.port)")!,
+                URL(string: "nats://127.0.0.1:\(next.port)")!,
+            ])
+            .rootCertificates(pem("rootCA"))
+            .tlsOptional()
+            .retainServersOrder()
+            .pingInterval(0.25)
+            .reconnectWait(0.1)
+            .build()
+        try await client.connect()
+        // the PINGs go unanswered after 0.75 s
+        let dialed = try await eventually(2) { next.connections.count > 0 }
+        XCTAssertTrue(dialed, "the client did not dial the next server within 2 s")
+
+        // inside TLS on the dropped connection, before the next server's INFO
+        let entry = "127.0.0.1:\(listed.port)"
+        dropped.write(FakeNatsServer.info(tlsAvailable: true, connectUrls: [entry]), on: 0)
+        let reconnected = try await eventually(10) {
+            client.connectionHandler?.currentState == .connected
+        }
+        XCTAssertTrue(reconnected, "setup: the client did not reconnect")
+        XCTAssertEqual(client.connectedUrl?.port, next.port)
+        XCTAssertFalse(
+            client.connectionHandler?.servers.contains { $0.key.port == listed.port } == true,
+            "used a server listed on the dropped connection")
+
+        let used = next.connections.count
+        // longer than a TLS close waits for the server
+        try await Task.sleep(nanoseconds: 6_000_000_000)
+        XCTAssertEqual(next.connections.count, used, "the client reconnected")
+        XCTAssertEqual(next.connections.last?.closed, false, "the connection in use was closed")
+        try await client.close()
+        dropped.closeConnection(0)
     }
 }

@@ -125,8 +125,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     /// used once that PONG arrives, unless the attempt then waits for the INFO that follows
     /// the PONG, and not when the attempt fails.
     private let infoBeforePong = NIOLockedValueBox<ServerInfo?>(nil)
-    /// How long an attempt may take to connect, and how long it waits for the INFO that
-    /// follows the first PONG.
+    /// Closes the channel of the current attempt when the attempt has not had its first PONG
+    /// within the connection timeout, counted from the start of the connect, name lookup
+    /// included.
+    private let attemptDeadline = NIOLockedValueBox<Scheduled<Void>?>(nil)
+    /// How long an attempt may take from the start of the connect, name lookup included, up to
+    /// its first PONG, and how long it waits for the INFO that follows that PONG.
     private static let connectTimeout = TimeAmount.seconds(5)
     private let _pingTask = NIOLockedValueBox<RepeatedTask?>(nil)
     private var pingTask: RepeatedTask? {
@@ -366,7 +370,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 // the attempt failed: nothing more this connection sends is handled
                 _inputBuffer.withLockedValue { $0.clear() }
                 parseRemainder.withLockedValue { $0 = nil }
-                context.close(promise: nil)
+                Self.closeAttemptChannel(context.channel)
                 return
             default:
                 break
@@ -478,6 +482,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         guard let waitsForInfo else {
             return false
         }
+        cancelAttemptDeadline()
         let info = infoBeforePong.withLockedValue { info in
             defer { info = nil }
             return info
@@ -522,6 +527,13 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 return
             }
             reply = .none
+        }
+    }
+
+    private func cancelAttemptDeadline() {
+        attemptDeadline.withLockedValue { deadline in
+            deadline?.cancel()
+            deadline = nil
         }
     }
 
@@ -722,6 +734,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         var infoTask: Task<(), Never>? = nil
         // the channel this attempt dialed
         let dialed = NIOLockedValueBox<Channel?>(nil)
+        // name lookup, TCP connect, websocket upgrade, INFO, TLS handshake, CONNECT and the
+        // first PONG share one budget
+        cancelAttemptDeadline()
+        let deadline = NIODeadline.now() + Self.connectTimeout
+        let timedOut = NIOLockedValueBox(false)
         do {
             let info: ServerInfo = try await withCheckedThrowingContinuation { continuation in
                 serverInfoContinuation.withLockedValue { $0 = continuation }
@@ -740,6 +757,13 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                             let dialedChannel = try await connect.get()
                             dialed.withLockedValue { $0 = dialedChannel }
                             self.channel = dialedChannel
+                            let expiry = dialedChannel.eventLoop.scheduleTask(deadline: deadline) {
+                                timedOut.withLockedValue { $0 = true }
+                                // a websocket upgrade that is not answered ends here
+                                upgradePromise.fail(NatsError.ConnectError.timeout)
+                                Self.closeAttemptChannel(dialedChannel)
+                            }
+                            self.attemptDeadline.withLockedValue { $0 = expiry }
 
                             guard self.channel != nil else {
                                 upgradePromise.succeed()  // avoid promise leaks
@@ -792,13 +816,30 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             // it dialed and wait until it is closed, so that nothing it receives later reaches the
             // next attempt or the connection that follows.
             await infoTask?.value
+            cancelAttemptDeadline()
             if let channel = dialed.withLockedValue({ $0 }) {
-                channel.close(promise: nil)
+                channel.eventLoop.execute { Self.closeAttemptChannel(channel) }
                 try? await channel.closeFuture.get()
+            }
+            if timedOut.withLockedValue({ $0 }) {
+                throw NatsError.ConnectError.timeout
             }
             throw error
         }
         self.connectedUrl = s
+    }
+
+    /// Closes the channel of a failed attempt or a lost connection at once. Runs on the
+    /// channel's event loop.
+    private static func closeAttemptChannel(_ channel: Channel) {
+        // closed below the TLS handler: a TLS close would wait for the server to answer it
+        let tls = try? channel.pipeline.syncOperations.context(
+            handlerType: NIOSSLClientHandler.self)
+        if let tls {
+            tls.close(promise: nil)
+        } else {
+            channel.close(promise: nil)
+        }
     }
 
     /// Upgrades the attempt's channel to TLS when needed, then sends CONNECT and waits for the
@@ -1251,9 +1292,11 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         self.fire(.closed)
     }
 
-    private func disconnect() async throws {
+    private func disconnect(_ channel: Channel) async throws {
         self.pingTask?.cancel()
-        try await self.channel?.close().get()
+        // below TLS: a TLS close would wait for the server, and the reconnect waits for this one
+        channel.eventLoop.execute { Self.closeAttemptChannel(channel) }
+        try await channel.closeFuture.get()
     }
 
     func suspend() async throws {
@@ -1397,11 +1440,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
 
     func handleDisconnect() {
         state.withLockedValue { $0 = .disconnected }
-        if let channel = self.channel {
+        let channel = self.channel
+        if let channel {
             let promise = channel.eventLoop.makePromise(of: Void.self)
             Task {
                 do {
-                    try await self.disconnect()
+                    try await self.disconnect(channel)
                     promise.succeed()
                 } catch ChannelError.alreadyClosed {
                     // if the channel was already closed, no need to return error
@@ -1420,10 +1464,12 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             }
         }
 
-        handleReconnect()
+        // what the lost connection reads, and its end, must not reach the first attempt
+        handleReconnect(after: channel?.closeFuture)
     }
 
-    func handleReconnect() {
+    /// Starts reconnecting, once `lost` completes when given.
+    func handleReconnect(after lost: EventLoopFuture<Void>? = nil) {
         // settings that connect() refuses are never tried
         guard configurationError == nil else { return }
 
@@ -1443,6 +1489,7 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                 _reconnectTask.withLockedValue { $0 = nil }
             }
 
+            try? await lost?.get()
             var connected = false
             while !Task.isCancelled
                 && (maxReconnects == nil || self.reconnectAttempts < maxReconnects!)

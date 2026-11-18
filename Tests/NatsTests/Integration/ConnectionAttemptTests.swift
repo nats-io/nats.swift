@@ -325,8 +325,8 @@ class ConnectionAttemptTests: XCTestCase {
     func testLinesOfThePreviousConnectionDoNotCompleteTheReconnect() async throws {
         let tls = try FakeNatsServer.tlsContext()
         let server = try FakeNatsServer(scripts: [
-            // after the first PONG the client times out its PINGs and closes this connection;
-            // that TLS close waits for the server
+            // after the first PONG the client times out its PINGs and closes this connection
+            // before it reconnects
             .init(
                 greeting: FakeNatsServer.info(tlsRequired: true), tls: tls,
                 stopsReadingAfterFirstPong: true),
@@ -358,7 +358,7 @@ class ConnectionAttemptTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTAssertTrue(attemptSentPing(), "setup: no reconnect attempt")
-        // read inside TLS on the previous connection while its close waits
+        // written on the previous connection, which the client has closed by now
         server.write("PONG\r\n", on: 0)
         // then a read on the reconnect's connection, with which that line must not be parsed
         try await Task.sleep(nanoseconds: 200_000_000)
@@ -370,8 +370,6 @@ class ConnectionAttemptTests: XCTestCase {
         server.write("NG\r\nPONG\r\nPONG\r\n", on: 1)
         await fulfillment(of: [reconnected], timeout: 5)
         try await client.close()
-        // lets the TLS close of the previous connection complete
-        server.closeConnection(0)
     }
 
     func testLaterReadsBeforeTlsAreDropped() async throws {
@@ -685,18 +683,16 @@ class ConnectionAttemptTests: XCTestCase {
 
     func testAttemptEndedByLineOnPreviousConnectionClosesItsConnection() async throws {
         try await checkAttemptEndedThroughPreviousConnection { server in
-            // read inside TLS while the client closes that connection
+            // written on connection 0, which the client has closed by now
             server.write("PING\r\n", on: 0)
-            // then let that close complete, well before the next attempt starts
-            try await Task.sleep(nanoseconds: 200_000_000)
-            server.closeConnection(0)
         }
     }
 
-    /// The client uses TLS after INFO on connection 0, stops getting PONGs there and closes it;
-    /// that TLS close waits for the server. Connection 1, the reconnect attempt, gets no INFO, and
-    /// `endAttempt` ends the attempt through connection 0. The client must close connection 1,
-    /// and what is written on connection 1 once the client has reconnected must not be acted on.
+    /// The client uses TLS after INFO on connection 0, stops getting PONGs there and closes it
+    /// before it reconnects. Connection 1, the reconnect attempt, gets no INFO; what `endAttempt`
+    /// does on connection 0 reaches nothing, and the attempt ends at its deadline. The client must
+    /// close connection 1, and what is written on connection 1 once the client has reconnected
+    /// must not be acted on.
     private func checkAttemptEndedThroughPreviousConnection(
         _ endAttempt: (FakeNatsServer) async throws -> Void
     ) async throws {
