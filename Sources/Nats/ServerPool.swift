@@ -48,12 +48,6 @@ internal enum DiscoveredEntry: Equatable {
         return Self.url(host: host, port: port, scheme: scheme)
     }
 
-    /// The entry as a log line quotes it: escaped, and cut at 256 characters, since the server
-    /// chose it.
-    static func quoted(_ entry: String) -> String {
-        String(entry.prefix(256)).debugDescription
-    }
-
     private static func url(host: String, port: Int, scheme: String) -> URL? {
         let urlHost = host.contains(":") ? "[\(host)]" : host
         // The URL must have this host and port and nothing else.
@@ -229,7 +223,7 @@ internal struct ServerPool: Sendable {
             let discovered = DiscoveredEntry(entry)
             if case .skipped(let reason) = discovered {
                 logger.warning(
-                    "skipping the connect_urls entry \(DiscoveredEntry.quoted(entry)): \(reason)")
+                    "skipping the connect_urls entry \"\(NatsError.escaped(entry))\": \(reason)")
             }
             guard let server = Server(discovered: discovered, websocket: websocket, tls: tls)
             else {

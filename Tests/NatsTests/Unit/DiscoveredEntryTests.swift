@@ -76,7 +76,5 @@ class DiscoveredEntryTests: XCTestCase {
             URL(string: "nats://host:4222"))
         XCTAssertEqual(DiscoveredEntry("[::1]:80").url(scheme: "ws"), URL(string: "ws://[::1]:80"))
         XCTAssertNil(DiscoveredEntry("nats://host:4222").url(scheme: "nats"))
-        XCTAssertEqual(DiscoveredEntry.quoted("a\"b\r\n"), "\"a\\\"b\\r\\n\"")
-        XCTAssertEqual(DiscoveredEntry.quoted(String(repeating: "x", count: 300)).count, 258)
     }
 }
