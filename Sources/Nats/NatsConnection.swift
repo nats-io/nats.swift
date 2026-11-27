@@ -181,9 +181,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
         let reportSkippedInfo: ((Error) -> Void)? =
             state == .connected
             ? { error in
-                logger.warning("skipping INFO that does not parse: \(error)")
-                self.fire(
-                    .error(NatsError.ProtocolError.parserFailure("INFO does not parse: \(error)")))
+                logger.warning("skipping INFO: \(error)")
+                if let error = error as? NatsErrorProtocol {
+                    self.fire(.error(error))
+                }
             } : nil
 
         let parseResult: (ops: [ServerOp], remainder: Data?)

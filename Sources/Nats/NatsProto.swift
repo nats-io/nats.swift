@@ -65,7 +65,11 @@ enum ServerOp {
         case .hmessage:
             return try hMessage(HMessageInbound.parse(data: msg))
         case .info:
-            return try info(ServerInfo.parse(data: msg))
+            do {
+                return try info(ServerInfo.parse(data: msg))
+            } catch {
+                throw NatsError.ProtocolError.parserFailure("INFO does not parse: \(error)")
+            }
         case .ok:
             return ok
         case .error:
