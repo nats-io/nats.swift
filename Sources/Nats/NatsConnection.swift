@@ -204,8 +204,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             tlsServerName: tlsServerName, verifyDiscoveredServersByIp: verifyDiscoveredServersByIp)
         self.tlsAskedBy = tlsAskedBy
         self.configurationError = Self.configurationError(
-            urls: urls, requireTls: requireTls, tlsFirst: tlsFirst, tlsOptional: tlsOptional,
-            tlsAskedBy: tlsAskedBy)
+            urls: urls, auth: auth, requireTls: requireTls, tlsFirst: tlsFirst,
+            tlsOptional: tlsOptional, tlsAskedBy: tlsAskedBy)
         self.tlsFirst = tlsFirst
         self.clientCertificate = clientCertificate
         self.clientKey = clientKey
@@ -244,7 +244,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func configurationError(
-        urls: [URL], requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool, tlsAskedBy: String?
+        urls: [URL], auth: Auth?, requireTls: Bool, tlsFirst: Bool, tlsOptional: Bool,
+        tlsAskedBy: String?
     ) -> String? {
         if tlsOptional && tlsFirst {
             return "tlsOptional() cannot be set together with withTlsFirst()"
@@ -254,6 +255,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             // A websocket gets TLS from its scheme, before the first byte: a ws:// URL cannot
             // be upgraded, and dialing it with TLS would change the URL the user wrote.
             return wsUrlRefusal(url, tlsAskedBy: tlsAskedBy)
+        } else if auth?.nkey != nil && auth?.nkeyPath != nil {
+            return "cannot use both nkey and nkeyPath"
         }
         return nil
     }
@@ -1135,9 +1138,6 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             user: self.auth?.user ?? "", pass: self.auth?.password ?? "",
             authToken: self.auth?.token ?? "", headers: true, noResponders: true)
 
-        if self.auth?.nkey != nil && self.auth?.nkeyPath != nil {
-            throw NatsError.ConnectError.invalidConfig("cannot use both nkey and nkeyPath")
-        }
         if let auth = self.auth, let credentialsPath = auth.credentialsPath {
             let credentials = try await URLSession.shared.data(from: credentialsPath).0
             guard let jwt = JwtUtils.parseDecoratedJWT(contents: credentials) else {

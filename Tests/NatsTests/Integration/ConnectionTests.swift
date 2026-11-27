@@ -40,6 +40,10 @@ class CoreNatsTests: XCTestCase {
         ("testCredentialsAuth", testCredentialsAuth),
         ("testNkeyAuth", testNkeyAuth),
         ("testNkeyAuthFile", testNkeyAuthFile),
+        (
+            "testNkeyWithNkeyFileIsRefusedBeforeAnyAttempt",
+            testNkeyWithNkeyFileIsRefusedBeforeAnyAttempt
+        ),
         ("testMutualTls", testMutualTls),
         ("testTlsFirst", testTlsFirst),
         ("testInvalidCertificate", testInvalidCertificate),
@@ -720,6 +724,39 @@ class CoreNatsTests: XCTestCase {
             XCTFail("Expected auth error; got: \(error)")
         }
         XCTFail("Expected error from connect")
+    }
+
+    func testNkeyWithNkeyFileIsRefusedBeforeAnyAttempt() async throws {
+        let server = try FakeNatsServer(.init(greeting: FakeNatsServer.info(nonce: "nonce")))
+        defer { server.shutdown() }
+        for retry in [false, true] {
+            let options = NatsClientOptions()
+                .url(URL(string: "nats://127.0.0.1:\(server.port)")!)
+                .nkeyFile(Bundle.module.url(forResource: "nkey", withExtension: "")!)
+                .nkey("SUACH75SWCM5D2JMJM6EKLR2WDARVGZT4QC6LX3AGHSWOMVAKERABBBRWM")
+                .reconnectWait(0.05)
+            let client = (retry ? options.retryOnfailedConnect() : options).build()
+            let connected = await result(within: 5) { try await client.connect() }
+            guard case .failure(NatsError.ConnectError.invalidConfig(let reason))? = connected,
+                server.connections.isEmpty
+            else {
+                XCTFail(
+                    "retry \(retry): expected a configuration error before any attempt, got "
+                        + String(describing: connected))
+                try? await client.close()
+                continue
+            }
+            XCTAssertEqual(reason, "cannot use both nkey and nkeyPath", "retry \(retry)")
+            // pings that get no answer start a reconnect
+            for _ in 0..<3 {
+                _ = try? await client.rtt()
+            }
+            try await Task.sleep(nanoseconds: 300_000_000)
+            XCTAssertEqual(
+                server.connections.count, 0,
+                "retry \(retry): connected although the settings are refused")
+            try? await client.close()
+        }
     }
 
     func testMutualTls() async throws {
