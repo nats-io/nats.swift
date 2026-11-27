@@ -11,9 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Dispatch
 import Foundation
 import Logging
 import NIO
+import NIOConcurrencyHelpers
 import XCTest
 
 @testable import Nats
@@ -67,6 +69,10 @@ class ConnectionAttemptTests: XCTestCase {
         (
             "testCloseShortlyAfterInfoAndErrorIsATlsFailure",
             testCloseShortlyAfterInfoAndErrorIsATlsFailure
+        ),
+        (
+            "testConnectOfAFailedAttemptIsNotWrittenToTheNextServer",
+            testConnectOfAFailedAttemptIsNotWrittenToTheNextServer
         ),
         (
             "testHandshakeFailureWhileReadingTheKeyFileIsATlsFailure",
@@ -585,6 +591,59 @@ class ConnectionAttemptTests: XCTestCase {
                 }
             }
             server.shutdown()
+        }
+    }
+
+    func testConnectOfAFailedAttemptIsNotWrittenToTheNextServer() async throws {
+        // work at the default priority keeps the cooperative pool busy while connect() runs at
+        // a higher one, so the first attempt can fail before its CONNECT is written
+        let workers = ProcessInfo.processInfo.activeProcessorCount * 3
+        for micros in stride(from: 0, through: 3000, by: 150) {
+            for attempt in 0..<2 {
+                let failing = try fake(
+                    .init(
+                        greeting: FakeNatsServer.info(), answersPing: false,
+                        closeAfterGreeting: true, closeDelay: TimeInterval(micros) / 1_000_000))
+                let next = try fake(.init(greeting: FakeNatsServer.info()))
+                let stop = NIOLockedValueBox(false)
+                let busy = (0..<workers).map { _ in
+                    Task.detached(priority: .medium) {
+                        while !stop.withLockedValue({ $0 }) {
+                            let start = DispatchTime.now().uptimeNanoseconds
+                            while DispatchTime.now().uptimeNanoseconds - start < 5_000_000 {}
+                            await Task.yield()
+                        }
+                    }
+                }
+                let client = NatsClientOptions()
+                    .urls([
+                        URL(string: "nats://127.0.0.1:\(failing.port)")!,
+                        URL(string: "nats://127.0.0.1:\(next.port)")!,
+                    ])
+                    .retainServersOrder()
+                    .build()
+                let connected = await Task(priority: .high) {
+                    await result(within: 10) { try await client.connect() }
+                }.value
+                stop.withLockedValue { $0 = true }
+                for task in busy { await task.value }
+                // a CONNECT written late has reached the server by now
+                try await Task.sleep(nanoseconds: 20_000_000)
+                try? await client.close()
+                defer {
+                    failing.shutdown()
+                    next.shutdown()
+                }
+                guard case .success? = connected else {
+                    XCTFail(
+                        "close after \(micros) us, attempt \(attempt): "
+                            + String(describing: connected))
+                    continue
+                }
+                XCTAssertEqual(
+                    next.lines.filter { $0.hasPrefix("CONNECT") }.count, 1,
+                    "close after \(micros) us, attempt \(attempt): \(next.lines)")
+            }
         }
     }
 
