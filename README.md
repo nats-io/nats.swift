@@ -68,7 +68,7 @@ let nats = NatsClientOptions().url(URL(string: "nats://localhost:4222")!).build(
 try await nats.connect()
 
 // subscribe to a subject
-let subscription = try await nats.subscribe(subject: "events.>")
+let subscriptions = try await nats.subscribe(subject: "events.>")
 
 // publish a message
 try await nats.publish("my event".data(using: .utf8)!, subject: "events.example")
