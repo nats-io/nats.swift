@@ -16,6 +16,24 @@ import Foundation
 public protocol NatsErrorProtocol: Error, CustomStringConvertible, Sendable {}
 
 public enum NatsError {
+    /// `text`, which the server chose, as an error or a log line shows it: with its control
+    /// characters escaped, and cut to at most 256 bytes.
+    static func escaped(_ text: some StringProtocol) -> String {
+        var shown = ""
+        var bytes = 0
+        for scalar in text.unicodeScalars {
+            let piece =
+                scalar.properties.generalCategory == .control
+                ? scalar.escaped(asASCII: true) : String(scalar)
+            bytes += piece.utf8.count
+            guard bytes <= 256 else {
+                break
+            }
+            shown += piece
+        }
+        return shown
+    }
+
     public enum ServerError: NatsErrorProtocol, Equatable {
         case staleConnection
         case maxConnectionsExceeded
@@ -43,13 +61,13 @@ public enum NatsError {
             case .permissionsViolation(let operation, let subject, let queue):
                 if let queue {
                     return
-                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\" using queue \"\(queue)\""
+                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(NatsError.escaped(subject))\" using queue \"\(NatsError.escaped(queue))\""
                 } else {
                     return
-                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(subject)\""
+                        "nats: permissions violation for operation \"\(operation)\" on subject \"\(NatsError.escaped(subject))\""
                 }
             case .proto(let error):
-                return "nats: \(error)"
+                return "nats: \(NatsError.escaped(error))"
             }
         }
         var normalizedError: String {
@@ -134,9 +152,9 @@ public enum NatsError {
         public var description: String {
             switch self {
             case .invalidOperation(let op):
-                return "nats: unknown server operation: \(op)"
+                return "nats: unknown server operation: \(NatsError.escaped(op))"
             case .parserFailure(let cause):
-                return "nats: parser failure: \(cause)"
+                return "nats: parser failure: \(NatsError.escaped(cause))"
             }
         }
     }

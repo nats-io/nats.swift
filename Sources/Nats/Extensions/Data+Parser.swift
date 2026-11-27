@@ -150,7 +150,8 @@ extension Data {
                 if msg.length == 0 {
                     // a message without a header block is dropped, as one whose header block
                     // does not parse is
-                    logger.error("dropping message on \(msg.subject): no header block")
+                    logger.error(
+                        "dropping message on \(NatsError.escaped(msg.subject)): no header block")
                 } else {
                     // if the whole msg length (including trailing crlf) is longer
                     // than the remaining chunk, break and return the remainder
@@ -184,7 +185,8 @@ extension Data {
                         headers = try NatsHeaderMap(from: headersString)
                     } catch {
                         // a header block that does not parse drops only its message
-                        logger.error("dropping message on \(msg.subject): \(error)")
+                        logger.error(
+                            "dropping message on \(NatsError.escaped(msg.subject)): \(error)")
                         continue
                     }
                     msg.status = headers.status
