@@ -156,13 +156,16 @@ class TlsTests: XCTestCase {
 
     /// Checks that `connect()` of a client built from `options()` fails at once with a
     /// configuration error that names every string in `naming`, also with
-    /// `retryOnfailedConnect()`, and that `server`, when given, was not connected to.
+    /// `retryOnfailedConnect()`, and that `server`, when given, was not connected to, also
+    /// after `rtt()` calls.
     private func assertConfigurationError(
         _ options: () -> NatsClientOptions, naming: [String], server: FakeNatsServer? = nil,
         file: StaticString = #filePath, line: UInt = #line
     ) async throws {
         for retry in [false, true] {
-            let client = (retry ? options().retryOnfailedConnect() : options()).build()
+            let client = (retry ? options().retryOnfailedConnect() : options())
+                .reconnectWait(0.05)
+                .build()
             let connected = await result(within: 5) { try await client.connect() }
             guard case .failure(NatsError.ConnectError.invalidConfig(let reason))? = connected
             else {
@@ -176,6 +179,16 @@ class TlsTests: XCTestCase {
                 XCTAssertTrue(
                     reason.contains(name), "retry \(retry): \(name) not in: \(reason)", file: file,
                     line: line)
+            }
+            // pings that get no answer start a reconnect
+            for _ in 0..<3 {
+                _ = await result(within: 1) { try await client.rtt() }
+            }
+            if let server {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                XCTAssertEqual(
+                    server.connections.count, 0, "retry \(retry): connected after rtt()",
+                    file: file, line: line)
             }
             try? await client.close()
         }

@@ -1227,6 +1227,8 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
     }
 
     func handleReconnect() {
+        // settings that connect() refuses are never tried
+        guard configurationError == nil else { return }
 
         let isAlreadyReconnecting = _reconnectTask.withLockedValue { task -> Bool in
             guard let activeTask = task else { return false }
