@@ -92,8 +92,9 @@ extension NatsClient {
     /// > - ``NatsError/ConnectError/invalidConfig(_:)`` if the provided configuration is invalid.
     /// >   ``NatsClientOptions/tlsOptional()`` together with ``NatsClientOptions/requireTls()`` or
     /// >   ``NatsClientOptions/withTlsFirst()`` is reported also with
-    /// >   ``NatsClientOptions/retryOnfailedConnect()``, and so is a `ws://` URL while TLS is
-    /// >   asked for
+    /// >   ``NatsClientOptions/retryOnfailedConnect()``, and so are
+    /// >   ``NatsClientOptions/nkey(_:)`` together with ``NatsClientOptions/nkeyFile(_:)``,
+    /// >   and a `ws://` URL while TLS is asked for
     /// > - ``NatsError/ConnectError/tlsFailure(_:)`` if upgrading to TLS connection fails
     /// > - ``NatsError/ConnectError/timeout`` if a connection attempt did not get the server's
     /// >   first PONG within the connection timeout (5 seconds)
