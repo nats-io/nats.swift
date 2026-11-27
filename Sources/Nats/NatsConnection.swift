@@ -1187,7 +1187,10 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
             initialConnect.signature = base64sig
             initialConnect.nkey = keypair.publicKeyEncoded
         }
-        let connect = initialConnect
+        var buffer = channel.allocator.buffer(capacity: 0)
+        try buffer.writeClientOp(ClientOp.connect(initialConnect))
+        try buffer.writeClientOp(ClientOp.ping)
+        let connectAndPing = buffer
         // this continuation can throw NatsError.ServerError if server responds with
         // -ERR to client connect (e.g. auth error)
         try await withTaskCancellationHandler {
@@ -1196,32 +1199,16 @@ final class ConnectionHandler: ChannelInboundHandler, Sendable {
                     $0 = waitingForInfoAfterPong ? .pongThenInfo : .pong
                 }
                 connectionEstablishedContinuation.withLockedValue { $0 = continuation }
-                // channelInactive fails the continuation only once it is set: a connection that
-                // closed before is found here, on its event loop
+                // CONNECT and PING go to this attempt's channel, on its event loop, once the
+                // continuation is set: channelInactive fails it only from then on, so a
+                // connection that closed before is found here
                 channel.eventLoop.execute {
-                    guard !channel.isActive else { return }
-                    let toResume = self.connectionEstablishedContinuation.withLockedValue { cont in
-                        defer { cont = nil }
-                        return cont
+                    guard channel.isActive else {
+                        self.takeConnectionEstablishedContinuation()?.resume(
+                            throwing: self.takeConnectionError())
+                        return
                     }
-                    toResume?.resume(throwing: self.takeConnectionError())
-                }
-                Task.detached {
-                    do {
-                        try await self.write(operation: ClientOp.connect(connect))
-                        try await self.write(operation: ClientOp.ping)
-                        self.channel?.flush()
-                    } catch {
-                        let continuationToResume: CheckedContinuation<Void, Error>? = self
-                            .connectionEstablishedContinuation.withLockedValue { cont in
-                                guard let c = cont else { return nil }
-                                cont = nil
-                                return c
-                            }
-                        if let continuation = continuationToResume {
-                            continuation.resume(throwing: error)
-                        }
-                    }
+                    channel.writeAndFlush(connectAndPing, promise: nil)
                 }
             }
         } onCancel: {
